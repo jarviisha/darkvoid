@@ -19,6 +19,8 @@ Use the `Makefile` as the primary interface:
 ## Coding Style & Naming Conventions
 This is a Go 1.26 project. Follow standard Go formatting with tabs and run `gofmt`/`goimports`; linting is configured in `.golangci.yml`. Prefer small packages with clear single-purpose responsibilities. Use lowercase package names, `CamelCase` for exported identifiers, and feature-local naming such as `AuthHandler`, `UserService`, `RefreshTokenRepository`.
 
+Treat `.golangci.yml` as an enforced constraint for all changes. Do not introduce new lint violations, and make code changes in a way that respects the configured linters even when a task does not explicitly mention linting.
+
 Do not hand-edit generated files under `internal/feature/*/db`.
 
 ## Testing Guidelines
