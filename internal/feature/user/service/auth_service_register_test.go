@@ -78,7 +78,7 @@ func TestRegister_SendsWelcomeAndVerificationEmails(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	waitForGoroutines(t, &wg, 2*time.Second)
+	waitForGoroutines(t, &wg)
 
 	sender.mu.Lock()
 	defer sender.mu.Unlock()
@@ -131,7 +131,7 @@ func TestRegister_EmailContextOutlivesParentCancel(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	waitForGoroutines(t, &wg, 2*time.Second)
+	waitForGoroutines(t, &wg)
 
 	sender.mu.Lock()
 	defer sender.mu.Unlock()
@@ -148,7 +148,9 @@ func TestRegister_EmailContextOutlivesParentCancel(t *testing.T) {
 	}
 }
 
-func waitForGoroutines(t *testing.T, wg *sync.WaitGroup, timeout time.Duration) {
+const goroutineWaitTimeout = 2 * time.Second
+
+func waitForGoroutines(t *testing.T, wg *sync.WaitGroup) {
 	t.Helper()
 	done := make(chan struct{})
 	go func() {
@@ -157,8 +159,8 @@ func waitForGoroutines(t *testing.T, wg *sync.WaitGroup, timeout time.Duration) 
 	}()
 	select {
 	case <-done:
-	case <-time.After(timeout):
-		t.Fatal("timed out waiting for email goroutines")
+	case <-time.After(goroutineWaitTimeout):
+		t.Fatal("timed out waiting for goroutines")
 	}
 }
 
