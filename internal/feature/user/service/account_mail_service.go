@@ -17,7 +17,7 @@ const (
 	resetTokenExpiry  = 1 * time.Hour
 )
 
-// emailTokenRepo defines the repository operations needed by EmailService.
+// emailTokenRepo defines the repository operations needed by AccountMailService.
 type emailTokenRepo interface {
 	Create(ctx context.Context, userID uuid.UUID, token string, tokenType entity.EmailTokenType, expiresAt time.Time) (*entity.EmailToken, error)
 	GetByToken(ctx context.Context, token string) (*entity.EmailToken, error)
@@ -25,8 +25,10 @@ type emailTokenRepo interface {
 	DeleteByUserAndType(ctx context.Context, userID uuid.UUID, tokenType entity.EmailTokenType) error
 }
 
-// EmailService handles sending emails and managing email tokens.
-type EmailService struct {
+// AccountMailService orchestrates user-account email flows (welcome, verification,
+// password reset) and the associated one-shot email tokens. It is scoped to the
+// user bounded context — not a general-purpose mailer for other features.
+type AccountMailService struct {
 	mailer    mailer.Mailer
 	templates *mailer.Templates
 	tokenRepo emailTokenRepo
@@ -34,15 +36,15 @@ type EmailService struct {
 	baseURL   string
 }
 
-// NewEmailService creates a new EmailService.
-func NewEmailService(
+// NewAccountMailService creates a new AccountMailService.
+func NewAccountMailService(
 	m mailer.Mailer,
 	templates *mailer.Templates,
 	tokenRepo emailTokenRepo,
 	userRepo userRepo,
 	baseURL string,
-) *EmailService {
-	return &EmailService{
+) *AccountMailService {
+	return &AccountMailService{
 		mailer:    m,
 		templates: templates,
 		tokenRepo: tokenRepo,
@@ -52,7 +54,7 @@ func NewEmailService(
 }
 
 // SendWelcome sends a welcome email to the user. Errors are logged, not propagated.
-func (s *EmailService) SendWelcome(ctx context.Context, email, username string) {
+func (s *AccountMailService) SendWelcome(ctx context.Context, email, username string) {
 	html, err := s.templates.RenderWelcome(mailer.WelcomeData{
 		Username: username,
 	})
@@ -73,7 +75,7 @@ func (s *EmailService) SendWelcome(ctx context.Context, email, username string) 
 
 // SendVerification creates a verification token and sends a verification email.
 // Errors are logged, not propagated (fire-and-forget side effect).
-func (s *EmailService) SendVerification(ctx context.Context, userID uuid.UUID, email, username string) {
+func (s *AccountMailService) SendVerification(ctx context.Context, userID uuid.UUID, email, username string) {
 	// Clean up any existing verification tokens for this user
 	if err := s.tokenRepo.DeleteByUserAndType(ctx, userID, entity.EmailTokenVerify); err != nil {
 		logger.LogError(ctx, err, "failed to delete old verification tokens", "user_id", userID)
@@ -113,7 +115,7 @@ func (s *EmailService) SendVerification(ctx context.Context, userID uuid.UUID, e
 }
 
 // VerifyEmail validates a verification token and marks the associated user's email as verified.
-func (s *EmailService) VerifyEmail(ctx context.Context, tokenStr string) error {
+func (s *AccountMailService) VerifyEmail(ctx context.Context, tokenStr string) error {
 	if tokenStr == "" {
 		return errors.NewBadRequestError("token is required")
 	}
@@ -145,7 +147,7 @@ func (s *EmailService) VerifyEmail(ctx context.Context, tokenStr string) error {
 }
 
 // ResendVerification re-sends a verification email for the given email address.
-func (s *EmailService) ResendVerification(ctx context.Context, email string) error {
+func (s *AccountMailService) ResendVerification(ctx context.Context, email string) error {
 	if email == "" {
 		return errors.NewBadRequestError("email is required")
 	}
@@ -162,7 +164,7 @@ func (s *EmailService) ResendVerification(ctx context.Context, email string) err
 }
 
 // SendPasswordReset creates a reset token and sends a password reset email.
-func (s *EmailService) SendPasswordReset(ctx context.Context, email string) error {
+func (s *AccountMailService) SendPasswordReset(ctx context.Context, email string) error {
 	if email == "" {
 		return errors.NewBadRequestError("email is required")
 	}
@@ -217,7 +219,7 @@ func (s *EmailService) SendPasswordReset(ctx context.Context, email string) erro
 }
 
 // ResetPassword validates a reset token and sets the new password.
-func (s *EmailService) ResetPassword(ctx context.Context, tokenStr, newPassword string) error {
+func (s *AccountMailService) ResetPassword(ctx context.Context, tokenStr, newPassword string) error {
 	if tokenStr == "" {
 		return errors.NewBadRequestError("token is required")
 	}

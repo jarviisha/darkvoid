@@ -25,8 +25,8 @@ type UserContext struct {
 	authService         *service.AuthService
 	followService       *service.FollowService
 
-	// Services (email)
-	emailService *service.EmailService
+	// Services (account mail — welcome/verify/reset)
+	accountMailService *service.AccountMailService
 
 	// Handlers
 	userHandler    *handler.UserHandler
@@ -60,17 +60,17 @@ func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage
 	refreshTokenService := service.NewRefreshTokenServiceWithExpiry(refreshTokenRepo, refreshTokenExpiry)
 	authService := service.NewAuthService(userRepo, userService, jwtService, refreshTokenService, store)
 	followService := service.NewFollowService(followRepo)
-	emailService := service.NewEmailService(m, templates, emailTokenRepo, userRepo, mailerBaseURL)
+	accountMailService := service.NewAccountMailService(m, templates, emailTokenRepo, userRepo, mailerBaseURL)
 
 	// Wire email sender into auth service for fire-and-forget after register
-	authService.WithEmailSender(emailService)
+	authService.WithEmailSender(accountMailService)
 
 	// Handlers
 	userHandler := handler.NewUserHandler(userService, userService, store)
 	authHandler := handler.NewAuthHandler(authService, store, secureCookie)
 	profileHandler := handler.NewProfileHandler(userService, followService, store)
 	followHandler := handler.NewFollowHandler(followService, userService)
-	emailHandler := handler.NewEmailHandler(emailService)
+	emailHandler := handler.NewEmailHandler(accountMailService)
 
 	return &UserContext{
 		userRepo:            userRepo,
@@ -80,7 +80,7 @@ func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage
 		refreshTokenService: refreshTokenService,
 		authService:         authService,
 		followService:       followService,
-		emailService:        emailService,
+		accountMailService:  accountMailService,
 		userHandler:         userHandler,
 		authHandler:         authHandler,
 		profileHandler:      profileHandler,

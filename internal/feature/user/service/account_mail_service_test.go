@@ -65,13 +65,13 @@ func (m *mockEmailTokenRepo) DeleteByUserAndType(ctx context.Context, userID uui
 	return nil
 }
 
-func newEmailServiceForTest(t *testing.T, tokenRepo emailTokenRepo, userRepo userRepo, m mailer.Mailer) *EmailService {
+func newAccountMailServiceForTest(t *testing.T, tokenRepo emailTokenRepo, userRepo userRepo, m mailer.Mailer) *AccountMailService {
 	t.Helper()
 	templates, err := mailer.LoadTemplates()
 	if err != nil {
 		t.Fatalf("failed to load templates: %v", err)
 	}
-	return NewEmailService(m, templates, tokenRepo, userRepo, "https://darkvoid.test")
+	return NewAccountMailService(m, templates, tokenRepo, userRepo, "https://darkvoid.test")
 }
 
 func validVerifyToken(userID uuid.UUID) *entity.EmailToken {
@@ -97,7 +97,7 @@ func validResetToken(userID uuid.UUID) *entity.EmailToken {
 }
 
 func TestVerifyEmail_TokenRequired(t *testing.T) {
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
 
 	err := svc.VerifyEmail(context.Background(), "")
 	if err == nil {
@@ -107,7 +107,7 @@ func TestVerifyEmail_TokenRequired(t *testing.T) {
 }
 
 func TestVerifyEmail_InvalidOrExpiredToken(t *testing.T) {
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			return nil, apperrors.ErrNotFound
 		},
@@ -122,7 +122,7 @@ func TestVerifyEmail_InvalidOrExpiredToken(t *testing.T) {
 
 func TestVerifyEmail_InvalidTokenType(t *testing.T) {
 	userID := uuid.New()
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			token := validResetToken(userID)
 			return token, nil
@@ -139,7 +139,7 @@ func TestVerifyEmail_InvalidTokenType(t *testing.T) {
 func TestVerifyEmail_UsedToken(t *testing.T) {
 	userID := uuid.New()
 	usedAt := time.Now()
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			token := validVerifyToken(userID)
 			token.UsedAt = &usedAt
@@ -156,7 +156,7 @@ func TestVerifyEmail_UsedToken(t *testing.T) {
 
 func TestVerifyEmail_ExpiredToken(t *testing.T) {
 	userID := uuid.New()
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			token := validVerifyToken(userID)
 			token.ExpiresAt = time.Now().Add(-time.Minute)
@@ -173,7 +173,7 @@ func TestVerifyEmail_ExpiredToken(t *testing.T) {
 
 func TestVerifyEmail_MarkUsedFailure(t *testing.T) {
 	userID := uuid.New()
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			return validVerifyToken(userID), nil
 		},
@@ -192,7 +192,7 @@ func TestVerifyEmail_MarkUsedFailure(t *testing.T) {
 func TestVerifyEmail_Success(t *testing.T) {
 	userID := uuid.New()
 	markUsedCalled := false
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			return validVerifyToken(userID), nil
 		},
@@ -211,7 +211,7 @@ func TestVerifyEmail_Success(t *testing.T) {
 }
 
 func TestResendVerification_EmailRequired(t *testing.T) {
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
 
 	err := svc.ResendVerification(context.Background(), "")
 	if err == nil {
@@ -221,7 +221,7 @@ func TestResendVerification_EmailRequired(t *testing.T) {
 }
 
 func TestResendVerification_UnknownEmailReturnsNil(t *testing.T) {
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{
 		getUserByEmail: func(_ context.Context, _ string) (*entity.User, error) {
 			return nil, apperrors.ErrNotFound
 		},
@@ -237,7 +237,7 @@ func TestResendVerification_SendsVerificationToken(t *testing.T) {
 	deleteCalled := false
 	createCalled := false
 	sendCalled := false
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		deleteByUserAndType: func(_ context.Context, gotUserID uuid.UUID, tokenType entity.EmailTokenType) error {
 			deleteCalled = true
 			if gotUserID != userID {
@@ -290,7 +290,7 @@ func TestResendVerification_SendsVerificationToken(t *testing.T) {
 }
 
 func TestSendPasswordReset_EmailRequired(t *testing.T) {
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
 
 	err := svc.SendPasswordReset(context.Background(), "")
 	if err == nil {
@@ -300,7 +300,7 @@ func TestSendPasswordReset_EmailRequired(t *testing.T) {
 }
 
 func TestSendPasswordReset_UnknownEmailReturnsNil(t *testing.T) {
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{
 		getUserByEmail: func(_ context.Context, _ string) (*entity.User, error) {
 			return nil, apperrors.ErrNotFound
 		},
@@ -313,7 +313,7 @@ func TestSendPasswordReset_UnknownEmailReturnsNil(t *testing.T) {
 
 func TestSendPasswordReset_CreateFailure(t *testing.T) {
 	userID := uuid.New()
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		create: func(_ context.Context, _ uuid.UUID, _ string, _ entity.EmailTokenType, _ time.Time) (*entity.EmailToken, error) {
 			return nil, stderrors.New("insert failed")
 		},
@@ -332,7 +332,7 @@ func TestSendPasswordReset_CreateFailure(t *testing.T) {
 
 func TestSendPasswordReset_MailerFailure(t *testing.T) {
 	userID := uuid.New()
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{
 		getUserByEmail: func(_ context.Context, _ string) (*entity.User, error) {
 			return &entity.User{ID: userID, Email: "john@example.com", Username: "johndoe"}, nil
 		},
@@ -354,7 +354,7 @@ func TestSendPasswordReset_Success(t *testing.T) {
 	deleteCalled := false
 	createCalled := false
 	sendCalled := false
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		deleteByUserAndType: func(_ context.Context, gotUserID uuid.UUID, tokenType entity.EmailTokenType) error {
 			deleteCalled = true
 			if gotUserID != userID {
@@ -407,7 +407,7 @@ func TestSendPasswordReset_Success(t *testing.T) {
 }
 
 func TestResetPassword_TokenRequired(t *testing.T) {
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
 
 	err := svc.ResetPassword(context.Background(), "", "NewPass123")
 	if err == nil {
@@ -417,7 +417,7 @@ func TestResetPassword_TokenRequired(t *testing.T) {
 }
 
 func TestResetPassword_NewPasswordRequired(t *testing.T) {
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
 
 	err := svc.ResetPassword(context.Background(), "reset-token", "")
 	if err == nil {
@@ -427,7 +427,7 @@ func TestResetPassword_NewPasswordRequired(t *testing.T) {
 }
 
 func TestResetPassword_InvalidToken(t *testing.T) {
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			return nil, apperrors.ErrNotFound
 		},
@@ -442,7 +442,7 @@ func TestResetPassword_InvalidToken(t *testing.T) {
 
 func TestResetPassword_InvalidTokenType(t *testing.T) {
 	userID := uuid.New()
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			return validVerifyToken(userID), nil
 		},
@@ -457,7 +457,7 @@ func TestResetPassword_InvalidTokenType(t *testing.T) {
 
 func TestResetPassword_ExpiredToken(t *testing.T) {
 	userID := uuid.New()
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			token := validResetToken(userID)
 			token.ExpiresAt = time.Now().Add(-time.Minute)
@@ -475,7 +475,7 @@ func TestResetPassword_ExpiredToken(t *testing.T) {
 func TestResetPassword_UsedToken(t *testing.T) {
 	userID := uuid.New()
 	usedAt := time.Now()
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			token := validResetToken(userID)
 			token.UsedAt = &usedAt
@@ -492,7 +492,7 @@ func TestResetPassword_UsedToken(t *testing.T) {
 
 func TestResetPassword_UpdatePasswordFailure(t *testing.T) {
 	userID := uuid.New()
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			return validResetToken(userID), nil
 		},
@@ -512,7 +512,7 @@ func TestResetPassword_UpdatePasswordFailure(t *testing.T) {
 func TestResetPassword_MarkUsedFailureDoesNotFail(t *testing.T) {
 	userID := uuid.New()
 	updateCalled := false
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			return validResetToken(userID), nil
 		},
@@ -541,7 +541,7 @@ func TestResetPassword_Success(t *testing.T) {
 	userID := uuid.New()
 	updateCalled := false
 	markUsedCalled := false
-	svc := newEmailServiceForTest(t, &mockEmailTokenRepo{
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			return validResetToken(userID), nil
 		},
