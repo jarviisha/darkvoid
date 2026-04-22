@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,6 +108,44 @@ func newValidToken(t *testing.T, userID uuid.UUID) (*entity.RefreshToken, *mockR
 		},
 	}
 	return tok, repo
+}
+
+type welcomeEmailCall struct {
+	ctxErr   error
+	email    string
+	username string
+}
+
+type verificationEmailCall struct {
+	ctxErr   error
+	userID   uuid.UUID
+	email    string
+	username string
+}
+
+type mockEmailSender struct {
+	mu                sync.Mutex
+	welcomeCalls      []welcomeEmailCall
+	verificationCalls []verificationEmailCall
+	wg                *sync.WaitGroup
+}
+
+func (m *mockEmailSender) SendWelcome(ctx context.Context, email, username string) {
+	m.mu.Lock()
+	m.welcomeCalls = append(m.welcomeCalls, welcomeEmailCall{ctxErr: ctx.Err(), email: email, username: username})
+	m.mu.Unlock()
+	if m.wg != nil {
+		m.wg.Done()
+	}
+}
+
+func (m *mockEmailSender) SendVerification(ctx context.Context, userID uuid.UUID, email, username string) {
+	m.mu.Lock()
+	m.verificationCalls = append(m.verificationCalls, verificationEmailCall{ctxErr: ctx.Err(), userID: userID, email: email, username: username})
+	m.mu.Unlock()
+	if m.wg != nil {
+		m.wg.Done()
+	}
 }
 
 func newAuthService(userRepo userRepo, rtRepo refreshTokenRepo, jwtSvc *jwt.Service) *AuthService {
