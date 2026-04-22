@@ -73,6 +73,10 @@ Every package should have a `docs.go` stating its purpose. Update it in the same
 - Service and handler packages must have tests for every logic change.
 - Before refactoring legacy code, write a characterization test first.
 
+## Linting
+
+Respect `.golangci.yml` — all production and test code must pass `make lint` before committing. If a linter fires, fix the root cause rather than silencing it. Only suppress with a **targeted** `//nolint:<linter> // <reason>` on the specific line, with a real reason. Do **not** add blanket `//nolint` directives, and do **not** relax `.golangci.yml` to clear a failure unless the rule itself is genuinely wrong for this codebase — in which case justify it in the commit message.
+
 ## Configuration
 
 All config is loaded from `.env` via `pkg/config`. Update `.env.example` whenever a new variable is added. Keys of note:
