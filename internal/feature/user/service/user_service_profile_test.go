@@ -63,6 +63,28 @@ func TestGetMyProfile_GenericRepoError(t *testing.T) {
 	assertServiceErrorCode(t, err, "INTERNAL_ERROR")
 }
 
+// GetMyProfile intentionally does not gate on IsActive. A deactivated user
+// must still be able to read their own account state (e.g. to understand why
+// their account was deactivated). This differs from GetUserByID, which rejects
+// inactive accounts for third-party lookups.
+func TestGetMyProfile_InactiveUserStillReturnsProfile(t *testing.T) {
+	id := uuid.New()
+	repo := &mockUserRepo{
+		getUserByID: func(_ context.Context, _ uuid.UUID) (*entity.User, error) {
+			u := activeUser(id)
+			u.IsActive = false
+			return u, nil
+		},
+	}
+	u, err := newUserService(repo).GetMyProfile(context.Background(), id)
+	if err != nil {
+		t.Fatalf("expected no error for own profile even when inactive, got %v", err)
+	}
+	if u.IsActive {
+		t.Error("expected returned user to be inactive")
+	}
+}
+
 // --------------------------------------------------------------------------
 // GetProfileByUserID tests
 // --------------------------------------------------------------------------

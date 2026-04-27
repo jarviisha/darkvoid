@@ -32,3 +32,14 @@ type refreshTokenRepo interface {
 	RevokeAllUserTokens(ctx context.Context, userID uuid.UUID) error
 	DeleteExpired(ctx context.Context) error
 }
+
+// followRepo defines the repository operations needed by FollowService.
+type followRepo interface {
+	Follow(ctx context.Context, followerID, followeeID uuid.UUID) error
+	Unfollow(ctx context.Context, followerID, followeeID uuid.UUID) error
+	IsFollowing(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error)
+	GetFollowers(ctx context.Context, targetID uuid.UUID, limit, offset int32) ([]*entity.Follow, error)
+	GetFollowing(ctx context.Context, targetID uuid.UUID, limit, offset int32) ([]*entity.Follow, error)
+	CountFollowers(ctx context.Context, targetID uuid.UUID) (int64, error)
+	CountFollowing(ctx context.Context, targetID uuid.UUID) (int64, error)
+}

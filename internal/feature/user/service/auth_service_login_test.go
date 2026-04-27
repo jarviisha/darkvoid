@@ -144,6 +144,68 @@ func TestLogin_InactiveUser(t *testing.T) {
 	assertServiceErrorCode(t, err, "FORBIDDEN")
 }
 
+func TestLogin_RefreshTokenGenerationFails(t *testing.T) {
+	hashedPw, _ := hashPassword("SecurePass123")
+	userRepo := &mockUserRepo{
+		getUserByUsername: func(_ context.Context, _ string) (*entity.User, error) {
+			return &entity.User{
+				ID:           uuid.New(),
+				Username:     "johndoe",
+				PasswordHash: hashedPw,
+				IsActive:     true,
+				DisplayName:  "John Doe",
+			}, nil
+		},
+	}
+	rtRepo := &mockRefreshTokenRepo{
+		create: func(_ context.Context, _ string, _ uuid.UUID, _ time.Time) (*entity.RefreshToken, error) {
+			return nil, errors.ErrInternal
+		},
+	}
+	svc := newAuthService(userRepo, rtRepo, newTestJWT(t))
+
+	_, err := svc.Login(context.Background(), &dto.LoginRequest{
+		Username: "johndoe",
+		Password: "SecurePass123",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	assertServiceErrorCode(t, err, "INTERNAL_ERROR")
+}
+
+// The Login handler trims whitespace from the username input — a user typing
+// " johndoe " must authenticate as "johndoe". This guards against silent
+// lookup misses if the DB stores trimmed usernames.
+func TestLogin_WhitespaceTrimming(t *testing.T) {
+	hashedPw, _ := hashPassword("SecurePass123")
+	var queriedUsername string
+	userRepo := &mockUserRepo{
+		getUserByUsername: func(_ context.Context, username string) (*entity.User, error) {
+			queriedUsername = username
+			return &entity.User{
+				ID:           uuid.New(),
+				Username:     username,
+				PasswordHash: hashedPw,
+				IsActive:     true,
+				DisplayName:  "John Doe",
+			}, nil
+		},
+	}
+	svc := newAuthService(userRepo, &mockRefreshTokenRepo{}, newTestJWT(t))
+
+	_, err := svc.Login(context.Background(), &dto.LoginRequest{
+		Username: "  johndoe  ",
+		Password: "SecurePass123",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if queriedUsername != "johndoe" {
+		t.Errorf("expected trimmed username %q sent to repo, got %q", "johndoe", queriedUsername)
+	}
+}
+
 func TestLogin_AccessTokenGenerationFails(t *testing.T) {
 	hashedPw, _ := hashPassword("SecurePass123")
 	userRepo := &mockUserRepo{

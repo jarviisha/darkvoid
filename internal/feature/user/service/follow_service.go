@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
-	"github.com/jarviisha/darkvoid/internal/feature/user/repository"
 	"github.com/jarviisha/darkvoid/internal/pagination"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
@@ -30,12 +29,12 @@ type FollowNotificationEmitter interface {
 
 // FollowService handles follow/unfollow business logic.
 type FollowService struct {
-	followRepo      *repository.FollowRepository
+	followRepo      followRepo
 	feedInvalidator FeedInvalidator           // optional, nil = no-op
 	notifEmitter    FollowNotificationEmitter // optional, nil = no-op
 }
 
-func NewFollowService(followRepo *repository.FollowRepository) *FollowService {
+func NewFollowService(followRepo followRepo) *FollowService {
 	return &FollowService{followRepo: followRepo}
 }
 
