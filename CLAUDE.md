@@ -90,4 +90,5 @@ All config is loaded from `.env` via `pkg/config`. Update `.env.example` wheneve
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
+at `specs/001-handler-tests/plan.md`.
 <!-- SPECKIT END -->
