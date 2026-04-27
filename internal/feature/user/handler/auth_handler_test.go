@@ -91,10 +91,9 @@ func doPost(t *testing.T, handler http.HandlerFunc, path string, body any) *http
 	return w
 }
 
-func newPostRequest(t *testing.T, path string, body any) *http.Request {
+func newPostRequest(t *testing.T, path string) *http.Request {
 	t.Helper()
-	b, _ := json.Marshal(body)
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, path, bytes.NewReader(b))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, path, http.NoBody)
 	req.Header.Set("Content-Type", "application/json")
 	return req
 }
@@ -272,7 +271,7 @@ func TestRefreshToken_Success(t *testing.T) {
 	}
 	h := newAuthHandler(svc)
 
-	req := newPostRequest(t, "/auth/refresh", nil)
+	req := newPostRequest(t, "/auth/refresh")
 	req.AddCookie(&http.Cookie{Name: refreshTokenCookieName, Value: "old-refresh-token"})
 	w := httptest.NewRecorder()
 	h.RefreshToken(w, req)
@@ -316,7 +315,7 @@ func TestRefreshToken_InvalidToken(t *testing.T) {
 	}
 	h := newAuthHandler(svc)
 
-	req := newPostRequest(t, "/auth/refresh", nil)
+	req := newPostRequest(t, "/auth/refresh")
 	req.AddCookie(&http.Cookie{Name: refreshTokenCookieName, Value: "bad-token"})
 	w := httptest.NewRecorder()
 	h.RefreshToken(w, req)
@@ -339,7 +338,7 @@ func TestLogout_Success(t *testing.T) {
 	}
 	h := newAuthHandler(svc)
 
-	req := newPostRequest(t, "/auth/logout", nil)
+	req := newPostRequest(t, "/auth/logout")
 	req.AddCookie(&http.Cookie{Name: refreshTokenCookieName, Value: "my-token"})
 	w := httptest.NewRecorder()
 	h.Logout(w, req)
@@ -539,4 +538,148 @@ func TestChangePassword_WrongOldPassword(t *testing.T) {
 
 	assertStatus(t, w, http.StatusUnauthorized)
 	assertErrorCode(t, w, "UNAUTHORIZED")
+}
+
+// --------------------------------------------------------------------------
+// RefreshToken — mobile/web additions
+// --------------------------------------------------------------------------
+
+func TestRefreshToken_MobileSuccess(t *testing.T) {
+	var passedToken string
+	svc := &mockAuthService{
+		refreshToken: func(_ context.Context, req *dto.RefreshTokenRequest) (*dto.RefreshTokenResponse, error) {
+			passedToken = req.RefreshToken
+			return &dto.RefreshTokenResponse{
+				AccessToken:      "new-access-token",
+				RefreshToken:     "new-refresh-token",
+				TokenType:        "Bearer",
+				RefreshExpiresIn: 3600,
+			}, nil
+		},
+	}
+	h := newAuthHandler(svc)
+
+	b, _ := json.Marshal(dto.RefreshTokenRequest{RefreshToken: "mobile-token"}) //nolint:gosec // test fixture: not a real token
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/auth/refresh", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Client-Type", "mobile")
+	w := httptest.NewRecorder()
+	h.RefreshToken(w, req)
+
+	assertStatus(t, w, http.StatusOK)
+	if passedToken != "mobile-token" {
+		t.Fatalf("expected mobile-token passed to service, got %q", passedToken)
+	}
+	var resp dto.RefreshTokenResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.RefreshToken != "new-refresh-token" {
+		t.Errorf("expected refresh token in body for mobile client, got %q", resp.RefreshToken)
+	}
+	for _, c := range w.Result().Cookies() {
+		if c.Name == refreshTokenCookieName {
+			t.Error("mobile client must not receive a Set-Cookie header for the refresh token")
+		}
+	}
+}
+
+func TestRefreshToken_WebMissingCookie(t *testing.T) {
+	h := newAuthHandler(&mockAuthService{})
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/auth/refresh", nil)
+	w := httptest.NewRecorder()
+	h.RefreshToken(w, req)
+
+	assertStatus(t, w, http.StatusUnauthorized)
+	assertErrorCode(t, w, "UNAUTHORIZED")
+}
+
+// --------------------------------------------------------------------------
+// Logout — mobile/web additions
+// --------------------------------------------------------------------------
+
+func TestLogout_MobileSuccess(t *testing.T) {
+	var passedToken string
+	svc := &mockAuthService{
+		logout: func(_ context.Context, req *dto.LogoutRequest) error {
+			passedToken = req.RefreshToken
+			return nil
+		},
+	}
+	h := newAuthHandler(svc)
+
+	b, _ := json.Marshal(dto.LogoutRequest{RefreshToken: "mobile-logout-token"}) //nolint:gosec // test fixture: not a real token
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/auth/logout", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Client-Type", "mobile")
+	w := httptest.NewRecorder()
+	h.Logout(w, req)
+
+	assertStatus(t, w, http.StatusOK)
+	if passedToken != "mobile-logout-token" {
+		t.Fatalf("expected mobile-logout-token passed to service, got %q", passedToken)
+	}
+	for _, c := range w.Result().Cookies() {
+		if c.Name == refreshTokenCookieName {
+			t.Error("mobile client must not receive a Set-Cookie header on logout")
+		}
+	}
+}
+
+func TestLogout_ServiceError(t *testing.T) {
+	svc := &mockAuthService{
+		logout: func(_ context.Context, _ *dto.LogoutRequest) error {
+			return errors.NewUnauthorizedError("invalid refresh token")
+		},
+	}
+	h := newAuthHandler(svc)
+
+	req := newPostRequest(t, "/auth/logout")
+	req.AddCookie(&http.Cookie{Name: refreshTokenCookieName, Value: "bad-token"})
+	w := httptest.NewRecorder()
+	h.Logout(w, req)
+
+	assertStatus(t, w, http.StatusUnauthorized)
+	assertErrorCode(t, w, "UNAUTHORIZED")
+}
+
+// --------------------------------------------------------------------------
+// LogoutAllSessions — service error + mobile additions
+// --------------------------------------------------------------------------
+
+func TestLogoutAllSessions_ServiceError(t *testing.T) {
+	userID := uuid.New()
+	svc := &mockAuthService{
+		logoutAllSessions: func(_ context.Context, _ uuid.UUID) error {
+			return errors.ErrInternal
+		},
+	}
+	h := newAuthHandler(svc)
+
+	w := doPostWithUser(t, h.LogoutAllSessions, "/auth/logout-all", nil, userID)
+
+	assertStatus(t, w, http.StatusInternalServerError)
+}
+
+func TestLogoutAllSessions_MobileNoCookieClear(t *testing.T) {
+	userID := uuid.New()
+	svc := &mockAuthService{
+		logoutAllSessions: func(_ context.Context, _ uuid.UUID) error { return nil },
+	}
+	h := newAuthHandler(svc)
+
+	b, _ := json.Marshal(struct{}{})
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/auth/logout-all", bytes.NewReader(b))
+	req.Header.Set("X-Client-Type", "mobile")
+	req = req.WithContext(httputil.WithUserID(req.Context(), userID))
+	w := httptest.NewRecorder()
+	h.LogoutAllSessions(w, req)
+
+	assertStatus(t, w, http.StatusOK)
+	for _, c := range w.Result().Cookies() {
+		if c.Name == refreshTokenCookieName {
+			t.Error("mobile client must not receive a Set-Cookie header on logout-all")
+		}
+	}
 }

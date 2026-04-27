@@ -280,3 +280,20 @@ func TestGetFollowing_InvalidUUID(t *testing.T) {
 
 	assertStatus(t, w, http.StatusBadRequest)
 }
+
+func TestGetFollowing_ServiceError(t *testing.T) {
+	svc := &mockFollowService{
+		getFollowing: func(_ context.Context, _ uuid.UUID, _ pagination.PaginationRequest) ([]*entity.Follow, pagination.PaginationResponse, error) {
+			return nil, pagination.PaginationResponse{}, errors.ErrInternal
+		},
+	}
+	h := newFollowHandler(svc)
+
+	targetID := uuid.New()
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("/users/%s/following", targetID), nil)
+	req = withChiParam(req, "userKey", targetID.String())
+	w := httptest.NewRecorder()
+	h.GetFollowing(w, req)
+
+	assertStatus(t, w, http.StatusInternalServerError)
+}

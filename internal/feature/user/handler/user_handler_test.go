@@ -312,3 +312,37 @@ func TestDeactivateUser_NotFound(t *testing.T) {
 
 	assertStatus(t, w, http.StatusNotFound)
 }
+
+// --------------------------------------------------------------------------
+// Authorization gate tests
+// --------------------------------------------------------------------------
+
+func TestUpdateUser_Forbidden(t *testing.T) {
+	userA := uuid.New()
+	userB := uuid.New()
+	h := newUserHandler(&mockUserService{})
+
+	req := putJSON(t, fmt.Sprintf("/users/%s", userB), map[string]string{"email": "new@example.com"})
+	req = withChiParam(req, "userKey", userB.String())
+	req = withUserID(req, userA)
+	w := httptest.NewRecorder()
+	h.UpdateUser(w, req)
+
+	assertStatus(t, w, http.StatusForbidden)
+	assertErrorCode(t, w, "FORBIDDEN")
+}
+
+func TestDeactivateUser_Forbidden(t *testing.T) {
+	userA := uuid.New()
+	userB := uuid.New()
+	h := newUserHandler(&mockUserService{})
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, fmt.Sprintf("/users/%s", userB), nil)
+	req = withChiParam(req, "userKey", userB.String())
+	req = withUserID(req, userA)
+	w := httptest.NewRecorder()
+	h.DeactivateUser(w, req)
+
+	assertStatus(t, w, http.StatusForbidden)
+	assertErrorCode(t, w, "FORBIDDEN")
+}
