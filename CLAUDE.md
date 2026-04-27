@@ -86,3 +86,8 @@ All config is loaded from `.env` via `pkg/config`. Update `.env.example` wheneve
 - `ROOT_EMAIL` + `ROOT_PASSWORD` — auto-bootstraps a root user on first boot if no users exist (`bootstrapRootUser` in `app.go`). No-op otherwise.
 - `STORAGE_PROVIDER` — `local` (default, serves `/static/*` from `STORAGE_LOCAL_DIR`) or `s3` (S3/MinIO/GCS).
 - `MAILER_PROVIDER` — `nop` (logs only) or `smtp`.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
