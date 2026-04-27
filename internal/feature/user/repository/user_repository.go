@@ -12,7 +12,7 @@ import (
 )
 
 type UserRepository struct {
-	queries *db.Queries
+	queries db.Querier
 	pool    *pgxpool.Pool
 }
 
@@ -270,7 +270,7 @@ func (r *UserRepository) WithTx(ctx context.Context, fn func(*db.Queries) error)
 		_ = tx.Rollback(ctx)
 	}()
 
-	q := r.queries.WithTx(tx)
+	q := db.New(tx)
 	if err := fn(q); err != nil {
 		return err
 	}

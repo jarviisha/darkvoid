@@ -13,7 +13,7 @@ import (
 
 type RefreshTokenRepository struct {
 	pool    *pgxpool.Pool
-	queries *db.Queries
+	queries db.Querier
 }
 
 func NewRefreshTokenRepository(pool *pgxpool.Pool) *RefreshTokenRepository {

@@ -11,7 +11,7 @@ import (
 )
 
 type FollowRepository struct {
-	queries *db.Queries
+	queries db.Querier
 }
 
 func NewFollowRepository(pool *pgxpool.Pool) *FollowRepository {

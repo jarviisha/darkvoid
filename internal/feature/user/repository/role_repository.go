@@ -13,7 +13,7 @@ import (
 
 // RoleRepository handles all DB operations for roles and user-role assignments.
 type RoleRepository struct {
-	queries *db.Queries
+	queries db.Querier
 	pool    *pgxpool.Pool
 }
 

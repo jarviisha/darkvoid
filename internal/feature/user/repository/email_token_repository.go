@@ -14,7 +14,7 @@ import (
 
 // EmailTokenRepository handles email token persistence via sqlc-generated queries.
 type EmailTokenRepository struct {
-	queries *db.Queries
+	queries db.Querier
 	pool    *pgxpool.Pool
 }
 
