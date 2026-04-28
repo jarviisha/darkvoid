@@ -414,3 +414,91 @@ func TestGetUserPosts_InvalidUserID(t *testing.T) {
 	h.GetUserPosts(w, r)
 	assertStatus(t, w, http.StatusBadRequest)
 }
+
+func TestGetUserPosts_ServiceError(t *testing.T) {
+	authorID := uuid.New()
+	svc := &mockPostService{
+		getUserPosts: func(_ context.Context, _ uuid.UUID, _ *uuid.UUID, _ *post.UserPostCursor, _ string, _ int32) ([]*entity.Post, *post.UserPostCursor, error) {
+			return nil, nil, post.ErrPostNotFound
+		},
+	}
+	h := newPostHandler(svc)
+
+	r, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/users/"+authorID.String()+"/posts", nil)
+	r = withChiParam(r, "userID", authorID.String())
+	w := httptest.NewRecorder()
+
+	h.GetUserPosts(w, r)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestGetUserPosts_AuthenticatedViewer(t *testing.T) {
+	authorID := uuid.New()
+	viewerID := uuid.New()
+	var capturedViewerID *uuid.UUID
+	svc := &mockPostService{
+		getUserPosts: func(_ context.Context, _ uuid.UUID, viewer *uuid.UUID, _ *post.UserPostCursor, _ string, _ int32) ([]*entity.Post, *post.UserPostCursor, error) {
+			capturedViewerID = viewer
+			return nil, nil, nil
+		},
+	}
+	h := newPostHandler(svc)
+
+	r, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/users/"+authorID.String()+"/posts", nil)
+	r = withAuth(r, viewerID)
+	r = withChiParam(r, "userID", authorID.String())
+	w := httptest.NewRecorder()
+
+	h.GetUserPosts(w, r)
+	assertStatus(t, w, http.StatusOK)
+	if capturedViewerID == nil || *capturedViewerID != viewerID {
+		t.Errorf("expected viewerID=%v forwarded to service, got %v", viewerID, capturedViewerID)
+	}
+}
+
+func TestGetUserPosts_CustomLimit(t *testing.T) {
+	authorID := uuid.New()
+	var capturedLimit int32
+	svc := &mockPostService{
+		getUserPosts: func(_ context.Context, _ uuid.UUID, _ *uuid.UUID, _ *post.UserPostCursor, _ string, limit int32) ([]*entity.Post, *post.UserPostCursor, error) {
+			capturedLimit = limit
+			return nil, nil, nil
+		},
+	}
+	h := newPostHandler(svc)
+
+	r, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/users/"+authorID.String()+"/posts?limit=50", nil)
+	r = withChiParam(r, "userID", authorID.String())
+	w := httptest.NewRecorder()
+
+	h.GetUserPosts(w, r)
+	assertStatus(t, w, http.StatusOK)
+	if capturedLimit != 50 {
+		t.Errorf("expected limit=50, got %d", capturedLimit)
+	}
+}
+
+func TestGetUserPosts_WithCursor(t *testing.T) {
+	authorID := uuid.New()
+	cursor := &post.UserPostCursor{CreatedAt: time.Now().UTC(), PostID: uuid.New().String()}
+	encoded := cursor.Encode()
+
+	var capturedCursor *post.UserPostCursor
+	svc := &mockPostService{
+		getUserPosts: func(_ context.Context, _ uuid.UUID, _ *uuid.UUID, c *post.UserPostCursor, _ string, _ int32) ([]*entity.Post, *post.UserPostCursor, error) {
+			capturedCursor = c
+			return nil, nil, nil
+		},
+	}
+	h := newPostHandler(svc)
+
+	r, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/users/"+authorID.String()+"/posts?cursor="+encoded, nil)
+	r = withChiParam(r, "userID", authorID.String())
+	w := httptest.NewRecorder()
+
+	h.GetUserPosts(w, r)
+	assertStatus(t, w, http.StatusOK)
+	if capturedCursor == nil {
+		t.Fatal("expected non-nil cursor forwarded to service")
+	}
+}

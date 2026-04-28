@@ -170,6 +170,20 @@ func TestCreatePost_InferMediaType_Image(t *testing.T) {
 	}
 }
 
+func TestCreatePost_RepoCreateError(t *testing.T) {
+	pr := &mockPostRepo{
+		create: func(_ context.Context, _ uuid.UUID, _ string, _ entity.Visibility) (*entity.Post, error) {
+			return nil, pkgerrors.NewInternalError(pkgerrors.ErrInternal)
+		},
+	}
+	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
+
+	_, err := svc.CreatePost(context.Background(), uuid.New(), "content", entity.VisibilityPublic, nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected error from repo create, got nil")
+	}
+}
+
 // --------------------------------------------------------------------------
 // GetPost tests
 // --------------------------------------------------------------------------
@@ -391,6 +405,70 @@ func TestDeletePost_NotFound(t *testing.T) {
 	assertErrorCode(t, err, "POST_NOT_FOUND")
 }
 
+func TestDeletePost_RepoError(t *testing.T) {
+	authorID := uuid.New()
+	pr := &mockPostRepo{
+		getByID: func(_ context.Context, _ uuid.UUID) (*entity.Post, error) {
+			return samplePost(authorID), nil
+		},
+		delete: func(_ context.Context, _ uuid.UUID) error {
+			return pkgerrors.NewInternalError(pkgerrors.ErrInternal)
+		},
+	}
+	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
+
+	err := svc.DeletePost(context.Background(), uuid.New(), authorID)
+	if err == nil {
+		t.Fatal("expected error from repo delete, got nil")
+	}
+}
+
+func TestDeletePost_GetByIDInternalError(t *testing.T) {
+	pr := &mockPostRepo{
+		getByID: func(_ context.Context, _ uuid.UUID) (*entity.Post, error) {
+			return nil, pkgerrors.NewInternalError(pkgerrors.ErrInternal) // not ErrNotFound
+		},
+	}
+	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
+
+	err := svc.DeletePost(context.Background(), uuid.New(), uuid.New())
+	if err == nil {
+		t.Fatal("expected internal error, got nil")
+	}
+}
+
+func TestUpdatePost_RepoError(t *testing.T) {
+	authorID := uuid.New()
+	pr := &mockPostRepo{
+		getByID: func(_ context.Context, _ uuid.UUID) (*entity.Post, error) {
+			return samplePost(authorID), nil
+		},
+		update: func(_ context.Context, _ uuid.UUID, _ string, _ entity.Visibility) (*entity.Post, error) {
+			return nil, pkgerrors.NewInternalError(pkgerrors.ErrInternal)
+		},
+	}
+	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
+
+	_, err := svc.UpdatePost(context.Background(), uuid.New(), authorID, "new content", entity.VisibilityPublic, nil, nil)
+	if err == nil {
+		t.Fatal("expected error from repo update, got nil")
+	}
+}
+
+func TestUpdatePost_GetByIDInternalError(t *testing.T) {
+	pr := &mockPostRepo{
+		getByID: func(_ context.Context, _ uuid.UUID) (*entity.Post, error) {
+			return nil, pkgerrors.NewInternalError(pkgerrors.ErrInternal) // not ErrNotFound
+		},
+	}
+	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
+
+	_, err := svc.UpdatePost(context.Background(), uuid.New(), uuid.New(), "content", entity.VisibilityPublic, nil, nil)
+	if err == nil {
+		t.Fatal("expected internal error, got nil")
+	}
+}
+
 // --------------------------------------------------------------------------
 // GetUserPosts tests
 // --------------------------------------------------------------------------
@@ -413,5 +491,55 @@ func TestGetUserPosts_Success(t *testing.T) {
 	}
 	if nextCursor != nil {
 		t.Errorf("expected no next cursor for single page, got %v", nextCursor)
+	}
+}
+
+func TestGetUserPosts_NextPageCursor(t *testing.T) {
+	authorID := uuid.New()
+	// Return limit+1 posts to trigger next-page cursor generation
+	pr := &mockPostRepo{
+		getByAuthorWithCursor: func(_ context.Context, _ uuid.UUID, _ pgtype.Timestamptz, _ uuid.UUID, _ string, _ int32) ([]*entity.Post, error) {
+			posts := make([]*entity.Post, 3) // limit=2, returns 3 → next page
+			for i := range posts {
+				posts[i] = samplePost(authorID)
+			}
+			return posts, nil
+		},
+	}
+	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
+
+	posts, nextCursor, err := svc.GetUserPosts(context.Background(), authorID, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(posts) != 2 {
+		t.Errorf("expected 2 posts (trimmed), got %d", len(posts))
+	}
+	if nextCursor == nil {
+		t.Error("expected non-nil next cursor when more pages exist")
+	}
+}
+
+func TestGetUserPosts_InvalidCursorPostID(t *testing.T) {
+	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, &mockLikeRepo{})
+	cursor := &post.UserPostCursor{CreatedAt: time.Now(), PostID: "not-a-uuid"}
+
+	_, _, err := svc.GetUserPosts(context.Background(), uuid.New(), nil, cursor, "", 20)
+	if err == nil {
+		t.Fatal("expected error for invalid cursor post ID, got nil")
+	}
+}
+
+func TestGetUserPosts_RepoError(t *testing.T) {
+	pr := &mockPostRepo{
+		getByAuthorWithCursor: func(_ context.Context, _ uuid.UUID, _ pgtype.Timestamptz, _ uuid.UUID, _ string, _ int32) ([]*entity.Post, error) {
+			return nil, pkgerrors.NewInternalError(pkgerrors.ErrInternal)
+		},
+	}
+	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
+
+	_, _, err := svc.GetUserPosts(context.Background(), uuid.New(), nil, nil, "", 20)
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
 }
