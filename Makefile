@@ -5,7 +5,7 @@ SHELL := /bin/bash
 	sqlc-generate sqlc-clean swagger-init swagger-generate swagger-serve generate \
 	build run dev clean \
 	test test-v test-cover test-cover-html test-feature lint deps \
-	docker-up docker-up-codohue docker-seed docker-seed-reset docker-down docker-logs \
+	docker-up docker-up-app docker-up-codohue docker-seed docker-seed-reset docker-down docker-down-app docker-logs docker-logs-app \
 	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-down-notification migrate-create migrate-status migrate-force \
 	db-reset install-tools
 
@@ -117,6 +117,9 @@ deps: ## Download and tidy Go dependencies
 docker-up: ## Start Docker containers (PostgreSQL, Redis, app)
 	$(DOCKER_COMPOSE) up -d
 
+docker-up-app: ## Start only the app container and connect to external/local infra
+	$(DOCKER_COMPOSE) -f docker-compose.external.yml up -d
+
 docker-up-codohue: ## Start Docker containers including Codohue CF recommender (requires CODOHUE_NAMESPACE_KEY)
 	$(DOCKER_COMPOSE) --profile codohue up -d
 
@@ -129,8 +132,14 @@ docker-seed-reset: ## Reset seeded data and seed again inside Docker
 docker-down: ## Stop Docker containers (all profiles)
 	$(DOCKER_COMPOSE) --profile codohue down
 
+docker-down-app: ## Stop the app-only Docker compose stack
+	$(DOCKER_COMPOSE) -f docker-compose.external.yml down
+
 docker-logs: ## View Docker container logs
 	$(DOCKER_COMPOSE) logs -f
+
+docker-logs-app: ## View app-only Docker container logs
+	$(DOCKER_COMPOSE) -f docker-compose.external.yml logs -f
 
 migrate-up: ## Run all pending migrations (user, post, notification)
 	$(call require_var,DATABASE_URL,make migrate-up DATABASE_URL=postgres://...)

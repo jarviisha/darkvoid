@@ -1,16 +1,48 @@
-# App only — uses external PostgreSQL and Redis
-# Usage: docker compose -f docker-compose.external.yml up -d
+# App only — uses PostgreSQL, Redis, and optional Codohue outside this compose project.
+# Usage: make docker-up-app
 #
-# Set all DB_* and REDIS_* vars in .env to point to your external services.
+# Defaults point at services reachable from the app container via host.docker.internal.
+# Override EXTERNAL_* variables in .env when your infra is elsewhere.
 
 services:
   app:
     build: .
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${SERVER_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8080/health",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     env_file:
-      - .env
+      - path: .env
+        required: false
+    environment:
+      # Database outside this compose project.
+      DB_HOST: ${EXTERNAL_DB_HOST:-host.docker.internal}
+      DB_PORT: ${EXTERNAL_DB_PORT:-5432}
+      DB_SSLMODE: ${EXTERNAL_DB_SSLMODE:-disable}
+
+      # Redis outside this compose project.
+      REDIS_HOST: ${EXTERNAL_REDIS_HOST:-host.docker.internal}
+      REDIS_PORT: ${EXTERNAL_REDIS_PORT:-6379}
+
+      # Codohue outside this compose project, only used when CODOHUE_ENABLED=true.
+      CODOHUE_BASE_URL: ${EXTERNAL_CODOHUE_BASE_URL:-http://host.docker.internal:2002}
+
+      STORAGE_LOCAL_DIR: /app/uploads
     volumes:
       - uploads:/app/uploads
 
