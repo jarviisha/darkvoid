@@ -40,7 +40,7 @@ services:
       REDIS_PORT: ${EXTERNAL_REDIS_PORT:-6379}
 
       # Codohue outside this compose project, only used when CODOHUE_ENABLED=true.
-      CODOHUE_BASE_URL: ${EXTERNAL_CODOHUE_BASE_URL:-http://host.docker.internal:2002}
+      CODOHUE_BASE_URL: ${EXTERNAL_CODOHUE_BASE_URL:-http://host.docker.internal:2001}
 
       STORAGE_LOCAL_DIR: /app/uploads
     volumes:

@@ -26,8 +26,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	postentity "github.com/jarviisha/darkvoid/internal/feature/post/entity"
+	postrepo "github.com/jarviisha/darkvoid/internal/feature/post/repository"
+	postservice "github.com/jarviisha/darkvoid/internal/feature/post/service"
+	userrepo "github.com/jarviisha/darkvoid/internal/feature/user/repository"
+	"github.com/jarviisha/darkvoid/pkg/codohue"
 	"github.com/jarviisha/darkvoid/pkg/config"
 	"github.com/jarviisha/darkvoid/pkg/database"
+	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
+	"github.com/jarviisha/darkvoid/pkg/tfidf"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -66,9 +73,16 @@ func main() {
 		log.Fatalf("db health check: %v", err)
 	}
 
+	services, cleanupServices, err := newSeedServices(ctx, pool, cfg)
+	if err != nil {
+		log.Fatalf("seed services: %v", err)
+	}
+	defer cleanupServices()
+
 	s := &seeder{
-		pool: pool,
-		rng:  rand.New(rand.NewSource(42)), //nolint:gosec // fixed seed for reproducible data
+		pool:     pool,
+		services: services,
+		rng:      rand.New(rand.NewSource(42)), //nolint:gosec // fixed seed for reproducible data
 	}
 
 	if *reset {
@@ -94,11 +108,6 @@ func main() {
 		log.Fatalf("seed posts: %v", err)
 	}
 	log.Printf("  created %d posts", len(postIDs))
-
-	log.Println("seeding hashtags...")
-	if err = s.seedHashtags(ctx, postIDs); err != nil {
-		log.Fatalf("seed hashtags: %v", err)
-	}
 
 	log.Println("seeding likes...")
 	if err = s.seedLikes(ctx, userIDs, postIDs, *likesPerPost); err != nil {
@@ -375,8 +384,108 @@ var hashtagPool = [][]string{
 // ── seeder ────────────────────────────────────────────────────────────────────
 
 type seeder struct {
-	pool *pgxpool.Pool
-	rng  *rand.Rand
+	pool     *pgxpool.Pool
+	services *seedServices
+	rng      *rand.Rand
+}
+
+type seedServices struct {
+	post    *postservice.PostService
+	like    *postservice.LikeService
+	comment *postservice.CommentService
+}
+
+type seedUserReader struct {
+	userRepo *userrepo.UserRepository
+}
+
+func (r *seedUserReader) GetAuthorsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]*postentity.Author, error) {
+	users, err := r.userRepo.GetUsersByIDsAny(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	authors := make(map[uuid.UUID]*postentity.Author, len(users))
+	for _, u := range users {
+		authors[u.ID] = &postentity.Author{
+			ID:          u.ID,
+			Username:    u.Username,
+			DisplayName: u.DisplayName,
+			AvatarKey:   u.AvatarKey,
+		}
+	}
+	return authors, nil
+}
+
+func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) (*seedServices, func(), error) {
+	userRepository := userrepo.NewUserRepository(pool)
+	userReader := &seedUserReader{userRepo: userRepository}
+
+	postRepository := postrepo.NewPostRepository(pool)
+	mediaRepository := postrepo.NewMediaRepository(pool)
+	likeRepository := postrepo.NewLikeRepository(pool)
+	commentRepository := postrepo.NewCommentRepository(pool)
+	commentMediaRepository := postrepo.NewCommentMediaRepository(pool)
+	commentLikeRepository := postrepo.NewCommentLikeRepository(pool)
+	hashtagRepository := postrepo.NewHashtagRepository(pool)
+	mentionRepository := postrepo.NewMentionRepository(pool)
+	commentMentionRepository := postrepo.NewCommentMentionRepository(pool)
+
+	postSvc := postservice.NewPostService(pool, postRepository, mediaRepository, userReader, hashtagRepository,
+		postservice.WithLikeRepo(likeRepository),
+		postservice.WithMentionRepo(mentionRepository),
+	)
+	likeSvc := postservice.NewLikeService(likeRepository, postRepository)
+	commentSvc := postservice.NewCommentService(pool, commentRepository, commentMediaRepository, postRepository, userReader,
+		postservice.WithCommentLikeRepo(commentLikeRepository),
+		postservice.WithCommentMentionRepo(commentMentionRepository),
+	)
+
+	var redisClient *pkgredis.Client
+	cleanup := func() {}
+	if cfg.Codohue.Enabled {
+		if !cfg.Redis.Enabled {
+			return nil, cleanup, fmt.Errorf("CODOHUE_ENABLED=true requires REDIS_ENABLED=true so seed behavior events can be published")
+		}
+
+		var err error
+		redisClient, err = pkgredis.New(ctx, &pkgredis.Config{
+			Host:     cfg.Redis.Host,
+			Port:     cfg.Redis.Port,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+			PoolSize: cfg.Redis.PoolSize,
+		})
+		if err != nil {
+			return nil, cleanup, fmt.Errorf("connect redis for codohue events: %w", err)
+		}
+		cleanup = func() {
+			if err := redisClient.Close(); err != nil {
+				log.Printf("  warn close redis: %v", err)
+			}
+		}
+
+		codohueClient := codohue.NewClient(cfg.Codohue.BaseURL, cfg.Codohue.NamespaceKey, cfg.Codohue.Namespace, redisClient)
+		if codohueClient == nil {
+			cleanup()
+			return nil, func() {}, fmt.Errorf("create codohue client")
+		}
+		if err := codohueClient.Ping(ctx); err != nil {
+			cleanup()
+			return nil, func() {}, fmt.Errorf("codohue ping: %w", err)
+		}
+
+		postSvc.WithEmbedding(tfidf.New(cfg.Codohue.EmbeddingDim), codohueClient)
+		likeSvc.WithBehaviorEventPublisher(codohueClient)
+		commentSvc.WithBehaviorEventPublisher(codohueClient)
+		log.Printf("codohue wired for seed events and post embeddings (namespace=%s)", cfg.Codohue.Namespace)
+	}
+
+	return &seedServices{
+		post:    postSvc,
+		like:    likeSvc,
+		comment: commentSvc,
+	}, cleanup, nil
 }
 
 func (s *seeder) reset(ctx context.Context) {
@@ -416,7 +525,8 @@ func (s *seeder) seedUsers(ctx context.Context) ([]uuid.UUID, []uuid.UUID, error
 		id := uuid.New()
 		email := fmt.Sprintf("%s@seed.local", p.username)
 
-		_, err := s.pool.Exec(ctx, `
+		var existingID uuid.UUID
+		err := s.pool.QueryRow(ctx, `
 			INSERT INTO usr.users (id, username, email, password_hash, is_active, display_name, bio, location)
 			VALUES ($1, $2, $3, $4, true, $5, $6, $7)
 			ON CONFLICT (email) DO UPDATE
@@ -424,14 +534,14 @@ func (s *seeder) seedUsers(ctx context.Context) ([]uuid.UUID, []uuid.UUID, error
 				    bio=EXCLUDED.bio, location=EXCLUDED.location
 			RETURNING id`,
 			id, p.username, email, pwHash, p.displayName, p.bio, p.location,
-		)
+		).Scan(&existingID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("insert user %s: %w", p.username, err)
 		}
 
-		allIDs = append(allIDs, id)
+		allIDs = append(allIDs, existingID)
 		if p.popular {
-			popularIDs = append(popularIDs, id)
+			popularIDs = append(popularIDs, existingID)
 		}
 	}
 	return allIDs, popularIDs, nil
@@ -493,13 +603,19 @@ func (s *seeder) seedFollows(ctx context.Context, allIDs, popularIDs []uuid.UUID
 // Post ages are spread over the past 21 days; recent posts are more frequent
 // to simulate realistic activity patterns.
 func (s *seeder) seedPosts(ctx context.Context, userIDs []uuid.UUID, n int) ([]uuid.UUID, error) {
-	visibilities := []string{"public", "public", "public", "followers"} // 75% public
+	visibilities := []postentity.Visibility{
+		postentity.VisibilityPublic,
+		postentity.VisibilityPublic,
+		postentity.VisibilityPublic,
+		postentity.VisibilityFollowers,
+	} // 75% public
 	ids := make([]uuid.UUID, 0, n)
 
 	for i := range n {
 		authorID := userIDs[s.rng.Intn(len(userIDs))]
 		visibility := visibilities[s.rng.Intn(len(visibilities))]
 		content := postTemplates[s.rng.Intn(len(postTemplates))]
+		tags := s.pickTags()
 
 		// Bias toward recent posts: exponential distribution capped at 21 days.
 		hoursAgo := s.rng.ExpFloat64() * 48 // mean = 2 days
@@ -508,64 +624,37 @@ func (s *seeder) seedPosts(ctx context.Context, userIDs []uuid.UUID, n int) ([]u
 		}
 		createdAt := time.Now().Add(-time.Duration(hoursAgo * float64(time.Hour)))
 
-		id := uuid.New()
-		_, err := s.pool.Exec(ctx, `
-			INSERT INTO post.posts (id, author_id, content, visibility, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $5)`,
-			id, authorID, content, visibility, createdAt,
-		)
+		p, err := s.services.post.CreatePost(ctx, authorID, content, visibility, nil, nil, tags)
 		if err != nil {
-			return nil, fmt.Errorf("insert post %d: %w", i, err)
+			return nil, fmt.Errorf("create post %d: %w", i, err)
 		}
-		ids = append(ids, id)
+		if _, err = s.pool.Exec(ctx, `
+			UPDATE post.posts
+			SET created_at = $2, updated_at = $2
+			WHERE id = $1`,
+			p.ID, createdAt,
+		); err != nil {
+			return nil, fmt.Errorf("backdate post %d: %w", i, err)
+		}
+		ids = append(ids, p.ID)
 	}
 	return ids, nil
 }
 
-// seedHashtags links hashtags to posts. Each post has a 60% chance of receiving 1–3 tags.
-func (s *seeder) seedHashtags(ctx context.Context, postIDs []uuid.UUID) error {
-	// Upsert all hashtag names, collect id map.
-	tagIDs := make(map[string]uuid.UUID)
-	for _, group := range hashtagPool {
-		for _, name := range group {
-			id := uuid.New()
-			var existing uuid.UUID
-			err := s.pool.QueryRow(ctx, `
-				INSERT INTO post.hashtags (id, name)
-				VALUES ($1, $2)
-				ON CONFLICT (name) DO UPDATE SET name=EXCLUDED.name
-				RETURNING id`,
-				id, name,
-			).Scan(&existing)
-			if err != nil {
-				return fmt.Errorf("upsert hashtag %s: %w", name, err)
-			}
-			tagIDs[name] = existing
-		}
+// pickTags gives each post a 60% chance of receiving 1-3 category tags.
+func (s *seeder) pickTags() []string {
+	if s.rng.Float32() > 0.60 {
+		return nil
 	}
 
-	for _, postID := range postIDs {
-		if s.rng.Float32() > 0.60 {
-			continue // 40% of posts have no hashtags
-		}
-		group := hashtagPool[s.rng.Intn(len(hashtagPool))]
-		// Pick 1–3 tags from the chosen category.
-		n := 1 + s.rng.Intn(min(3, len(group)))
-		perm := s.rng.Perm(len(group))
-		for _, idx := range perm[:n] {
-			name := group[idx]
-			tagID := tagIDs[name]
-			_, err := s.pool.Exec(ctx, `
-				INSERT INTO post.post_hashtags (post_id, hashtag_id)
-				VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-				postID, tagID,
-			)
-			if err != nil {
-				return fmt.Errorf("link hashtag %s to post: %w", name, err)
-			}
-		}
+	group := hashtagPool[s.rng.Intn(len(hashtagPool))]
+	n := 1 + s.rng.Intn(min(3, len(group)))
+	perm := s.rng.Perm(len(group))
+	tags := make([]string, 0, n)
+	for _, idx := range perm[:n] {
+		tags = append(tags, group[idx])
 	}
-	return nil
+	return tags
 }
 
 // seedLikes distributes likes realistically:
@@ -581,13 +670,12 @@ func (s *seeder) seedLikes(ctx context.Context, userIDs, postIDs []uuid.UUID, ma
 
 		perm := s.rng.Perm(len(userIDs))
 		for _, idx := range perm[:n] {
-			_, err := s.pool.Exec(ctx, `
-				INSERT INTO post.likes (user_id, post_id)
-				VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-				userIDs[idx], postID,
-			)
+			liked, err := s.services.like.Toggle(ctx, userIDs[idx], postID)
 			if err != nil {
-				return fmt.Errorf("insert like: %w", err)
+				return fmt.Errorf("toggle like: %w", err)
+			}
+			if !liked {
+				return fmt.Errorf("toggle like unexpectedly unliked post %s for user %s", postID, userIDs[idx])
 			}
 		}
 	}
@@ -611,17 +699,12 @@ func (s *seeder) seedComments(ctx context.Context, userIDs, postIDs []uuid.UUID,
 				parentID = &parent
 			}
 
-			id := uuid.New()
-			_, err := s.pool.Exec(ctx, `
-				INSERT INTO post.comments (id, post_id, author_id, parent_id, content)
-				VALUES ($1, $2, $3, $4, $5)`,
-				id, postID, authorID, parentID, content,
-			)
+			comment, err := s.services.comment.CreateComment(ctx, postID, authorID, parentID, content, nil, nil)
 			if err != nil {
-				return fmt.Errorf("insert comment: %w", err)
+				return fmt.Errorf("create comment: %w", err)
 			}
 			if parentID == nil {
-				commentIDs = append(commentIDs, id)
+				commentIDs = append(commentIDs, comment.ID)
 			}
 		}
 	}
