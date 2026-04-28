@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -9,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	postcache "github.com/jarviisha/darkvoid/internal/feature/post/cache"
 	"github.com/jarviisha/darkvoid/internal/feature/post/entity"
 	pkgerrors "github.com/jarviisha/darkvoid/pkg/errors"
 )
@@ -207,6 +209,9 @@ func (m *mockFollowChecker) IsFollowing(ctx context.Context, followerID, followe
 
 type mockHashtagRepo struct {
 	getNamesByPostIDs func(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID][]string, error)
+	getTrending       func(ctx context.Context, limit int32) ([]*entity.TrendingHashtag, error)
+	getPostsByHashtag func(ctx context.Context, name string, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, limit int32) ([]*entity.Post, error)
+	searchByPrefix    func(ctx context.Context, prefix string, limit int32) ([]string, error)
 }
 
 func (m *mockHashtagRepo) WithTx(_ pgx.Tx) hashtagRepo { return m }
@@ -222,13 +227,22 @@ func (m *mockHashtagRepo) GetNamesByPostIDs(ctx context.Context, postIDs []uuid.
 	}
 	return make(map[uuid.UUID][]string), nil
 }
-func (m *mockHashtagRepo) GetTrending(_ context.Context, _ int32) ([]*entity.TrendingHashtag, error) {
+func (m *mockHashtagRepo) GetTrending(ctx context.Context, limit int32) ([]*entity.TrendingHashtag, error) {
+	if m.getTrending != nil {
+		return m.getTrending(ctx, limit)
+	}
 	return nil, nil
 }
-func (m *mockHashtagRepo) GetPostsByHashtag(_ context.Context, _ string, _ pgtype.Timestamptz, _ uuid.UUID, _ int32) ([]*entity.Post, error) {
+func (m *mockHashtagRepo) GetPostsByHashtag(ctx context.Context, name string, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, limit int32) ([]*entity.Post, error) {
+	if m.getPostsByHashtag != nil {
+		return m.getPostsByHashtag(ctx, name, cursorCreatedAt, cursorPostID, limit)
+	}
 	return nil, nil
 }
-func (m *mockHashtagRepo) SearchByPrefix(_ context.Context, _ string, _ int32) ([]string, error) {
+func (m *mockHashtagRepo) SearchByPrefix(ctx context.Context, prefix string, limit int32) ([]string, error) {
+	if m.searchByPrefix != nil {
+		return m.searchByPrefix(ctx, prefix, limit)
+	}
 	return nil, nil
 }
 
@@ -284,4 +298,111 @@ func (m *mockNotificationEmitter) EmitMention(ctx context.Context, actorID, reci
 		return m.emitMention(ctx, actorID, recipientID, postID)
 	}
 	return nil
+}
+
+// --------------------------------------------------------------------------
+// mockCommentLikeRepo (T001)
+// --------------------------------------------------------------------------
+
+type mockCommentLikeRepo struct {
+	like               func(ctx context.Context, userID, commentID uuid.UUID) error
+	unlike             func(ctx context.Context, userID, commentID uuid.UUID) error
+	isLiked            func(ctx context.Context, userID, commentID uuid.UUID) (bool, error)
+	getLikedCommentIDs func(ctx context.Context, userID uuid.UUID, commentIDs []uuid.UUID) ([]uuid.UUID, error)
+}
+
+func (m *mockCommentLikeRepo) Like(ctx context.Context, userID, commentID uuid.UUID) error {
+	if m.like != nil {
+		return m.like(ctx, userID, commentID)
+	}
+	return nil
+}
+func (m *mockCommentLikeRepo) Unlike(ctx context.Context, userID, commentID uuid.UUID) error {
+	if m.unlike != nil {
+		return m.unlike(ctx, userID, commentID)
+	}
+	return nil
+}
+func (m *mockCommentLikeRepo) IsLiked(ctx context.Context, userID, commentID uuid.UUID) (bool, error) {
+	if m.isLiked != nil {
+		return m.isLiked(ctx, userID, commentID)
+	}
+	return false, nil
+}
+func (m *mockCommentLikeRepo) GetLikedCommentIDs(ctx context.Context, userID uuid.UUID, commentIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if m.getLikedCommentIDs != nil {
+		return m.getLikedCommentIDs(ctx, userID, commentIDs)
+	}
+	return nil, nil
+}
+
+// --------------------------------------------------------------------------
+// mockHashtagCache (T002)
+// --------------------------------------------------------------------------
+
+type mockHashtagCache struct {
+	getTrendingHashtags        func(ctx context.Context) ([]*entity.TrendingHashtag, error)
+	setTrendingHashtags        func(ctx context.Context, tags []*entity.TrendingHashtag) error
+	invalidateTrendingHashtags func(ctx context.Context) error
+	getHashtagPostsPage1       func(ctx context.Context, name string) (*postcache.HashtagPostsPage, error)
+	setHashtagPostsPage1       func(ctx context.Context, name string, page *postcache.HashtagPostsPage) error
+	getSearchResults           func(ctx context.Context, prefix string) ([]string, error)
+	setSearchResults           func(ctx context.Context, prefix string, names []string) error
+}
+
+func (m *mockHashtagCache) GetTrendingHashtags(ctx context.Context) ([]*entity.TrendingHashtag, error) {
+	if m.getTrendingHashtags != nil {
+		return m.getTrendingHashtags(ctx)
+	}
+	return nil, errors.New("cache miss")
+}
+func (m *mockHashtagCache) SetTrendingHashtags(ctx context.Context, tags []*entity.TrendingHashtag) error {
+	if m.setTrendingHashtags != nil {
+		return m.setTrendingHashtags(ctx, tags)
+	}
+	return nil
+}
+func (m *mockHashtagCache) InvalidateTrendingHashtags(ctx context.Context) error {
+	if m.invalidateTrendingHashtags != nil {
+		return m.invalidateTrendingHashtags(ctx)
+	}
+	return nil
+}
+func (m *mockHashtagCache) GetHashtagPostsPage1(ctx context.Context, name string) (*postcache.HashtagPostsPage, error) {
+	if m.getHashtagPostsPage1 != nil {
+		return m.getHashtagPostsPage1(ctx, name)
+	}
+	return nil, errors.New("cache miss")
+}
+func (m *mockHashtagCache) SetHashtagPostsPage1(ctx context.Context, name string, page *postcache.HashtagPostsPage) error {
+	if m.setHashtagPostsPage1 != nil {
+		return m.setHashtagPostsPage1(ctx, name, page)
+	}
+	return nil
+}
+func (m *mockHashtagCache) GetSearchResults(ctx context.Context, prefix string) ([]string, error) {
+	if m.getSearchResults != nil {
+		return m.getSearchResults(ctx, prefix)
+	}
+	return nil, errors.New("cache miss")
+}
+func (m *mockHashtagCache) SetSearchResults(ctx context.Context, prefix string, names []string) error {
+	if m.setSearchResults != nil {
+		return m.setSearchResults(ctx, prefix, names)
+	}
+	return nil
+}
+
+// --------------------------------------------------------------------------
+// Additional constructors (T003)
+// --------------------------------------------------------------------------
+
+// newCommentLikeService creates a CommentLikeService with the given mocks for testing.
+func newCommentLikeService(clr commentLikeRepo, cr commentRepo) *CommentLikeService {
+	return &CommentLikeService{commentLikeRepo: clr, commentRepo: cr}
+}
+
+// newHashtagService creates a HashtagService with the given mocks for testing.
+func newHashtagService(hr hashtagRepo, hc hashtagCache, pr postRepo) *HashtagService {
+	return &HashtagService{hashtagRepo: hr, hashtagCache: hc, postRepo: pr}
 }
