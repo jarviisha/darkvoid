@@ -3,6 +3,16 @@
 #
 # Works out of the box with sensible defaults.
 # Override any value by creating a .env file next to this file.
+#
+# Port isolation: only the app port is bound to the host by default.
+# Internal services (postgres, redis, qdrant, codohue-api) communicate over
+# Docker's internal network and do not expose host ports, preventing conflicts
+# with any services already running on your machine.
+#
+# To connect a local DB client or inspect Redis from the host, use:
+#   docker compose exec postgres psql -U postgres darkvoid
+#   docker compose exec redis redis-cli
+# Or add a docker-compose.override.yml to expose specific ports temporarily.
 
 services:
   postgres:
@@ -12,8 +22,6 @@ services:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
       POSTGRES_DB: ${DB_NAME:-darkvoid}
-    ports:
-      - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -26,8 +34,6 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server ${REDIS_PASSWORD:+--requirepass $REDIS_PASSWORD}
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -35,6 +41,57 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  migrate-user:
+    image: migrate/migrate:4
+    restart: on-failure
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      [
+        "-path",
+        "/migrations/user",
+        "-database",
+        "postgres://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_user",
+        "up",
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrate-post:
+    image: migrate/migrate:4
+    restart: on-failure
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      [
+        "-path",
+        "/migrations/post",
+        "-database",
+        "postgres://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_post",
+        "up",
+      ]
+    depends_on:
+      migrate-user:
+        condition: service_completed_successfully
+
+  migrate-notification:
+    image: migrate/migrate:4
+    restart: on-failure
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      [
+        "-path",
+        "/migrations/notification",
+        "-database",
+        "postgres://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_notification",
+        "up",
+      ]
+    depends_on:
+      migrate-post:
+        condition: service_completed_successfully
 
   app:
     build: .
@@ -73,15 +130,118 @@ services:
 
       # Mailer
       MAILER_PROVIDER: ${MAILER_PROVIDER:-nop}
+
+      # Codohue CF recommender (active only when CODOHUE_ENABLED=true)
+      CODOHUE_ENABLED: ${CODOHUE_ENABLED:-false}
+      CODOHUE_BASE_URL: ${CODOHUE_DOCKER_BASE_URL:-http://codohue-api:2001}
+      CODOHUE_NAMESPACE_KEY: ${CODOHUE_NAMESPACE_KEY:-${CODOHUE_API_KEY:-}}
+      CODOHUE_NAMESPACE: ${CODOHUE_NAMESPACE:-darkvoid_feed}
+      CODOHUE_EMBEDDING_DIM: ${CODOHUE_EMBEDDING_DIM:-64}
     volumes:
       - uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
+      migrate-notification:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
+
+  seed:
+    build: .
+    profiles: [tools]
+    restart: "no"
+    entrypoint: ["/app/seed"]
+    command:
+      [
+        "--posts=${SEED_POSTS:-500}",
+        "--likes-per-post=${SEED_LIKES_PER_POST:-40}",
+        "--comments-per-post=${SEED_COMMENTS_PER_POST:-5}",
+      ]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      DB_NAME: ${DB_NAME:-darkvoid}
+      DB_SSLMODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate-notification:
+        condition: service_completed_successfully
+
+  # ---------------------------------------------------------------------------
+  # Codohue profile — start with: make docker-up-codohue
+  # ---------------------------------------------------------------------------
+
+  qdrant:
+    image: qdrant/qdrant:v1.17.1
+    profiles: [codohue]
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  codohue-migrate:
+    image: jarviisha/codohue-migrate:latest
+    profiles: [codohue]
+    restart: on-failure
+    environment:
+      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  codohue-api:
+    image: jarviisha/codohue-api:latest
+    profiles: [codohue]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable
+      # Reuses DarkVoid's redis; override CODOHUE_REDIS_URL if redis has a password
+      REDIS_URL: ${CODOHUE_REDIS_URL:-redis://redis:6379}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6334"
+      RECOMMENDER_API_KEY: ${CODOHUE_ADMIN_KEY:-${CODOHUE_API_KEY:-${CODOHUE_NAMESPACE_KEY:-}}}
+      LOG_FORMAT: json
+      BATCH_INTERVAL_MINUTES: "5"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2001/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      codohue-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+  codohue-cron:
+    image: jarviisha/codohue-cron:latest
+    profiles: [codohue]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable
+      REDIS_URL: ${CODOHUE_REDIS_URL:-redis://redis:6379}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6334"
+      LOG_FORMAT: json
+      BATCH_INTERVAL_MINUTES: "5"
+    depends_on:
+      codohue-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
 
 volumes:
   postgres_data:
   redis_data:
   uploads:
+  qdrant_data:

@@ -36,17 +36,56 @@ services:
       timeout: 5s
       retries: 10
 
-  migrate:
+  migrate-user:
     image: migrate/migrate:4
-    profiles: ["tools"]
+    restart: on-failure
     volumes:
       - ./migrations:/migrations:ro
-    env_file:
-      - path: .env
-        required: false
+    command:
+      [
+        "-path",
+        "/migrations/user",
+        "-database",
+        "postgres://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_user",
+        "up",
+      ]
     depends_on:
       postgres:
         condition: service_healthy
+
+  migrate-post:
+    image: migrate/migrate:4
+    restart: on-failure
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      [
+        "-path",
+        "/migrations/post",
+        "-database",
+        "postgres://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_post",
+        "up",
+      ]
+    depends_on:
+      migrate-user:
+        condition: service_completed_successfully
+
+  migrate-notification:
+    image: migrate/migrate:4
+    restart: on-failure
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      [
+        "-path",
+        "/migrations/notification",
+        "-database",
+        "postgres://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_notification",
+        "up",
+      ]
+    depends_on:
+      migrate-post:
+        condition: service_completed_successfully
 
   app:
     image: ghcr.io/foxhathetoan/darkvoid:latest
@@ -101,6 +140,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate-notification:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 

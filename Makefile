@@ -5,7 +5,7 @@ SHELL := /bin/bash
 	sqlc-generate sqlc-clean swagger-init swagger-generate swagger-serve generate \
 	build run dev clean \
 	test test-v test-cover test-cover-html test-feature lint deps \
-	docker-up docker-down docker-logs \
+	docker-up docker-up-codohue docker-seed docker-seed-reset docker-down docker-logs \
 	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-down-notification migrate-create migrate-status migrate-force \
 	db-reset install-tools
 
@@ -117,8 +117,17 @@ deps: ## Download and tidy Go dependencies
 docker-up: ## Start Docker containers (PostgreSQL, Redis, app)
 	$(DOCKER_COMPOSE) up -d
 
-docker-down: ## Stop Docker containers
-	$(DOCKER_COMPOSE) down
+docker-up-codohue: ## Start Docker containers including Codohue CF recommender (requires CODOHUE_NAMESPACE_KEY)
+	$(DOCKER_COMPOSE) --profile codohue up -d
+
+docker-seed: ## Seed data inside Docker (usage: make docker-seed SEED_POSTS=500)
+	$(DOCKER_COMPOSE) --profile tools run --rm seed
+
+docker-seed-reset: ## Reset seeded data and seed again inside Docker
+	$(DOCKER_COMPOSE) --profile tools run --rm seed --reset --posts=$${SEED_POSTS:-500} --likes-per-post=$${SEED_LIKES_PER_POST:-40} --comments-per-post=$${SEED_COMMENTS_PER_POST:-5}
+
+docker-down: ## Stop Docker containers (all profiles)
+	$(DOCKER_COMPOSE) --profile codohue down
 
 docker-logs: ## View Docker container logs
 	$(DOCKER_COMPOSE) logs -f
@@ -174,7 +183,7 @@ db-reset: ## Reset dockerized database volumes after confirmation
 	@echo "WARNING: This will delete Docker volumes and all local data."
 	@read -r -p "Are you sure? [y/N] " reply; \
 	if [[ "$$reply" =~ ^[Yy]$$ ]]; then \
-		$(DOCKER_COMPOSE) down -v; \
+		$(DOCKER_COMPOSE) --profile codohue down -v; \
 		$(DOCKER_COMPOSE) up -d; \
 	else \
 		echo "Aborted."; \

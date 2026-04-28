@@ -12,6 +12,7 @@ RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/darkvoid ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/seed ./cmd/seed
 
 # Stage 2: Runtime
 FROM alpine:3.20
@@ -21,6 +22,7 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates tzdata
 
 COPY --from=builder /app/darkvoid .
+COPY --from=builder /app/seed .
 
 # Uploads directory for local storage provider
 RUN mkdir -p /app/uploads

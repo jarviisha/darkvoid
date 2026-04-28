@@ -1,0 +1,24 @@
+# Copy to docker-compose.override.yml when you need direct host access to
+# internal services (DB clients, Redis Insight, Qdrant dashboard, etc.).
+# docker-compose.override.yml is gitignored — safe to customize locally.
+#
+# Usage: cp docker-compose.override.yml.example docker-compose.override.yml
+# Then: docker compose up -d   (override is picked up automatically)
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${DB_EXPOSE_PORT:-5433}:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:${REDIS_EXPOSE_PORT:-6380}:6379"
+
+  qdrant:
+    ports:
+      - "127.0.0.1:${QDRANT_HTTP_PORT:-6335}:6333"
+      - "127.0.0.1:${QDRANT_GRPC_PORT:-6336}:6334"
+
+  codohue-api:
+    ports:
+      - "127.0.0.1:${CODOHUE_EXPOSE_PORT:-2002}:2001"
