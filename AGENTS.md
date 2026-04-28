@@ -33,3 +33,8 @@ PRs should describe the behavior change, note config or migration impact, list t
 
 ## Security & Configuration Tips
 Configuration is loaded from `.env`; keep secrets out of git and update `.env.example` when required variables change. For auth, cookie, storage, mail, or database changes, document any operational impact in the PR.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
