@@ -14,6 +14,8 @@ All three modules must be upgraded together:
 
 ## Recommendations
 
+Darkvoid calls the Go SDK `Client.Recommend` method with `WithLimit(limit)` and `WithOffset(offset)`, then maps the `codohuetypes.Response` item objects into feed recommendation candidates.
+
 Darkvoid expects recommendation responses to include:
 
 ```json
@@ -41,7 +43,7 @@ Darkvoid expects recommendation responses to include:
 
 ## Trending
 
-Darkvoid may use provider trending items for first-page or candidate-pool enrichment when enabled. Trending items must be treated as public-only candidates after DB resolution.
+Darkvoid calls the Go SDK `Client.Trending` method with `WithLimit(limit)` and `WithOffset(offset)` when provider trending is enabled. Trending items may be used for first-page or candidate-pool enrichment and must be treated as public-only candidates after DB resolution.
 
 ## Failure Handling
 

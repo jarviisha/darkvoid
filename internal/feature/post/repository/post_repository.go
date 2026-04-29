@@ -157,8 +157,8 @@ func followingCursorRowsToPosts(rows []db.GetFollowingPostsWithCursorRow) []*ent
 	return result
 }
 
-// GetPostsByIDs fetches public, non-deleted posts by their IDs.
-// Used to load Codohue-recommended posts not already present in the feed pool.
+// GetPostsByIDs fetches feed-visible, non-deleted posts by their IDs.
+// Callers that load provider-owned public pools must still filter visibility at their boundary.
 // Implemented directly via DBTX because sqlc does not generate unnest-based batch queries.
 func (r *PostRepository) GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*entity.Post, error) {
 	if len(ids) == 0 {
@@ -167,7 +167,7 @@ func (r *PostRepository) GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]
 	const q = `
 		SELECT id, author_id, content, visibility, like_count, comment_count, created_at, updated_at, deleted_at
 		FROM post.posts
-		WHERE id = ANY($1) AND deleted_at IS NULL AND visibility = 'public'`
+		WHERE id = ANY($1) AND deleted_at IS NULL AND visibility IN ('public', 'followers')`
 
 	rows, err := r.dbtx.Query(ctx, q, ids)
 	if err != nil {

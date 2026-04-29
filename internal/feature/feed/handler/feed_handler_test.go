@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -17,11 +18,11 @@ import (
 )
 
 type mockFeedService struct {
-	getFeed     func(ctx context.Context, userID uuid.UUID, cursor *feed.FollowingCursor) ([]*feedentity.FeedItem, *feed.FollowingCursor, error)
+	getFeed     func(ctx context.Context, userID uuid.UUID, cursor *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error)
 	getDiscover func(ctx context.Context, viewerID *uuid.UUID, cursor *feed.DiscoverCursor, limit int32) ([]*feedentity.Post, *feed.DiscoverCursor, error)
 }
 
-func (m *mockFeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *feed.FollowingCursor) ([]*feedentity.FeedItem, *feed.FollowingCursor, error) {
+func (m *mockFeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
 	if m.getFeed != nil {
 		return m.getFeed(ctx, userID, cursor)
 	}
@@ -76,7 +77,7 @@ func assertStatus(t *testing.T, w *httptest.ResponseRecorder, want int) {
 func TestGetFeed_Success(t *testing.T) {
 	userID := uuid.New()
 	svc := &mockFeedService{
-		getFeed: func(_ context.Context, _ uuid.UUID, _ *feed.FollowingCursor) ([]*feedentity.FeedItem, *feed.FollowingCursor, error) {
+		getFeed: func(_ context.Context, _ uuid.UUID, _ *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
 			return []*feedentity.FeedItem{sampleFeedItem(uuid.New())}, nil, nil
 		},
 	}
@@ -89,9 +90,9 @@ func TestGetFeed_Success(t *testing.T) {
 
 func TestGetFeed_WithNextCursor(t *testing.T) {
 	userID := uuid.New()
-	next := &feed.FollowingCursor{CreatedAt: time.Now(), PostID: uuid.New().String()}
+	next := &feed.FeedCursor{State: feed.NewFeedPageState(time.Now())}
 	svc := &mockFeedService{
-		getFeed: func(_ context.Context, _ uuid.UUID, _ *feed.FollowingCursor) ([]*feedentity.FeedItem, *feed.FollowingCursor, error) {
+		getFeed: func(_ context.Context, _ uuid.UUID, _ *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
 			return []*feedentity.FeedItem{sampleFeedItem(uuid.New())}, next, nil
 		},
 	}
@@ -102,9 +103,51 @@ func TestGetFeed_WithNextCursor(t *testing.T) {
 	assertStatus(t, w, http.StatusOK)
 }
 
+func TestGetFeed_WithRecommendationMetadata(t *testing.T) {
+	userID := uuid.New()
+	score := 0.91
+	rank := 1
+	svc := &mockFeedService{
+		getFeed: func(_ context.Context, _ uuid.UUID, _ *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
+			item := sampleFeedItem(uuid.New())
+			item.Source = feedentity.SourceRecommendation
+			item.RecommendationScore = &score
+			item.RecommendationRank = &rank
+			return []*feedentity.FeedItem{item}, nil, nil
+		},
+	}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/feed", nil)
+	r := withAuth(req, userID)
+	w := httptest.NewRecorder()
+	newFeedHandler(svc).GetFeed(w, r)
+	assertStatus(t, w, http.StatusOK)
+
+	var body FeedResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body.Data[0].RecommendationScore == nil || *body.Data[0].RecommendationScore != score {
+		t.Fatalf("recommendation score not returned: %+v", body.Data[0])
+	}
+	if body.Data[0].RecommendationRank == nil || *body.Data[0].RecommendationRank != rank {
+		t.Fatalf("recommendation rank not returned: %+v", body.Data[0])
+	}
+}
+
 func TestGetFeed_InvalidCursor(t *testing.T) {
 	userID := uuid.New()
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/feed?cursor=not-valid!!!", nil)
+	r := withAuth(req, userID)
+	w := httptest.NewRecorder()
+	newFeedHandler(&mockFeedService{}).GetFeed(w, r)
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestGetFeed_ExpiredCursor(t *testing.T) {
+	userID := uuid.New()
+	state := feed.NewFeedPageState(time.Now().UTC().Add(-feed.FeedSessionTTL * 2))
+	cursor := (&feed.FeedCursor{State: state}).Encode()
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/feed?cursor="+cursor, nil)
 	r := withAuth(req, userID)
 	w := httptest.NewRecorder()
 	newFeedHandler(&mockFeedService{}).GetFeed(w, r)
@@ -121,7 +164,7 @@ func TestGetFeed_Unauthenticated(t *testing.T) {
 func TestGetFeed_ServiceError(t *testing.T) {
 	userID := uuid.New()
 	svc := &mockFeedService{
-		getFeed: func(_ context.Context, _ uuid.UUID, _ *feed.FollowingCursor) ([]*feedentity.FeedItem, *feed.FollowingCursor, error) {
+		getFeed: func(_ context.Context, _ uuid.UUID, _ *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
 			return nil, nil, pkgerrors.NewInternalError(errors.New("db error"))
 		},
 	}
@@ -164,6 +207,23 @@ func TestGetDiscover_InvalidCursor(t *testing.T) {
 	w := httptest.NewRecorder()
 	newFeedHandler(&mockFeedService{}).GetDiscover(w, r)
 	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestGetDiscover_PassesBoundedLimit(t *testing.T) {
+	var gotLimit int32
+	svc := &mockFeedService{
+		getDiscover: func(_ context.Context, _ *uuid.UUID, _ *feed.DiscoverCursor, limit int32) ([]*feedentity.Post, *feed.DiscoverCursor, error) {
+			gotLimit = limit
+			return nil, nil, nil
+		},
+	}
+	r, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/discover?limit=120", nil)
+	w := httptest.NewRecorder()
+	newFeedHandler(svc).GetDiscover(w, r)
+	assertStatus(t, w, http.StatusOK)
+	if gotLimit != 100 {
+		t.Fatalf("limit = %d, want 100", gotLimit)
+	}
 }
 
 func TestGetDiscover_NoAuthStillWorks(t *testing.T) {

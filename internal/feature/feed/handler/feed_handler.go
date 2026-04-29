@@ -89,8 +89,10 @@ func toPostResponse(p *feedentity.Post, store storage.Storage) postResponse {
 // FeedItemResponse is one item in the scored feed response.
 type FeedItemResponse struct {
 	postResponse
-	Score  float64 `json:"score"`
-	Source string  `json:"source"`
+	Score               float64  `json:"score"`
+	Source              string   `json:"source"`
+	RecommendationScore *float64 `json:"recommendation_score,omitempty"`
+	RecommendationRank  *int     `json:"recommendation_rank,omitempty"`
 }
 
 // FeedResponse is the response for GET /feed.
@@ -108,7 +110,7 @@ type DiscoverResponse struct {
 // feedService defines the methods used by FeedHandler.
 // *feedservice.FeedService satisfies this interface.
 type feedService interface {
-	GetFeed(ctx context.Context, userID uuid.UUID, cursor *feed.FollowingCursor) ([]*feedentity.FeedItem, *feed.FollowingCursor, error)
+	GetFeed(ctx context.Context, userID uuid.UUID, cursor *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error)
 	GetDiscover(ctx context.Context, viewerID *uuid.UUID, cursor *feed.DiscoverCursor, limit int32) ([]*feedentity.Post, *feed.DiscoverCursor, error)
 }
 
@@ -146,7 +148,7 @@ func (h *FeedHandler) GetFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cursor, err := feed.DecodeFollowingCursor(r.URL.Query().Get("cursor"))
+	cursor, err := feed.DecodeFeedCursor(r.URL.Query().Get("cursor"))
 	if err != nil {
 		errors.WriteJSON(w, errors.NewBadRequestError("invalid cursor"))
 		return
@@ -163,9 +165,11 @@ func (h *FeedHandler) GetFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	for i, item := range items {
 		resp.Data[i] = FeedItemResponse{
-			postResponse: toPostResponse(item.Post, h.store),
-			Score:        item.Score,
-			Source:       string(item.Source),
+			postResponse:        toPostResponse(item.Post, h.store),
+			Score:               item.Score,
+			Source:              string(item.Source),
+			RecommendationScore: item.RecommendationScore,
+			RecommendationRank:  item.RecommendationRank,
 		}
 	}
 	if nextCursor != nil {

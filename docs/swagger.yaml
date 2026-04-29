@@ -735,6 +735,10 @@ definitions:
         items:
           $ref: '#/definitions/handler.mediaResponse'
         type: array
+      recommendation_rank:
+        type: integer
+      recommendation_score:
+        type: number
       score:
         type: number
       source:

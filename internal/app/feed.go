@@ -20,7 +20,8 @@ type FeedContext struct {
 	feedHandler *feedhandler.FeedHandler
 
 	// Cache is exported so app.go can wire WithTrendingInvalidator into post services.
-	cache feedcache.FeedCache
+	cache        feedcache.FeedCache
+	sessionCache feedcache.FeedSessionCache
 }
 
 type FeedPorts struct {
@@ -42,13 +43,16 @@ func SetupFeedContext(
 ) (*FeedContext, *codohue.Client) {
 	// Build cache: Redis when available, no-op otherwise.
 	var fc feedcache.FeedCache
+	var sessionCache feedcache.FeedSessionCache
 	if redisClient != nil {
 		fc = feedcache.NewRedisFeedCache(redisClient)
+		sessionCache = feedcache.NewRedisFeedSessionCache(redisClient)
 	} else {
 		fc = feedcache.NewNopFeedCache()
+		sessionCache = feedcache.NewNopFeedSessionCache()
 	}
 
-	feedSvc := feedservice.NewFeedService(postReader, followReader, likeReader, feed.NewLocalRanker(feed.DefaultScorerConfig()), fc)
+	feedSvc := feedservice.NewFeedService(postReader, followReader, likeReader, feed.NewLocalRanker(feed.DefaultScorerConfig()), fc, sessionCache)
 
 	// Wire Codohue recommender and trending fetcher into the feed service when enabled.
 	// Wiring Codohue into other contexts (post services) is the caller's responsibility.
@@ -62,9 +66,10 @@ func SetupFeedContext(
 	feedHdlr := feedhandler.NewFeedHandler(feedSvc, store)
 
 	return &FeedContext{
-		feedService: feedSvc,
-		feedHandler: feedHdlr,
-		cache:       fc,
+		feedService:  feedSvc,
+		feedHandler:  feedHdlr,
+		cache:        fc,
+		sessionCache: sessionCache,
 	}, codohueClient
 }
 

@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,6 +210,24 @@ func TestGetPostsByIDs_EmptySlice(t *testing.T) {
 	}
 	if posts != nil {
 		t.Errorf("expected nil posts, got %v", posts)
+	}
+}
+
+func TestDiscoverSQL_UsesDeterministicCompositeCursor(t *testing.T) {
+	raw, err := os.ReadFile("../sql/post_queries.sql")
+	if err != nil {
+		t.Fatalf("read post query source: %v", err)
+	}
+	sql := string(raw)
+	required := []string{
+		"visibility = 'public'",
+		"(created_at, id) < (sqlc.arg('cursor_created_at')::timestamptz, sqlc.arg('cursor_post_id')::uuid)",
+		"ORDER BY created_at DESC, id DESC",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("discover query missing %q", fragment)
+		}
 	}
 }
 

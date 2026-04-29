@@ -17,10 +17,10 @@
 
 **Purpose**: Prepare dependencies and document the exact target integration versions.
 
-- [ ] T001 Update the three Codohue Go modules to `v0.2.0` in `go.mod`
-- [ ] T002 Run module tidy after SDK upgrade and update `go.sum`
-- [ ] T003 [P] Record Codohue service `v0.4.0` and SDK `v0.2.0` compatibility notes in `pkg/codohue/docs.go`
-- [ ] T004 [P] Add feed/discovery refactor notes and validation commands to `specs/003-refactor-feed-discovery/quickstart.md`
+- [x] T001 Update the three Codohue Go modules to `v0.2.0` in `go.mod`
+- [x] T002 Run module tidy after SDK upgrade and update `go.sum`
+- [x] T003 [P] Record Codohue service `v0.4.0` and SDK `v0.2.0` compatibility notes in `pkg/codohue/docs.go`
+- [x] T004 [P] Add feed/discovery refactor notes and validation commands to `specs/003-refactor-feed-discovery/quickstart.md`
 
 ---
 
@@ -30,16 +30,16 @@
 
 **Critical**: No user story work can begin until this phase is complete.
 
-- [ ] T005 Create characterization scaffolding and feed service mocks in `internal/feature/feed/service/feed_service_test.go`
-- [ ] T006 Define recommendation item/page types with object ID, score, rank, limit, offset, and total in `internal/feature/feed/recommender.go`
-- [ ] T007 Update feed recommender and trending interfaces for paginated recommendation metadata in `internal/feature/feed/recommender.go`
-- [ ] T008 Add versioned feed page state, feed candidate, and cursor encode/decode types in `internal/feature/feed/cursor.go`
-- [ ] T009 Add bounded feed continuation cache interface and no-op implementation in `internal/feature/feed/cache/feed_session_cache.go`
-- [ ] T010 Implement Redis-backed feed continuation cache with TTL and size caps in `internal/feature/feed/cache/redis_feed_session_cache.go`
-- [ ] T011 Wire feed continuation cache through feed context setup in `internal/app/feed.go`
-- [ ] T012 Update feed handler service interface to accept and return the new feed cursor type in `internal/feature/feed/handler/feed_handler.go`
-- [ ] T013 Update `docs.go` package descriptions for feed cursor/session responsibilities in `internal/feature/feed/docs.go`
-- [ ] T014 Update feed service package description for mixed-source pagination responsibilities in `internal/feature/feed/service/docs.go`
+- [x] T005 Create characterization scaffolding and feed service mocks in `internal/feature/feed/service/feed_service_test.go`
+- [x] T006 Define recommendation item/page types with object ID, score, rank, limit, offset, and total in `internal/feature/feed/recommender.go`
+- [x] T007 Update feed recommender and trending interfaces for paginated recommendation metadata in `internal/feature/feed/recommender.go`
+- [x] T008 Add versioned feed page state, feed candidate, and cursor encode/decode types in `internal/feature/feed/cursor.go`
+- [x] T009 Add bounded feed continuation cache interface and no-op implementation in `internal/feature/feed/cache/feed_session_cache.go`
+- [x] T010 Implement Redis-backed feed continuation cache with TTL and size caps in `internal/feature/feed/cache/redis_feed_session_cache.go`
+- [x] T011 Wire feed continuation cache through feed context setup in `internal/app/feed.go`
+- [x] T012 Update feed handler service interface to accept and return the new feed cursor type in `internal/feature/feed/handler/feed_handler.go`
+- [x] T013 Update `docs.go` package descriptions for feed cursor/session responsibilities in `internal/feature/feed/docs.go`
+- [x] T014 Update feed service package description for mixed-source pagination responsibilities in `internal/feature/feed/service/docs.go`
 
 **Checkpoint**: Foundation ready; user story implementation can begin.
 
@@ -53,24 +53,24 @@
 
 ### Tests for User Story 1
 
-- [ ] T015 [P] [US1] Add failing characterization test for current ranked page-1 duplicate/skip risk in `internal/feature/feed/service/feed_service_test.go`
-- [ ] T016 [P] [US1] Add failing regression test for pending followed posts remaining reachable after recommended/trending items outrank them in `internal/feature/feed/service/feed_service_test.go`
-- [ ] T017 [P] [US1] Add failing regression test for feed fallback to discovery excluding already-seen posts in `internal/feature/feed/service/feed_service_test.go`
-- [ ] T018 [P] [US1] Add cursor validation tests for versioned feed page state in `internal/feature/feed/cursor_test.go`
-- [ ] T019 [P] [US1] Add handler tests for malformed, expired, and valid opaque feed cursors in `internal/feature/feed/handler/feed_handler_test.go`
+- [x] T015 [P] [US1] Add failing characterization test for current ranked page-1 duplicate/skip risk in `internal/feature/feed/service/feed_service_test.go`
+- [x] T016 [P] [US1] Add failing regression test for pending followed posts remaining reachable after recommended/trending items outrank them in `internal/feature/feed/service/feed_service_test.go`
+- [x] T017 [P] [US1] Add failing regression test for feed fallback to discovery excluding already-seen posts in `internal/feature/feed/service/feed_service_test.go`
+- [x] T018 [P] [US1] Add cursor validation tests for versioned feed page state in `internal/feature/feed/cursor_test.go`
+- [x] T019 [P] [US1] Add handler tests for malformed, expired, and valid opaque feed cursors in `internal/feature/feed/handler/feed_handler_test.go`
 
 ### Implementation for User Story 1
 
-- [ ] T020 [US1] Implement feed page state validation, seen-set bounding, and pending-item bounding in `internal/feature/feed/cursor.go`
-- [ ] T021 [US1] Implement feed candidate merge and duplicate collapse helpers in `internal/feature/feed/service/feed_service.go`
-- [ ] T022 [US1] Refactor `GetFeed` to initialize mixed feed state from empty cursor in `internal/feature/feed/service/feed_service.go`
-- [ ] T023 [US1] Refactor `GetFeed` to consume pending candidates before fetching more source candidates in `internal/feature/feed/service/feed_service.go`
-- [ ] T024 [US1] Refactor following lane cursor advancement so unshown fetched candidates remain pending in `internal/feature/feed/service/feed_service.go`
-- [ ] T025 [US1] Add discovery fallback state transition using seen IDs in `internal/feature/feed/service/feed_service.go`
-- [ ] T026 [US1] Persist and restore feed continuation state through the feed session cache in `internal/feature/feed/service/feed_service.go`
-- [ ] T027 [US1] Preserve existing response envelope while returning the new opaque feed cursor in `internal/feature/feed/handler/feed_handler.go`
-- [ ] T028 [US1] Add structured logs for feed session creation, fallback use, filtered candidates, and cursor errors in `internal/feature/feed/service/feed_service.go`
-- [ ] T029 [US1] Run targeted feed tests and fix failures in `internal/feature/feed/service/feed_service.go`
+- [x] T020 [US1] Implement feed page state validation, seen-set bounding, and pending-item bounding in `internal/feature/feed/cursor.go`
+- [x] T021 [US1] Implement feed candidate merge and duplicate collapse helpers in `internal/feature/feed/service/feed_service.go`
+- [x] T022 [US1] Refactor `GetFeed` to initialize mixed feed state from empty cursor in `internal/feature/feed/service/feed_service.go`
+- [x] T023 [US1] Refactor `GetFeed` to consume pending candidates before fetching more source candidates in `internal/feature/feed/service/feed_service.go`
+- [x] T024 [US1] Refactor following lane cursor advancement so unshown fetched candidates remain pending in `internal/feature/feed/service/feed_service.go`
+- [x] T025 [US1] Add discovery fallback state transition using seen IDs in `internal/feature/feed/service/feed_service.go`
+- [x] T026 [US1] Persist and restore feed continuation state through the feed session cache in `internal/feature/feed/service/feed_service.go`
+- [x] T027 [US1] Preserve existing response envelope while returning the new opaque feed cursor in `internal/feature/feed/handler/feed_handler.go`
+- [x] T028 [US1] Add structured logs for feed session creation, fallback use, filtered candidates, and cursor errors in `internal/feature/feed/service/feed_service.go`
+- [x] T029 [US1] Run targeted feed tests and fix failures in `internal/feature/feed/service/feed_service.go`
 
 **Checkpoint**: User Story 1 is independently functional and testable as the MVP.
 
@@ -84,20 +84,20 @@
 
 ### Tests for User Story 2
 
-- [ ] T030 [P] [US2] Add discovery cursor tie-order regression tests in `internal/feature/feed/service/feed_service_test.go`
-- [ ] T031 [P] [US2] Add authenticated discovery enrichment tests that verify page membership is unchanged in `internal/feature/feed/service/feed_service_test.go`
-- [ ] T032 [P] [US2] Add handler limit and malformed discover cursor tests in `internal/feature/feed/handler/feed_handler_test.go`
-- [ ] T033 [P] [US2] Add repository-level cursor test for public discovery timestamp ties in `internal/feature/post/repository/repository_test.go`
+- [x] T030 [P] [US2] Add discovery cursor tie-order regression tests in `internal/feature/feed/service/feed_service_test.go`
+- [x] T031 [P] [US2] Add authenticated discovery enrichment tests that verify page membership is unchanged in `internal/feature/feed/service/feed_service_test.go`
+- [x] T032 [P] [US2] Add handler limit and malformed discover cursor tests in `internal/feature/feed/handler/feed_handler_test.go`
+- [x] T033 [P] [US2] Add repository-level cursor test for public discovery timestamp ties in `internal/feature/post/repository/repository_test.go`
 
 ### Implementation for User Story 2
 
-- [ ] T034 [US2] Keep discover cursor decode/encode stable and add validation hardening in `internal/feature/feed/cursor.go`
-- [ ] T035 [US2] Update `GetDiscover` to preserve chronological ordering while applying viewer enrichment after page selection in `internal/feature/feed/service/feed_service.go`
-- [ ] T036 [US2] Ensure feed discovery fallback passes seen IDs into discovery candidate filtering in `internal/feature/feed/service/feed_service.go`
-- [ ] T037 [US2] Review and adjust public discovery SQL cursor query without hand-editing generated DB code in `internal/feature/post/sql/post_queries.sql`
-- [ ] T038 [US2] Regenerate sqlc output for post query changes in `internal/feature/post/db/post_queries.sql.go`
-- [ ] T039 [US2] Update post repository adapter for any regenerated discover query signature changes in `internal/feature/post/repository/post_repository.go`
-- [ ] T040 [US2] Run targeted discovery and repository tests and fix failures in `internal/feature/feed/service/feed_service.go`
+- [x] T034 [US2] Keep discover cursor decode/encode stable and add validation hardening in `internal/feature/feed/cursor.go`
+- [x] T035 [US2] Update `GetDiscover` to preserve chronological ordering while applying viewer enrichment after page selection in `internal/feature/feed/service/feed_service.go`
+- [x] T036 [US2] Ensure feed discovery fallback passes seen IDs into discovery candidate filtering in `internal/feature/feed/service/feed_service.go`
+- [x] T037 [US2] Review and adjust public discovery SQL cursor query without hand-editing generated DB code in `internal/feature/post/sql/post_queries.sql`
+- [x] T038 [US2] Regenerate sqlc output for post query changes in `internal/feature/post/db/post_queries.sql.go`
+- [x] T039 [US2] Update post repository adapter for any regenerated discover query signature changes in `internal/feature/post/repository/post_repository.go`
+- [x] T040 [US2] Run targeted discovery and repository tests and fix failures in `internal/feature/feed/service/feed_service.go`
 
 **Checkpoint**: User Story 2 is independently functional and `/discover` remains stable.
 
@@ -111,27 +111,27 @@
 
 ### Tests for User Story 3
 
-- [ ] T041 [P] [US3] Add Codohue adapter tests for paginated recommendation item mapping in `pkg/codohue/client_test.go`
-- [ ] T042 [P] [US3] Add feed service tests for provider score/rank blended ordering in `internal/feature/feed/service/feed_service_test.go`
-- [ ] T043 [P] [US3] Add feed service tests for recommendation offset continuation and provider total exhaustion in `internal/feature/feed/service/feed_service_test.go`
-- [ ] T044 [P] [US3] Add feed service tests for invalid provider IDs, deleted posts, private posts, and duplicate provider items in `internal/feature/feed/service/feed_service_test.go`
-- [ ] T045 [P] [US3] Add feed service tests for Codohue unavailable fallback behavior in `internal/feature/feed/service/feed_service_test.go`
+- [x] T041 [P] [US3] Add Codohue adapter tests for paginated recommendation item mapping in `pkg/codohue/client_test.go`
+- [x] T042 [P] [US3] Add feed service tests for provider score/rank blended ordering in `internal/feature/feed/service/feed_service_test.go`
+- [x] T043 [P] [US3] Add feed service tests for recommendation offset continuation and provider total exhaustion in `internal/feature/feed/service/feed_service_test.go`
+- [x] T044 [P] [US3] Add feed service tests for invalid provider IDs, deleted posts, private posts, and duplicate provider items in `internal/feature/feed/service/feed_service_test.go`
+- [x] T045 [P] [US3] Add feed service tests for Codohue unavailable fallback behavior in `internal/feature/feed/service/feed_service_test.go`
 
 ### Implementation for User Story 3
 
-- [ ] T046 [US3] Update `pkg/codohue.Client.GetRecommendations` to return paginated recommendation items from SDK `v0.2.0` in `pkg/codohue/client.go`
-- [ ] T047 [US3] Update Codohue trending mapping for SDK `v0.2.0` response metadata in `pkg/codohue/client.go`
-- [ ] T048 [US3] Update feed service recommendation fetching to request and persist Codohue offset in `internal/feature/feed/service/feed_service.go`
-- [ ] T049 [US3] Replace flat Codohue bonus with score/rank-aware blended scoring in `internal/feature/feed/service/feed_service.go`
-- [ ] T050 [US3] Preserve provider ordering when resolving recommended post IDs in `internal/app/feed_adapters.go`
-- [ ] T051 [US3] Filter invalid, inaccessible, deleted, private, and duplicate provider items before ranking in `internal/feature/feed/service/feed_service.go`
-- [ ] T052 [US3] Add optional recommendation score/rank response fields in `internal/feature/feed/handler/feed_handler.go`
-- [ ] T053 [US3] Update feed handler tests for optional recommendation score/rank response fields in `internal/feature/feed/handler/feed_handler_test.go`
-- [ ] T054 [US3] Update Swagger comments for new optional feed metadata fields in `internal/feature/feed/handler/feed_handler.go`
-- [ ] T055 [US3] Regenerate Swagger artifacts after handler contract changes in `docs/docs.go`
-- [ ] T056 [US3] Regenerate Swagger JSON and YAML artifacts after handler contract changes in `docs/swagger.json`
-- [ ] T057 [US3] Update generated Swagger YAML after handler contract changes in `docs/swagger.yaml`
-- [ ] T058 [US3] Run targeted Codohue and feed tests and fix failures in `pkg/codohue/client.go`
+- [x] T046 [US3] Update `pkg/codohue.Client.GetRecommendations` to return paginated recommendation items from SDK `v0.2.0` in `pkg/codohue/client.go`
+- [x] T047 [US3] Update Codohue trending mapping for SDK `v0.2.0` response metadata in `pkg/codohue/client.go`
+- [x] T048 [US3] Update feed service recommendation fetching to request and persist Codohue offset in `internal/feature/feed/service/feed_service.go`
+- [x] T049 [US3] Replace flat Codohue bonus with score/rank-aware blended scoring in `internal/feature/feed/service/feed_service.go`
+- [x] T050 [US3] Preserve provider ordering when resolving recommended post IDs in `internal/app/feed_adapters.go`
+- [x] T051 [US3] Filter invalid, inaccessible, deleted, private, and duplicate provider items before ranking in `internal/feature/feed/service/feed_service.go`
+- [x] T052 [US3] Add optional recommendation score/rank response fields in `internal/feature/feed/handler/feed_handler.go`
+- [x] T053 [US3] Update feed handler tests for optional recommendation score/rank response fields in `internal/feature/feed/handler/feed_handler_test.go`
+- [x] T054 [US3] Update Swagger comments for new optional feed metadata fields in `internal/feature/feed/handler/feed_handler.go`
+- [x] T055 [US3] Regenerate Swagger artifacts after handler contract changes in `docs/docs.go`
+- [x] T056 [US3] Regenerate Swagger JSON and YAML artifacts after handler contract changes in `docs/swagger.json`
+- [x] T057 [US3] Update generated Swagger YAML after handler contract changes in `docs/swagger.yaml`
+- [x] T058 [US3] Run targeted Codohue and feed tests and fix failures in `pkg/codohue/client.go`
 
 **Checkpoint**: User Story 3 is independently functional with Codohue service `v0.4.0` and SDK modules `v0.2.0`.
 
@@ -141,14 +141,14 @@
 
 **Purpose**: Validate the whole feature, update documentation, and prepare for implementation review.
 
-- [ ] T059 [P] Update quickstart validation results and operational notes in `specs/003-refactor-feed-discovery/quickstart.md`
-- [ ] T060 [P] Update contract documentation for final response fields in `specs/003-refactor-feed-discovery/contracts/feed.md`
-- [ ] T061 [P] Update provider contract documentation for final SDK method names in `specs/003-refactor-feed-discovery/contracts/codohue-provider.md`
-- [ ] T062 Run `go test ./internal/feature/feed/... ./internal/feature/post/repository ./pkg/codohue` and document any required fixes in `specs/003-refactor-feed-discovery/quickstart.md`
-- [ ] T063 Run `make test` and fix feature-related failures in `internal/feature/feed/service/feed_service.go`
-- [ ] T064 Run `make lint` and fix feature-related lint findings in `internal/feature/feed/service/feed_service.go`
-- [ ] T065 Review changed package documentation and update any remaining `docs.go` files in `internal/feature/feed/handler/docs.go`
-- [ ] T066 Review final git diff for generated files, docs, and feature scope in `specs/003-refactor-feed-discovery/tasks.md`
+- [x] T059 [P] Update quickstart validation results and operational notes in `specs/003-refactor-feed-discovery/quickstart.md`
+- [x] T060 [P] Update contract documentation for final response fields in `specs/003-refactor-feed-discovery/contracts/feed.md`
+- [x] T061 [P] Update provider contract documentation for final SDK method names in `specs/003-refactor-feed-discovery/contracts/codohue-provider.md`
+- [x] T062 Run `go test ./internal/feature/feed/... ./internal/feature/post/repository ./pkg/codohue` and document any required fixes in `specs/003-refactor-feed-discovery/quickstart.md`
+- [x] T063 Run `make test` and fix feature-related failures in `internal/feature/feed/service/feed_service.go`
+- [x] T064 Run `make lint` and fix feature-related lint findings in `internal/feature/feed/service/feed_service.go`
+- [x] T065 Review changed package documentation and update any remaining `docs.go` files in `internal/feature/feed/handler/docs.go`
+- [x] T066 Review final git diff for generated files, docs, and feature scope in `specs/003-refactor-feed-discovery/tasks.md`
 
 ---
 

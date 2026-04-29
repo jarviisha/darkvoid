@@ -11,6 +11,7 @@ import (
 	"github.com/jarviisha/codohue/pkg/codohuetypes"
 	sdk "github.com/jarviisha/codohue/sdk/go"
 	"github.com/jarviisha/codohue/sdk/go/redistream"
+	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
 )
@@ -81,17 +82,31 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 // GetRecommendations returns ordered post IDs.
-func (c *Client) GetRecommendations(ctx context.Context, userID string, limit int) ([]string, error) {
+func (c *Client) GetRecommendations(ctx context.Context, userID string, limit int, offset int) (*feed.RecommendationPage, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	resp, err := c.ns.Recommend(reqCtx, userID, sdk.WithLimit(limit))
+	resp, err := c.ns.Recommend(reqCtx, userID, sdk.WithLimit(limit), sdk.WithOffset(offset))
 	if err != nil {
 		return nil, err
 	}
 
 	logger.Info(ctx, "codohue recommendations fetched", "source", resp.Source, "count", len(resp.Items), "user_id", userID)
-	return resp.Items, nil
+	return recommendationPageFromResponse(resp), nil
+}
+
+func recommendationPageFromResponse(resp *codohuetypes.Response) *feed.RecommendationPage {
+	items := make([]feed.RecommendedItem, len(resp.Items))
+	for i, item := range resp.Items {
+		items[i] = feed.RecommendedItem{ObjectID: item.ObjectID, Score: item.Score, Rank: item.Rank}
+	}
+	return &feed.RecommendationPage{
+		Items:  items,
+		Limit:  resp.Limit,
+		Offset: resp.Offset,
+		Total:  resp.Total,
+		Source: resp.Source,
+	}
 }
 
 // Rank calls POST /rank and returns CF-scored candidates sorted by relevance.
@@ -112,20 +127,24 @@ func (c *Client) Rank(ctx context.Context, subjectID string, candidates []string
 }
 
 // GetTrending returns trending object IDs.
-func (c *Client) GetTrending(ctx context.Context, limit int) ([]string, error) {
+func (c *Client) GetTrending(ctx context.Context, limit int, offset int) (*feed.TrendingPage, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	resp, err := c.ns.Trending(reqCtx, sdk.WithLimit(limit))
+	resp, err := c.ns.Trending(reqCtx, sdk.WithLimit(limit), sdk.WithOffset(offset))
 	if err != nil {
 		return nil, err
 	}
 
-	ids := make([]string, len(resp.Items))
+	return trendingPageFromResponse(resp), nil
+}
+
+func trendingPageFromResponse(resp *codohuetypes.TrendingResponse) *feed.TrendingPage {
+	items := make([]feed.TrendingItem, len(resp.Items))
 	for i, item := range resp.Items {
-		ids[i] = item.ObjectID
+		items[i] = feed.TrendingItem{ObjectID: item.ObjectID, Score: item.Score, Rank: resp.Offset + i + 1}
 	}
-	return ids, nil
+	return &feed.TrendingPage{Items: items, Limit: resp.Limit, Offset: resp.Offset, Total: resp.Total}
 }
 
 // UpsertObjectEmbedding pushes a dense embedding vector for an item (post) to Codohue.

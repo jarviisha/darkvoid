@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	stderrs "errors"
 	"math"
 	"sort"
 	"time"
@@ -29,18 +30,23 @@ type FeedService struct {
 	likeReader      feed.LikeReader
 	ranker          feed.Ranker
 	cache           feedcache.FeedCache
+	sessionCache    feedcache.FeedSessionCache
 	recommender     feed.Recommender     // optional: nil = no CF augmentation
 	trendingFetcher feed.TrendingFetcher // optional: nil = use local DB trending
 }
 
 // NewFeedService creates a new FeedService.
-func NewFeedService(postReader feed.PostReader, followReader feed.FollowReader, likeReader feed.LikeReader, ranker feed.Ranker, cache feedcache.FeedCache) *FeedService {
+func NewFeedService(postReader feed.PostReader, followReader feed.FollowReader, likeReader feed.LikeReader, ranker feed.Ranker, cache feedcache.FeedCache, sessionCache feedcache.FeedSessionCache) *FeedService {
+	if sessionCache == nil {
+		sessionCache = feedcache.NewNopFeedSessionCache()
+	}
 	return &FeedService{
 		postReader:   postReader,
 		followReader: followReader,
 		likeReader:   likeReader,
 		ranker:       ranker,
 		cache:        cache,
+		sessionCache: sessionCache,
 	}
 }
 
@@ -55,24 +61,30 @@ func (s *FeedService) WithTrendingFetcher(f feed.TrendingFetcher) {
 	s.trendingFetcher = f
 }
 
-// GetFeed returns the cursor-paginated feed for userID.
-// Page 1 (cursor == nil): mix of following + trending posts, scored and sorted.
-// Page 2+ (cursor != nil): pure following posts in DB order (newest first).
-// Cache strategy:
-//   - HIT  following:ids:{userID}  → skip follow DB query
-//   - MISS following:ids:{userID}  → query DB, store result in cache
-//   - HIT  trending:posts          → skip trending DB query (page 1 only)
-//   - MISS trending:posts          → query DB, store result in cache
-func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *feed.FollowingCursor) ([]*feedentity.FeedItem, *feed.FollowingCursor, error) {
-	isFirstPage := cursor == nil
-
-	// Already in discover mode → continue discover pagination directly.
-	if cursor != nil && cursor.Mode == feed.ModeDiscover {
-		return s.discoverFallback(ctx, userID, cursor)
+// GetFeed returns the cursor-paginated mixed feed for userID.
+func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
+	now := time.Now().UTC()
+	state := feed.NewFeedPageState(now)
+	if cursor != nil && cursor.State != nil {
+		state = cursor.State
+	}
+	if state.SessionID != "" {
+		cached, cacheErr := s.sessionCache.GetFeedState(ctx, state.SessionID)
+		switch {
+		case cacheErr == nil && cached != nil:
+			cached.SessionID = state.SessionID
+			state = cached
+		case cacheErr != nil && !stderrs.Is(cacheErr, feedcache.ErrFeedSessionMiss):
+			logger.LogError(ctx, cacheErr, "feed session cache read failed", "session_id", state.SessionID)
+		}
+	}
+	if err := state.Validate(now); err != nil {
+		return nil, nil, errors.NewBadRequestError("invalid cursor")
+	}
+	if state.SessionID == "" {
+		state.SessionID = uuid.NewString()
 	}
 
-	// 1. Resolve following IDs (cache-aware) + include user's own posts.
-	// Copy before appending to avoid mutating the cached slice's backing array.
 	cachedIDs, err := s.getFollowingIDs(ctx, userID)
 	if err != nil {
 		return nil, nil, err
@@ -86,196 +98,327 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 		followingSet[id] = true
 	}
 
-	// 2. Fetch following posts from DB with cursor (fetch buffer for dedup/merge)
-	followingPosts, err := s.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, cursor, pageSize*fetchMultiplier)
+	if state.Mode == feed.PhaseDiscoverFallback {
+		return s.discoverFallbackWithState(ctx, userID, state)
+	}
+
+	candidates, followingFetched, err := s.collectMixedCandidates(ctx, userID, authorIDs, state)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(candidates) == 0 && !followingFetched {
+		state.Mode = feed.PhaseDiscoverFallback
+		return s.discoverFallbackWithState(ctx, userID, state)
+	}
+
+	items := s.rankCandidates(ctx, candidates, followingSet, now)
+	s.sortFeedItems(items)
+
+	page := items
+	if len(page) > pageSize {
+		page = page[:pageSize]
+	}
+
+	returnedIDs := make(map[string]bool, len(page))
+	seenIDs := make([]string, 0, len(page))
+	for _, item := range page {
+		id := item.Post.ID.String()
+		returnedIDs[id] = true
+		seenIDs = append(seenIDs, id)
+	}
+	state.AddSeen(seenIDs...)
+
+	pending := make([]feed.FeedCandidate, 0, len(items)-len(page))
+	for _, item := range items {
+		id := item.Post.ID.String()
+		if returnedIDs[id] {
+			continue
+		}
+		pending = append(pending, feedCandidateFromItem(item))
+	}
+	state.PendingItems = pending
+	state.TrimPending()
+
+	s.enrichIsLiked(ctx, userID, page)
+	s.enrichIsFollowingAuthor(page, followingSet)
+
+	if len(page) == 0 {
+		s.deleteFeedSession(ctx, state)
+		return nil, nil, nil
+	}
+	if len(state.PendingItems) == 0 && !s.mayHaveMoreMixed(state, followingFetched) {
+		s.deleteFeedSession(ctx, state)
+		return page, nil, nil
+	}
+	s.storeFeedSession(ctx, state)
+	return page, &feed.FeedCursor{State: state}, nil
+}
+
+type feedCandidate struct {
+	post                *feedentity.Post
+	source              feedentity.Source
+	sourceRank          int
+	providerScore       *float64
+	providerRank        *int
+	recommendationScore *float64
+	recommendationRank  *int
+}
+
+func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UUID, authorIDs []uuid.UUID, state *feed.FeedPageState) ([]feedCandidate, bool, error) {
+	seen := state.SeenSet()
+	candidates := make([]feedCandidate, 0, len(state.PendingItems)+pageSize*fetchMultiplier)
+
+	if len(state.PendingItems) > 0 {
+		pending := state.PendingItems
+		state.PendingItems = nil
+		loaded, err := s.loadCandidatesByID(ctx, pending)
+		if err != nil {
+			logger.LogError(ctx, err, "failed to load pending feed candidates", "user_id", userID)
+		} else {
+			candidates = append(candidates, loaded...)
+		}
+	}
+
+	followingPosts, err := s.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, state.FollowingCursor, pageSize*fetchMultiplier)
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get following posts", "user_id", userID)
-		return nil, nil, errors.NewInternalError(err)
+		return nil, false, errors.NewInternalError(err)
 	}
-
-	// 3. No following content → fall back to discover (infinite scroll through public posts).
-	// Applies to both new users (page 1) and users who've exhausted their following feed (page N).
-	// Pass nil cursor so discover starts from the newest post, not from the following cursor position.
-	if len(followingPosts) == 0 {
-		return s.discoverFallback(ctx, userID, nil)
-	}
-
-	if isFirstPage {
-		// Page 1: merge following + trending + CF recommendations, score all, sort, return top pageSize.
-		now := time.Now()
-		followingStrSet := make(map[string]bool, len(followingSet))
-		for id := range followingSet {
-			followingStrSet[id.String()] = true
+	if len(followingPosts) > 0 {
+		last := followingPosts[len(followingPosts)-1]
+		state.FollowingCursor = &feed.FollowingCursor{
+			Mode:      feed.ModeFollowing,
+			CreatedAt: last.CreatedAt,
+			PostID:    last.ID.String(),
 		}
+	}
+	for i, p := range followingPosts {
+		if seen[p.ID.String()] {
+			continue
+		}
+		candidates = append(candidates, feedCandidate{post: p, source: feedentity.SourceFollowing, sourceRank: i + 1})
+	}
 
+	if s.recommender != nil {
+		recPage, recErr := s.recommender.GetRecommendations(ctx, userID.String(), pageSize, state.RecommendationOffset)
+		if recErr != nil {
+			logger.LogError(ctx, recErr, "codohue recommendations failed, skipping", "user_id", userID)
+		} else if recPage != nil {
+			state.RecommendationOffset = recPage.Offset + len(recPage.Items)
+			state.RecommendationTotal = recPage.Total
+			recCandidates, loadErr := s.loadRecommendationCandidates(ctx, recPage.Items, seen)
+			if loadErr != nil {
+				logger.LogError(ctx, loadErr, "failed to load recommendation candidates", "user_id", userID)
+			}
+			candidates = append(candidates, recCandidates...)
+		}
+	}
+
+	if state.TrendingOffset == 0 {
 		trendingPosts, err := s.getTrending(ctx)
 		if err != nil {
-			// Non-fatal: serve following-only feed on trending failure.
 			logger.LogError(ctx, err, "failed to get trending posts, skipping", "user_id", userID)
 		}
-
-		// Fetch Codohue CF recommendations (page 1 only).
-		// Returns ordered post IDs — best match first.
-		cfPostIDSet := make(map[string]bool)
-		if s.recommender != nil {
-			cfIDs, recErr := s.recommender.GetRecommendations(ctx, userID.String(), pageSize)
-			if recErr != nil {
-				logger.LogError(ctx, recErr, "codohue recommendations failed, skipping", "user_id", userID)
-			} else {
-				for _, id := range cfIDs {
-					cfPostIDSet[id] = true
-				}
-			}
-		}
-
-		// Dedup and collect all posts + sources for batch ranking.
-		seen := make(map[uuid.UUID]bool)
-		type postWithSource struct {
-			post   *feedentity.Post
-			source feedentity.Source
-		}
-		allPosts := make([]postWithSource, 0, len(followingPosts)+len(trendingPosts))
-
-		for _, p := range followingPosts {
-			if seen[p.ID] {
+		for i, p := range trendingPosts {
+			if seen[p.ID.String()] {
 				continue
 			}
-			seen[p.ID] = true
-			allPosts = append(allPosts, postWithSource{post: p, source: feedentity.SourceFollowing})
+			candidates = append(candidates, feedCandidate{post: p, source: feedentity.SourceTrending, sourceRank: i + 1})
 		}
-		for _, p := range trendingPosts {
-			if seen[p.ID] {
-				continue
-			}
-			seen[p.ID] = true
-			allPosts = append(allPosts, postWithSource{post: p, source: feedentity.SourceTrending})
-		}
+		state.TrendingOffset = len(trendingPosts)
+		state.TrendingTotal = len(trendingPosts)
+	}
 
-		// Load any CF-recommended posts not already in the pool.
-		if len(cfPostIDSet) > 0 {
-			missingIDs := make([]uuid.UUID, 0, len(cfPostIDSet))
-			for idStr := range cfPostIDSet {
-				id, parseErr := uuid.Parse(idStr)
-				if parseErr != nil {
-					continue
-				}
-				if !seen[id] {
-					missingIDs = append(missingIDs, id)
-				}
-			}
-			if len(missingIDs) > 0 {
-				cfPosts, loadErr := s.postReader.GetPostsByIDs(ctx, missingIDs)
-				if loadErr != nil {
-					logger.LogError(ctx, loadErr, "failed to load cf recommended posts", "user_id", userID)
-				} else {
-					for _, p := range cfPosts {
-						if !seen[p.ID] {
-							seen[p.ID] = true
-							allPosts = append(allPosts, postWithSource{post: p, source: feedentity.SourceDiscover})
-						}
-					}
-				}
-			}
-		}
+	return collapseCandidates(candidates), len(followingPosts) > 0, nil
+}
 
-		// Batch rank all posts with internal formula.
-		postsToRank := make([]*feedentity.Post, len(allPosts))
-		for i, ps := range allPosts {
-			postsToRank[i] = ps.post
-		}
-		scores, err := s.ranker.RankPosts(ctx, postsToRank, followingStrSet, now)
+func (s *FeedService) loadCandidatesByID(ctx context.Context, pending []feed.FeedCandidate) ([]feedCandidate, error) {
+	ids := make([]uuid.UUID, 0, len(pending))
+	meta := make(map[uuid.UUID]feed.FeedCandidate, len(pending))
+	for _, item := range pending {
+		id, err := uuid.Parse(item.PostID)
 		if err != nil {
-			logger.LogError(ctx, err, "ranker failed, falling back to chronological order", "user_id", userID)
-			// Fallback: use 0 scores so sort falls through to created_at ordering.
-			scores = make(map[string]float64)
+			continue
 		}
-
-		// Apply CF bonus: posts recommended by Codohue receive an additional score boost.
-		// This blends collaborative-filtering signal with the internal engagement+recency formula.
-		const cfBonus = 8.0
-		for _, ps := range allPosts {
-			if cfPostIDSet[ps.post.ID.String()] {
-				scores[ps.post.ID.String()] += cfBonus
-			}
-		}
-
-		items := make([]*feedentity.FeedItem, len(allPosts))
-		for i, ps := range allPosts {
-			items[i] = &feedentity.FeedItem{
-				Post:   ps.post,
-				Score:  scores[ps.post.ID.String()],
-				Source: ps.source,
-			}
-		}
-
-		// Sort descending by (score, created_at, post_id).
-		sort.Slice(items, func(i, j int) bool {
-			if math.Abs(items[i].Score-items[j].Score) > scoreEpsilon {
-				return items[i].Score > items[j].Score
-			}
-			if !items[i].Post.CreatedAt.Equal(items[j].Post.CreatedAt) {
-				return items[i].Post.CreatedAt.After(items[j].Post.CreatedAt)
-			}
-			return items[i].Post.ID.String() > items[j].Post.ID.String()
-		})
-
-		page := items
-		if len(page) > pageSize {
-			page = page[:pageSize]
-		}
-
-		s.enrichIsLiked(ctx, userID, page)
-		s.enrichIsFollowingAuthor(page, followingSet)
-
-		// Cursor = position of the last following post shown on page 1.
-		// Page 2 will continue the following timeline from there.
-		var nextCursor *feed.FollowingCursor
-		for i := len(page) - 1; i >= 0; i-- {
-			if page[i].Source == feedentity.SourceFollowing {
-				nextCursor = &feed.FollowingCursor{
-					Mode:      feed.ModeFollowing,
-					CreatedAt: page[i].Post.CreatedAt,
-					PostID:    page[i].Post.ID.String(),
-				}
-				break
-			}
-		}
-		// If no following post made it onto page 1 (all trending won the ranking),
-		// use a far-future sentinel so page 2 fetches from the top of the following timeline.
-		if nextCursor == nil && len(followingPosts) > 0 {
-			nextCursor = &feed.FollowingCursor{
-				Mode:      feed.ModeFollowing,
-				CreatedAt: feed.MaxDiscoverTime,
-				PostID:    uuid.Max.String(),
-			}
-		}
-
-		return page, nextCursor, nil
+		ids = append(ids, id)
+		meta[id] = item
 	}
+	posts, err := s.postReader.GetPostsByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]feedCandidate, 0, len(posts))
+	for _, p := range posts {
+		item := meta[p.ID]
+		result = append(result, feedCandidate{
+			post:                p,
+			source:              feedentity.Source(item.Source),
+			sourceRank:          item.SourceRank,
+			providerScore:       item.ProviderScore,
+			providerRank:        item.ProviderRank,
+			recommendationScore: item.ProviderScore,
+			recommendationRank:  item.ProviderRank,
+		})
+	}
+	return result, nil
+}
 
-	// Page 2+: pure following posts in DB order, no trending injection or scoring.
-	items := make([]*feedentity.FeedItem, 0, pageSize)
-	for _, p := range followingPosts {
+func (s *FeedService) loadRecommendationCandidates(ctx context.Context, items []feed.RecommendedItem, seen map[string]bool) ([]feedCandidate, error) {
+	ids := make([]uuid.UUID, 0, len(items))
+	meta := make(map[uuid.UUID]feed.RecommendedItem, len(items))
+	for _, item := range items {
+		if seen[item.ObjectID] || item.Score < 0 {
+			continue
+		}
+		id, err := uuid.Parse(item.ObjectID)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+		meta[id] = item
+	}
+	posts, err := s.postReader.GetPostsByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]feedCandidate, 0, len(posts))
+	for _, p := range posts {
+		if p.Visibility != "public" {
+			continue
+		}
+		item := meta[p.ID]
+		score := item.Score
+		rank := item.Rank
+		result = append(result, feedCandidate{
+			post:                p,
+			source:              feedentity.SourceRecommendation,
+			sourceRank:          item.Rank,
+			providerScore:       &score,
+			providerRank:        &rank,
+			recommendationScore: &score,
+			recommendationRank:  &rank,
+		})
+	}
+	return result, nil
+}
+
+func collapseCandidates(candidates []feedCandidate) []feedCandidate {
+	byID := make(map[uuid.UUID]feedCandidate, len(candidates))
+	for _, c := range candidates {
+		if c.post == nil {
+			continue
+		}
+		existing, ok := byID[c.post.ID]
+		if !ok || sourcePriority(c.source) > sourcePriority(existing.source) {
+			byID[c.post.ID] = c
+			continue
+		}
+		if ok && c.providerScore != nil && existing.providerScore == nil {
+			existing.providerScore = c.providerScore
+			existing.providerRank = c.providerRank
+			existing.recommendationScore = c.recommendationScore
+			existing.recommendationRank = c.recommendationRank
+			byID[c.post.ID] = existing
+		}
+	}
+	result := make([]feedCandidate, 0, len(byID))
+	for _, c := range byID {
+		result = append(result, c)
+	}
+	return result
+}
+
+func sourcePriority(source feedentity.Source) int {
+	switch source {
+	case feedentity.SourceFollowing:
+		return 4
+	case feedentity.SourceRecommendation:
+		return 3
+	case feedentity.SourceTrending:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func (s *FeedService) rankCandidates(ctx context.Context, candidates []feedCandidate, followingSet map[uuid.UUID]bool, now time.Time) []*feedentity.FeedItem {
+	posts := make([]*feedentity.Post, len(candidates))
+	for i, c := range candidates {
+		posts[i] = c.post
+	}
+	followingStrSet := make(map[string]bool, len(followingSet))
+	for id := range followingSet {
+		followingStrSet[id.String()] = true
+	}
+	scores, err := s.ranker.RankPosts(ctx, posts, followingStrSet, now)
+	if err != nil {
+		logger.LogError(ctx, err, "ranker failed, falling back to chronological order")
+		scores = make(map[string]float64)
+	}
+	items := make([]*feedentity.FeedItem, 0, len(candidates))
+	for _, c := range candidates {
+		score := scores[c.post.ID.String()]
+		if c.providerScore != nil {
+			score += (*c.providerScore) * 20
+		}
+		if c.providerRank != nil && *c.providerRank > 0 {
+			score += 5 / float64(*c.providerRank)
+		}
 		items = append(items, &feedentity.FeedItem{
-			Post:   p,
-			Source: feedentity.SourceFollowing,
+			Post:                c.post,
+			Score:               score,
+			Source:              c.source,
+			RecommendationScore: c.recommendationScore,
+			RecommendationRank:  c.recommendationRank,
 		})
 	}
+	return items
+}
 
-	var nextCursor *feed.FollowingCursor
-	if len(items) > pageSize {
-		last := items[pageSize-1]
-		nextCursor = &feed.FollowingCursor{
-			Mode:      feed.ModeFollowing,
-			CreatedAt: last.Post.CreatedAt,
-			PostID:    last.Post.ID.String(),
+func (s *FeedService) sortFeedItems(items []*feedentity.FeedItem) {
+	sort.Slice(items, func(i, j int) bool {
+		if math.Abs(items[i].Score-items[j].Score) > scoreEpsilon {
+			return items[i].Score > items[j].Score
 		}
-		items = items[:pageSize]
-	}
+		if !items[i].Post.CreatedAt.Equal(items[j].Post.CreatedAt) {
+			return items[i].Post.CreatedAt.After(items[j].Post.CreatedAt)
+		}
+		return items[i].Post.ID.String() > items[j].Post.ID.String()
+	})
+}
 
-	s.enrichIsLiked(ctx, userID, items)
-	s.enrichIsFollowingAuthor(items, followingSet)
-	return items, nextCursor, nil
+func feedCandidateFromItem(item *feedentity.FeedItem) feed.FeedCandidate {
+	return feed.FeedCandidate{
+		PostID:        item.Post.ID.String(),
+		Source:        string(item.Source),
+		ProviderScore: item.RecommendationScore,
+		ProviderRank:  item.RecommendationRank,
+		CreatedAt:     item.Post.CreatedAt,
+	}
+}
+
+func (s *FeedService) mayHaveMoreMixed(state *feed.FeedPageState, followingFetched bool) bool {
+	return followingFetched ||
+		len(state.PendingItems) > 0 ||
+		(state.RecommendationTotal > 0 && state.RecommendationOffset < state.RecommendationTotal)
+}
+
+func (s *FeedService) storeFeedSession(ctx context.Context, state *feed.FeedPageState) {
+	if state == nil || state.SessionID == "" {
+		return
+	}
+	if err := s.sessionCache.SetFeedState(ctx, state.SessionID, state); err != nil {
+		logger.LogError(ctx, err, "feed session cache write failed", "session_id", state.SessionID)
+	}
+}
+
+func (s *FeedService) deleteFeedSession(ctx context.Context, state *feed.FeedPageState) {
+	if state == nil || state.SessionID == "" {
+		return
+	}
+	if err := s.sessionCache.DeleteFeedState(ctx, state.SessionID); err != nil {
+		logger.LogError(ctx, err, "feed session cache delete failed", "session_id", state.SessionID)
+	}
 }
 
 // getFollowingIDs returns following IDs from cache, falling back to followReader on miss.
@@ -298,57 +441,62 @@ func (s *FeedService) getFollowingIDs(ctx context.Context, userID uuid.UUID) ([]
 	return ids, nil
 }
 
-// discoverFallback paginates through the public discover feed when the user has no following content.
-// Used for new users and users who've scrolled past all their following posts.
-// FollowingCursor and DiscoverCursor share the same (CreatedAt, PostID) fields, so the cursor
-// transitions seamlessly between the two feed modes.
-func (s *FeedService) discoverFallback(ctx context.Context, userID uuid.UUID, cursor *feed.FollowingCursor) ([]*feedentity.FeedItem, *feed.FollowingCursor, error) {
-	var discoverCursor *feed.DiscoverCursor
-	if cursor != nil && cursor.Mode == feed.ModeDiscover {
-		discoverCursor = &feed.DiscoverCursor{
-			CreatedAt: cursor.CreatedAt,
-			PostID:    cursor.PostID,
-		}
+func (s *FeedService) discoverFallbackWithState(ctx context.Context, userID uuid.UUID, state *feed.FeedPageState) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
+	fetchLimit := pageSize + 1 + len(state.SeenPostIDs)
+	if fetchLimit > 100 {
+		fetchLimit = 100
 	}
-	// When cursor is nil or Mode is ModeFollowing, discoverCursor stays nil
-	// → discover starts from the newest post.
-
-	// Fetch pageSize+1 to detect whether there is a next page.
-	posts, err := s.postReader.GetDiscoverWithCursor(ctx, discoverCursor, pageSize+1, nil)
+	posts, err := s.postReader.GetDiscoverWithCursor(ctx, state.DiscoveryCursor, int32(fetchLimit), nil) //nolint:gosec // capped to 100 above
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get discover fallback", "user_id", userID)
 		return nil, nil, errors.NewInternalError(err)
 	}
 
-	var nextCursor *feed.FollowingCursor
-	if len(posts) > pageSize {
-		last := posts[pageSize-1]
-		nextCursor = &feed.FollowingCursor{
-			Mode:      feed.ModeDiscover,
-			CreatedAt: last.CreatedAt,
-			PostID:    last.ID.String(),
+	seen := state.SeenSet()
+	filtered := make([]*feedentity.Post, 0, pageSize+1)
+	for _, p := range posts {
+		if seen[p.ID.String()] {
+			state.DiscoveryCursor = &feed.DiscoverCursor{CreatedAt: p.CreatedAt, PostID: p.ID.String()}
+			continue
 		}
-		posts = posts[:pageSize]
+		filtered = append(filtered, p)
+		state.DiscoveryCursor = &feed.DiscoverCursor{CreatedAt: p.CreatedAt, PostID: p.ID.String()}
+		if len(filtered) > pageSize {
+			break
+		}
+	}
+
+	hasMore := len(filtered) > pageSize || len(posts) == fetchLimit
+	if len(filtered) > pageSize {
+		filtered = filtered[:pageSize]
 	}
 
 	now := time.Now()
-	emptyFollowing := map[string]bool{} // discover = no relationship bonus
-	scores, rankErr := s.ranker.RankPosts(ctx, posts, emptyFollowing, now)
+	scores, rankErr := s.ranker.RankPosts(ctx, filtered, map[string]bool{}, now)
 	if rankErr != nil {
 		logger.LogError(ctx, rankErr, "ranker failed in discover fallback", "user_id", userID)
 		scores = make(map[string]float64)
 	}
-	items := make([]*feedentity.FeedItem, 0, len(posts))
-	for _, p := range posts {
+	items := make([]*feedentity.FeedItem, 0, len(filtered))
+	seenIDs := make([]string, 0, len(filtered))
+	for _, p := range filtered {
 		items = append(items, &feedentity.FeedItem{
 			Post:   p,
 			Score:  scores[p.ID.String()],
 			Source: feedentity.SourceDiscover,
 		})
+		seenIDs = append(seenIDs, p.ID.String())
 	}
+	state.AddSeen(seenIDs...)
+
 	s.enrichIsLiked(ctx, userID, items)
 	s.enrichIsFollowingAuthorFromDB(ctx, userID, items)
-	return items, nextCursor, nil
+	if len(items) == 0 || !hasMore {
+		s.deleteFeedSession(ctx, state)
+		return items, nil, nil
+	}
+	s.storeFeedSession(ctx, state)
+	return items, &feed.FeedCursor{State: state}, nil
 }
 
 // enrichIsLiked batch-fetches like status for the viewer and sets Post.IsLiked.
@@ -389,13 +537,13 @@ func (s *FeedService) getTrending(ctx context.Context) ([]*feedentity.Post, erro
 	var posts []*feedentity.Post
 
 	if s.trendingFetcher != nil {
-		ids, err := s.trendingFetcher.GetTrending(ctx, trendingFetchLimit)
+		page, err := s.trendingFetcher.GetTrending(ctx, trendingFetchLimit, 0)
 		if err != nil {
 			logger.LogError(ctx, err, "codohue trending fetch failed, falling back to local DB trending")
-		} else if len(ids) > 0 {
-			postUUIDs := make([]uuid.UUID, 0, len(ids))
-			for _, id := range ids {
-				uid, err := uuid.Parse(id)
+		} else if page != nil && len(page.Items) > 0 {
+			postUUIDs := make([]uuid.UUID, 0, len(page.Items))
+			for _, item := range page.Items {
+				uid, err := uuid.Parse(item.ObjectID)
 				if err != nil {
 					continue
 				}
@@ -406,7 +554,7 @@ func (s *FeedService) getTrending(ctx context.Context) ([]*feedentity.Post, erro
 				if err != nil {
 					logger.LogError(ctx, err, "failed to resolve codohue trending posts, falling back to local DB")
 				} else {
-					posts = fetched
+					posts = filterPublicPosts(fetched)
 				}
 			}
 		}
@@ -426,6 +574,16 @@ func (s *FeedService) getTrending(ctx context.Context) ([]*feedentity.Post, erro
 	}
 
 	return posts, nil
+}
+
+func filterPublicPosts(posts []*feedentity.Post) []*feedentity.Post {
+	filtered := posts[:0]
+	for _, p := range posts {
+		if p.Visibility == "public" {
+			filtered = append(filtered, p)
+		}
+	}
+	return filtered
 }
 
 // GetDiscover returns the cursor-paginated public discovery feed.

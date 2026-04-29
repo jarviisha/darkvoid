@@ -19,8 +19,8 @@ type PostReader interface {
 	// GetDiscoverWithCursor fetches public posts for the discovery feed using cursor pagination.
 	// If cursor is nil, returns from the latest post.
 	GetDiscoverWithCursor(ctx context.Context, cursor *DiscoverCursor, limit int32, viewerID *uuid.UUID) ([]*feedentity.Post, error)
-	// GetPostsByIDs fetches public posts by their IDs in any order.
-	// Used to load Codohue-recommended posts not already in the following/trending pool.
+	// GetPostsByIDs fetches feed-visible posts by their IDs in any order.
+	// Provider-backed callers must still apply public visibility filtering.
 	GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*feedentity.Post, error)
 }
 

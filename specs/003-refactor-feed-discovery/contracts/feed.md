@@ -67,6 +67,7 @@ Authorization: Bearer <access_token>
 - Clients must not inspect or construct cursor values.
 - The server must not expose client-facing offset pagination for `/feed`.
 - Reusing a valid cursor should continue the same browsing sequence without returning post IDs already emitted earlier in that sequence.
+- The cursor may reference short-lived server-side continuation state; clients still only store and resend the opaque `next_cursor`.
 
 ## Compatibility Notes
 

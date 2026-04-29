@@ -6,6 +6,7 @@
 - Local PostgreSQL and Redis dependencies available via the existing project setup.
 - Codohue service/container running at tag `v0.4.0` when validating rich recommendation behavior.
 - Codohue Go SDK modules upgraded together to tag `v0.2.0`.
+- Use `GOCACHE=/home/jarviisha/development/darkvoid/tmp/gocache` for local Go commands in this workspace when the default home cache is not writable.
 
 ## Dependency Update
 
@@ -17,6 +18,12 @@ go get github.com/jarviisha/codohue/sdk/go@v0.2.0
 go get github.com/jarviisha/codohue/sdk/go/redistream@v0.2.0
 go mod tidy
 ```
+
+Expected module versions after setup:
+
+- `github.com/jarviisha/codohue/pkg/codohuetypes v0.2.0`
+- `github.com/jarviisha/codohue/sdk/go v0.2.0`
+- `github.com/jarviisha/codohue/sdk/go/redistream v0.2.0`
 
 ## Characterization Tests Before Refactor
 
@@ -37,7 +44,7 @@ Required scenarios:
 After implementation:
 
 ```bash
-go test ./internal/feature/feed/... ./internal/feature/post/repository ./pkg/codohue
+GOCACHE=/home/jarviisha/development/darkvoid/tmp/gocache go test ./internal/feature/feed/... ./internal/feature/post/repository ./pkg/codohue
 make test
 make lint
 ```
@@ -53,6 +60,12 @@ If SQL changes:
 ```bash
 make generate
 ```
+
+Validation run on 2026-04-28:
+
+- `GOCACHE=/home/jarviisha/development/darkvoid/tmp/gocache go test ./internal/feature/feed/... ./internal/feature/post/repository ./pkg/codohue` passed.
+- `GOCACHE=/home/jarviisha/development/darkvoid/tmp/gocache go test ./...` passed.
+- `GOCACHE=/home/jarviisha/development/darkvoid/tmp/gocache GOLANGCI_LINT_CACHE=/home/jarviisha/development/darkvoid/tmp/golangci-lint-cache make lint` passed with 0 issues.
 
 ## Manual API Checks
 

@@ -94,7 +94,7 @@ LIMIT $5;
 SELECT id, author_id, content, visibility, created_at, updated_at, deleted_at, like_count, comment_count
 FROM post.posts
 WHERE author_id = ANY($1::uuid[])
-  AND visibility = 'public'
+  AND visibility IN ('public', 'followers')
   AND deleted_at IS NULL
   AND (created_at < $2::timestamptz
        OR (created_at = $2::timestamptz AND id < $3::uuid))

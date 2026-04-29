@@ -4346,6 +4346,12 @@ const docTemplate = `{
                         "$ref": "#/definitions/handler.mediaResponse"
                     }
                 },
+                "recommendation_rank": {
+                    "type": "integer"
+                },
+                "recommendation_score": {
+                    "type": "number"
+                },
                 "score": {
                     "type": "number"
                 },

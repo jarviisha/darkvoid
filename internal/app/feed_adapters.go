@@ -132,7 +132,17 @@ func (r *postReader) GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*fee
 	if err != nil {
 		return nil, pkgerrors.NewInternalError(err)
 	}
-	return r.convertAndEnrich(ctx, posts), nil
+	byID := make(map[uuid.UUID]*postentity.Post, len(posts))
+	for _, p := range posts {
+		byID[p.ID] = p
+	}
+	ordered := make([]*postentity.Post, 0, len(posts))
+	for _, id := range ids {
+		if p, ok := byID[id]; ok {
+			ordered = append(ordered, p)
+		}
+	}
+	return r.convertAndEnrich(ctx, ordered), nil
 }
 
 func (r *postReader) GetDiscoverWithCursor(ctx context.Context, cursor *feed.DiscoverCursor, limit int32, viewerID *uuid.UUID) ([]*feedentity.Post, error) {
