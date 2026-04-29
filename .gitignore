@@ -60,4 +60,5 @@ ai-*/
 ##
 uploads/
 docker-compose.override.yml
+localdocs/
 
