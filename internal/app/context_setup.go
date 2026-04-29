@@ -13,6 +13,9 @@ func (app *Application) setupContexts(ctx context.Context) error {
 	app.setupUserContext(store, templates, mailSvc)
 	app.setupStorageContext(store)
 	app.setupPostContext(store)
+	if err := app.ensureCodohueNamespaceConfig(ctx); err != nil {
+		return err
+	}
 	codohueClient := app.setupFeedContext(store)
 	app.wireFeedDependencies()
 	app.wireCodohue(ctx, codohueClient)

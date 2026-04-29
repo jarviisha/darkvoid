@@ -448,7 +448,22 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 			return nil, cleanup, fmt.Errorf("CODOHUE_ENABLED=true requires REDIS_ENABLED=true so seed behavior events can be published")
 		}
 
-		var err error
+		result, err := codohue.ProvisionNamespaceConfig(ctx, codohue.NamespaceProvisionConfig{
+			BaseURL:      cfg.Codohue.BaseURL,
+			AdminKey:     cfg.Codohue.AdminKey,
+			Namespace:    cfg.Codohue.Namespace,
+			EmbeddingDim: cfg.Codohue.EmbeddingDim,
+		})
+		if err != nil {
+			return nil, cleanup, fmt.Errorf("provision codohue namespace config: %w", err)
+		}
+		if result.APIKey != "" {
+			cfg.Codohue.NamespaceKey = result.APIKey
+		}
+		if cfg.Codohue.NamespaceKey == "" {
+			return nil, cleanup, fmt.Errorf("codohue namespace %q already exists but CODOHUE_NAMESPACE_KEY is not configured", cfg.Codohue.Namespace)
+		}
+
 		redisClient, err = pkgredis.New(ctx, &pkgredis.Config{
 			Host:     cfg.Redis.Host,
 			Port:     cfg.Redis.Port,

@@ -100,14 +100,14 @@ func loadRootConfig() RootConfig {
 //	CODOHUE_ENABLED        (default: false)
 //	CODOHUE_BASE_URL       (default: "")
 //	CODOHUE_NAMESPACE_KEY  (default: "") — namespace key from one-time namespace creation
-//	CODOHUE_ADMIN_KEY      (default: "") — admin key for namespace provisioning only
+//	CODOHUE_ADMIN_KEY      (default: CODOHUE_API_KEY) — admin key for namespace provisioning only
 //	CODOHUE_NAMESPACE      (default: "darkvoid_feed")
 func loadCodohueConfig() CodohueConfig {
 	return CodohueConfig{
 		Enabled:      getEnvBool("CODOHUE_ENABLED", false),
 		BaseURL:      getEnv("CODOHUE_BASE_URL", ""),
 		NamespaceKey: getEnv("CODOHUE_NAMESPACE_KEY", ""),
-		AdminKey:     getEnv("CODOHUE_ADMIN_KEY", ""),
+		AdminKey:     getEnv("CODOHUE_ADMIN_KEY", getEnv("CODOHUE_API_KEY", "")),
 		Namespace:    getEnv("CODOHUE_NAMESPACE", "darkvoid_feed"),
 		EmbeddingDim: getEnvInt("CODOHUE_EMBEDDING_DIM", 64),
 	}
