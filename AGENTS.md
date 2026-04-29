@@ -27,7 +27,32 @@ Do not hand-edit generated files under `internal/feature/*/db`.
 Tests sit next to the code they cover and use the standard `testing` package. Name files `*_test.go` and tests like `TestLogin_Success` or `TestCreatePost_ValidationError`. Add or update tests for every logic change, especially in `service` and `handler` packages. Before refactoring old code, write a characterization test first.
 
 ## Commit & Pull Request Guidelines
-Recent history is inconsistent, so prefer a clear convention going forward: short imperative subjects, ideally with a type prefix, for example `fix: handle refresh token cookie` or `test: cover post mention parsing`.
+Use clear conventional commit subjects with an optional scope:
+`type(scope): concise imperative summary`. Include measurable impact in the
+subject when it is useful, such as coverage changes or migration counts.
+
+For substantial changes, include a body that summarizes the changed files,
+behavior, test coverage, and relevant spec or plan. The body can be omitted for
+small, obvious changes.
+
+Preferred format:
+
+```text
+test(user/handler): add meaningful coverage - 68.4% -> 96.2%
+
+34 new test functions across 5 files (1 new, 4 expanded):
+
+- email_handler_test.go: full coverage of VerifyEmail, ResendVerification,
+  ForgotPassword, ResetPassword (all previously 0%)
+- auth_handler_test.go: mobile/web client divergence for RefreshToken,
+  Logout, LogoutAllSessions
+- user_handler_test.go: 403 authorization gates for UpdateUser/DeactivateUser
+- profile_handler_test.go: UploadAvatar/UploadCover, ?by=username path,
+  is_following enrichment
+- follow_handler_test.go: GetFollowing service error case
+
+Spec: specs/001-handler-tests/plan.md
+```
 
 PRs should describe the behavior change, note config or migration impact, list test coverage, and include example requests/responses when API behavior changes.
 
