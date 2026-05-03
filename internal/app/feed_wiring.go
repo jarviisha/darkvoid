@@ -21,7 +21,7 @@ func (app *Application) setupFeedContext(store storage.Storage) *codohue.Client 
 	app.Feed, codohueClient = SetupFeedContext(
 		store,
 		postReader, followReader, likeReader,
-		app.redis, app.cfg.Codohue,
+		app.redis, app.cfg.FeedTimeline, app.cfg.Codohue,
 	)
 	app.log.Info("feed context initialized",
 		"redis_cache", app.redis != nil,
@@ -35,6 +35,8 @@ func (app *Application) wireFeedDependencies() {
 
 	app.User.WireFeedInvalidator(feedPorts.Cache)
 	app.Post.WireFeedCacheInvalidator(feedPorts.Cache)
+	app.Post.WireFeedEventEmitter(feedPorts.Dispatcher)
+	app.User.WireFeedEventEmitter(feedPorts.Dispatcher)
 	app.log.Info("feed cache wired into follow and post services")
 }
 
@@ -44,7 +46,7 @@ func buildFeedReaders(
 	likeRepo feedLikeRepo,
 	userRepo feedUserRepo,
 	followService feedFollowService,
-) (feed.PostReader, feed.FollowReader, feed.LikeReader) {
+) (feed.PostReader, feed.FollowGraphReader, feed.LikeReader) {
 	ur := &userReader{userRepo: userRepo}
 
 	return &postReader{

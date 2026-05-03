@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -90,7 +91,11 @@ func TestGetFeed_Success(t *testing.T) {
 
 func TestGetFeed_WithNextCursor(t *testing.T) {
 	userID := uuid.New()
-	next := &feed.FeedCursor{State: feed.NewFeedPageState(time.Now())}
+	next := &feed.FeedCursor{
+		Version:  feed.FeedCursorVersion,
+		Timeline: &feed.TimelinePosition{Score: time.Now().UnixMicro(), PostID: uuid.New().String()},
+		IssuedAt: time.Now().UTC(),
+	}
 	svc := &mockFeedService{
 		getFeed: func(_ context.Context, _ uuid.UUID, _ *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
 			return []*feedentity.FeedItem{sampleFeedItem(uuid.New())}, next, nil
@@ -101,6 +106,17 @@ func TestGetFeed_WithNextCursor(t *testing.T) {
 	w := httptest.NewRecorder()
 	newFeedHandler(svc).GetFeed(w, r)
 	assertStatus(t, w, http.StatusOK)
+
+	var body FeedResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body.NextCursor == "" {
+		t.Fatal("expected next_cursor")
+	}
+	if _, err := feed.DecodeFeedCursor(body.NextCursor); err != nil {
+		t.Fatalf("next cursor is not v2 decodable: %v", err)
+	}
 }
 
 func TestGetFeed_WithRecommendationMetadata(t *testing.T) {
@@ -141,12 +157,41 @@ func TestGetFeed_InvalidCursor(t *testing.T) {
 	w := httptest.NewRecorder()
 	newFeedHandler(&mockFeedService{}).GetFeed(w, r)
 	assertStatus(t, w, http.StatusBadRequest)
+
+	var body pkgerrors.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal error response: %v", err)
+	}
+	if body.Error.Code != "BAD_REQUEST" || body.Error.Message != "invalid cursor" {
+		t.Fatalf("unexpected error response: %+v", body)
+	}
 }
 
-func TestGetFeed_ExpiredCursor(t *testing.T) {
+func TestGetFeed_UnsupportedCursorVersion(t *testing.T) {
 	userID := uuid.New()
-	state := feed.NewFeedPageState(time.Now().UTC().Add(-feed.FeedSessionTTL * 2))
-	cursor := (&feed.FeedCursor{State: state}).Encode()
+	cursor := (&feed.FeedCursor{Version: feed.FeedCursorVersion + 1}).Encode()
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/feed?cursor="+cursor, nil)
+	r := withAuth(req, userID)
+	w := httptest.NewRecorder()
+	newFeedHandler(&mockFeedService{}).GetFeed(w, r)
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestGetFeed_RejectsLegacySessionCursor(t *testing.T) {
+	userID := uuid.New()
+	raw, err := json.Marshal(map[string]any{
+		"version":       1,
+		"session_id":    uuid.NewString(),
+		"mode":          "mixed",
+		"pending_items": []map[string]string{{"post_id": uuid.NewString()}},
+		"seen_post_ids": []string{uuid.NewString()},
+		"created_at":    time.Now().UTC(),
+		"expires_at":    time.Now().UTC().Add(15 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("marshal legacy cursor: %v", err)
+	}
+	cursor := base64.RawURLEncoding.EncodeToString(raw)
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/feed?cursor="+cursor, nil)
 	r := withAuth(req, userID)
 	w := httptest.NewRecorder()
@@ -197,6 +242,24 @@ func TestGetDiscover_WithNextCursor(t *testing.T) {
 		},
 	}
 	r, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/discover", nil)
+	w := httptest.NewRecorder()
+	newFeedHandler(svc).GetDiscover(w, r)
+	assertStatus(t, w, http.StatusOK)
+}
+
+func TestGetDiscover_PassesCursorUnchanged(t *testing.T) {
+	createdAt := time.Now().UTC().Add(-time.Hour)
+	postID := uuid.New().String()
+	cursor := (&feed.DiscoverCursor{CreatedAt: createdAt, PostID: postID}).Encode()
+	svc := &mockFeedService{
+		getDiscover: func(_ context.Context, _ *uuid.UUID, got *feed.DiscoverCursor, _ int32) ([]*feedentity.Post, *feed.DiscoverCursor, error) {
+			if got == nil || !got.CreatedAt.Equal(createdAt) || got.PostID != postID {
+				t.Fatalf("cursor = %+v, want %s/%s", got, createdAt, postID)
+			}
+			return []*feedentity.Post{samplePost(uuid.New())}, nil, nil
+		},
+	}
+	r, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/discover?cursor="+cursor, nil)
 	w := httptest.NewRecorder()
 	newFeedHandler(svc).GetDiscover(w, r)
 	assertStatus(t, w, http.StatusOK)

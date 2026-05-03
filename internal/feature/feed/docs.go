@@ -1,4 +1,4 @@
-// Package feed provides core feed domain logic such as ranking, scoring, readers,
-// recommendation provider contracts, and cursor state for mixed-source feed
-// pagination.
+// Package feed provides core feed domain logic such as ranking, scoring, reader
+// ports, recommendation provider contracts, v2 feed cursors, prepared timeline
+// storage contracts, refresh coordination, and fanout orchestration.
 package feed

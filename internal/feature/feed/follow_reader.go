@@ -11,3 +11,14 @@ import (
 type FollowReader interface {
 	GetFollowingIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
 }
+
+// FollowerReader resolves the list of users who follow a target user.
+type FollowerReader interface {
+	GetFollowerIDs(ctx context.Context, targetID uuid.UUID) ([]uuid.UUID, error)
+}
+
+// FollowGraphReader combines following and follower lookups.
+type FollowGraphReader interface {
+	FollowReader
+	FollowerReader
+}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -43,6 +44,22 @@ func assertErrorCode(t *testing.T, err error, code string) {
 // CreatePost tests
 // --------------------------------------------------------------------------
 
+type mockFeedEventEmitter struct {
+	postID     uuid.UUID
+	authorID   uuid.UUID
+	visibility string
+	called     int
+	err        error
+}
+
+func (m *mockFeedEventEmitter) EmitPostCreated(_ context.Context, postID, authorID uuid.UUID, visibility string, _ time.Time) error {
+	m.called++
+	m.postID = postID
+	m.authorID = authorID
+	m.visibility = visibility
+	return m.err
+}
+
 func TestCreatePost_Success(t *testing.T) {
 	authorID := uuid.New()
 	pr := &mockPostRepo{}
@@ -57,6 +74,52 @@ func TestCreatePost_Success(t *testing.T) {
 	}
 	if p.Content != "Hello world" {
 		t.Errorf("expected content 'Hello world', got %q", p.Content)
+	}
+}
+
+func TestCreatePost_EmitsFeedEventAfterSuccess(t *testing.T) {
+	authorID := uuid.New()
+	emitter := &mockFeedEventEmitter{}
+	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, &mockLikeRepo{})
+	svc.WithFeedEventEmitter(emitter)
+
+	p, err := svc.CreatePost(context.Background(), authorID, "Hello world", entity.VisibilityPublic, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreatePost: %v", err)
+	}
+	if emitter.called != 1 || emitter.postID != p.ID || emitter.authorID != authorID || emitter.visibility != string(entity.VisibilityPublic) {
+		t.Fatalf("feed event mismatch: %+v post=%+v", emitter, p)
+	}
+}
+
+func TestCreatePost_DoesNotEmitFeedEventOnCreateFailure(t *testing.T) {
+	emitter := &mockFeedEventEmitter{}
+	svc := newPostService(&mockPostRepo{
+		create: func(_ context.Context, _ uuid.UUID, _ string, _ entity.Visibility) (*entity.Post, error) {
+			return nil, errors.New("db down")
+		},
+	}, &mockMediaRepo{}, &mockLikeRepo{})
+	svc.WithFeedEventEmitter(emitter)
+
+	_, err := svc.CreatePost(context.Background(), uuid.New(), "Hello world", entity.VisibilityPublic, nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected create error")
+	}
+	if emitter.called != 0 {
+		t.Fatalf("feed event emitted on failure: %d", emitter.called)
+	}
+}
+
+func TestCreatePost_FeedEmitterFailureIsNonFatal(t *testing.T) {
+	emitter := &mockFeedEventEmitter{err: errors.New("queue full")}
+	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, &mockLikeRepo{})
+	svc.WithFeedEventEmitter(emitter)
+
+	if _, err := svc.CreatePost(context.Background(), uuid.New(), "Hello world", entity.VisibilityPublic, nil, nil, nil); err != nil {
+		t.Fatalf("CreatePost should ignore feed emitter error: %v", err)
+	}
+	if emitter.called != 1 {
+		t.Fatalf("feed emitter calls = %d, want 1", emitter.called)
 	}
 }
 

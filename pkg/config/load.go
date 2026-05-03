@@ -154,3 +154,28 @@ func loadRedisConfig() RedisConfig {
 		PoolSize: getEnvInt("REDIS_POOL_SIZE", 10),
 	}
 }
+
+// loadFeedTimelineConfig loads precomputed feed timeline and fanout settings.
+//
+//	FEED_TIMELINE_ENABLED          (default: false)
+//	FEED_TIMELINE_ROLLOUT_PERCENT (default: 0)
+//	FEED_TIMELINE_MAX_ITEMS       (default: 1000)
+//	FEED_TIMELINE_TTL             (default: 168h)
+//	FEED_FANOUT_ENABLED           (default: true)
+//	FEED_FANOUT_WORKERS           (default: 10)
+//	FEED_FANOUT_QUEUE_SIZE        (default: 10000)
+//	FEED_FANOUT_MAX_FOLLOWERS     (default: 10000)
+//	FEED_TIMELINE_REFRESH_ON_MISS (default: true)
+func loadFeedTimelineConfig() FeedTimelineConfig {
+	return FeedTimelineConfig{
+		TimelineEnabled:        getEnvBool("FEED_TIMELINE_ENABLED", false),
+		TimelineRolloutPercent: getEnvInt("FEED_TIMELINE_ROLLOUT_PERCENT", 0),
+		TimelineMaxItems:       getEnvInt("FEED_TIMELINE_MAX_ITEMS", 1000),
+		TimelineTTL:            getEnvDuration("FEED_TIMELINE_TTL", 7*24*time.Hour),
+		FanoutEnabled:          getEnvBool("FEED_FANOUT_ENABLED", true),
+		FanoutWorkers:          getEnvInt("FEED_FANOUT_WORKERS", 10),
+		FanoutQueueSize:        getEnvInt("FEED_FANOUT_QUEUE_SIZE", 10000),
+		FanoutMaxFollowers:     getEnvInt("FEED_FANOUT_MAX_FOLLOWERS", 10000),
+		RefreshOnMiss:          getEnvBool("FEED_TIMELINE_REFRESH_ON_MISS", true),
+	}
+}

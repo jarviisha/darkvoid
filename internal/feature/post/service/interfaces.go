@@ -124,6 +124,11 @@ type notificationEmitter interface {
 	EmitMention(ctx context.Context, actorID, recipientID, postID uuid.UUID) error
 }
 
+// FeedEventEmitter emits feed-impacting post events after successful mutations.
+type FeedEventEmitter interface {
+	EmitPostCreated(ctx context.Context, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error
+}
+
 // TrendingInvalidator invalidates the trending posts cache.
 // Defined here to avoid importing the feed package (would create a cycle).
 type TrendingInvalidator interface {

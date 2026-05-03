@@ -20,6 +20,12 @@ type FeedInvalidator interface {
 	InvalidateFollowingIDs(ctx context.Context, userID uuid.UUID) error
 }
 
+// FollowFeedEventEmitter emits feed-impacting follow events.
+type FollowFeedEventEmitter interface {
+	EmitFollowCreated(ctx context.Context, followerID, followeeID uuid.UUID) error
+	EmitFollowDeleted(ctx context.Context, followerID, followeeID uuid.UUID) error
+}
+
 // FollowNotificationEmitter is a narrow interface for emitting follow notifications.
 // Defined here to avoid importing the notification package (would create a cycle).
 type FollowNotificationEmitter interface {
@@ -31,6 +37,7 @@ type FollowNotificationEmitter interface {
 type FollowService struct {
 	followRepo      followRepo
 	feedInvalidator FeedInvalidator           // optional, nil = no-op
+	feedEmitter     FollowFeedEventEmitter    // optional, nil = no-op
 	notifEmitter    FollowNotificationEmitter // optional, nil = no-op
 }
 
@@ -42,6 +49,11 @@ func NewFollowService(followRepo followRepo) *FollowService {
 // the feed cache is initialized, avoiding circular init dependencies.
 func (s *FollowService) WithFeedInvalidator(inv FeedInvalidator) {
 	s.feedInvalidator = inv
+}
+
+// WithFeedEventEmitter attaches a feed event emitter. Called at wire-up time.
+func (s *FollowService) WithFeedEventEmitter(e FollowFeedEventEmitter) {
+	s.feedEmitter = e
 }
 
 // WithNotificationEmitter attaches a notification emitter. Called at wire-up time.
@@ -68,6 +80,7 @@ func (s *FollowService) Follow(ctx context.Context, followerID, followeeID uuid.
 	}
 	logger.Info(ctx, "followed", "follower", followerID, "followee", followeeID)
 	s.invalidateFollowingIDs(ctx, followerID)
+	s.emitFollowCreated(ctx, followerID, followeeID)
 	s.emitFollowNotification(ctx, followerID, followeeID)
 	return nil
 }
@@ -82,6 +95,7 @@ func (s *FollowService) Unfollow(ctx context.Context, followerID, followeeID uui
 	}
 	logger.Info(ctx, "unfollowed", "follower", followerID, "followee", followeeID)
 	s.invalidateFollowingIDs(ctx, followerID)
+	s.emitFollowDeleted(ctx, followerID, followeeID)
 	s.deleteFollowNotification(ctx, followerID, followeeID)
 	return nil
 }
@@ -94,6 +108,24 @@ func (s *FollowService) emitFollowNotification(ctx context.Context, followerID, 
 	}
 	if err := s.notifEmitter.EmitFollow(ctx, followerID, followeeID); err != nil {
 		logger.LogError(ctx, err, "failed to emit follow notification", "follower", followerID, "followee", followeeID)
+	}
+}
+
+func (s *FollowService) emitFollowCreated(ctx context.Context, followerID, followeeID uuid.UUID) {
+	if s.feedEmitter == nil {
+		return
+	}
+	if err := s.feedEmitter.EmitFollowCreated(ctx, followerID, followeeID); err != nil {
+		logger.LogError(ctx, err, "failed to emit follow-created feed event", "follower", followerID, "followee", followeeID)
+	}
+}
+
+func (s *FollowService) emitFollowDeleted(ctx context.Context, followerID, followeeID uuid.UUID) {
+	if s.feedEmitter == nil {
+		return
+	}
+	if err := s.feedEmitter.EmitFollowDeleted(ctx, followerID, followeeID); err != nil {
+		logger.LogError(ctx, err, "failed to emit follow-deleted feed event", "follower", followerID, "followee", followeeID)
 	}
 }
 

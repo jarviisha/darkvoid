@@ -39,6 +39,11 @@ func (s *PostService) WithNotificationEmitter(e notificationEmitter) {
 	s.notifEmitter = e
 }
 
+// WithFeedEventEmitter wires feed-impacting post events after construction.
+func (s *PostService) WithFeedEventEmitter(e FeedEventEmitter) {
+	s.feedEmitter = e
+}
+
 // WithObjectDeleter attaches a Codohue object deleter. Called at wire-up time.
 // When set, DeletePost will remove the post from the recommendation index after successful deletion.
 func (s *PostService) WithObjectDeleter(d ObjectDeleter) {
@@ -65,6 +70,7 @@ type PostService struct {
 	mentionRepo   mentionRepo // optional: nil → mentions skipped
 
 	notifEmitter      notificationEmitter // optional: nil → notifications skipped
+	feedEmitter       FeedEventEmitter    // optional: nil → feed propagation skipped
 	objectDeleter     ObjectDeleter       // optional: nil → no recommendation index cleanup on delete
 	embeddingProvider EmbeddingProvider   // optional: nil → no BYOE embeddings
 	objectEmbedder    ObjectEmbedder      // optional: nil → no BYOE embeddings
@@ -158,9 +164,19 @@ func (s *PostService) CreatePost(ctx context.Context, authorID uuid.UUID, conten
 	p.Mentions = s.enrichMentionsAfterCommit(ctx, p.ID, authorID, persistedMentionIDs)
 
 	s.pushEmbeddingAsync(p.ID.String(), p.Content, p.Tags)
+	s.emitPostCreatedFeedEvent(ctx, p)
 
 	logger.Info(ctx, "post created", "post_id", p.ID, "author_id", authorID)
 	return p, nil
+}
+
+func (s *PostService) emitPostCreatedFeedEvent(ctx context.Context, p *entity.Post) {
+	if s.feedEmitter == nil || p == nil {
+		return
+	}
+	if err := s.feedEmitter.EmitPostCreated(ctx, p.ID, p.AuthorID, string(p.Visibility), p.CreatedAt); err != nil {
+		logger.LogError(ctx, err, "failed to emit post-created feed event", "post_id", p.ID)
+	}
 }
 
 // GetPost retrieves a single post by ID, enriched with like count and optional isLiked flag

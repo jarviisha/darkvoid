@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	"github.com/jarviisha/darkvoid/pkg/database"
 )
 
@@ -14,6 +15,7 @@ type MetricsResponse struct {
 	Service  ServiceMetrics  `json:"service"`
 	Runtime  RuntimeMetrics  `json:"runtime"`
 	Database DatabaseMetrics `json:"database"`
+	Feed     FeedMetrics     `json:"feed"`
 }
 
 // ServiceMetrics represents service-level metrics
@@ -43,6 +45,9 @@ type DatabaseMetrics struct {
 	AcquireCount    int64  `json:"acquire_count"`
 	AcquireDuration string `json:"acquire_duration_avg"`
 }
+
+// FeedMetrics represents feed-specific operational counters.
+type FeedMetrics = feed.MetricsSnapshot
 
 // metricsHandler handles metrics requests
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
@@ -96,5 +101,6 @@ func (s *Server) collectMetrics() MetricsResponse {
 		Service:  serviceMetrics,
 		Runtime:  runtimeMetrics,
 		Database: dbMetrics,
+		Feed:     feed.SnapshotMetrics(),
 	}
 }
