@@ -105,6 +105,10 @@ func (ctx *UserContext) WireFeedInvalidator(inv service.FeedInvalidator) {
 	ctx.followService.WithFeedInvalidator(inv)
 }
 
+func (ctx *UserContext) WireFeedEventEmitter(e service.FollowFeedEventEmitter) {
+	ctx.followService.WithFeedEventEmitter(e)
+}
+
 func (ctx *UserContext) WireNotificationEmitter(notif *NotificationContext) {
 	ctx.followService.WithNotificationEmitter(notif.notifService)
 }

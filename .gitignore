@@ -15,6 +15,9 @@ bin/
 # Go workspace file
 go.work
 
+# Go dependencies
+vendor/
+
 # Environment variables
 .env
 .env.local
@@ -61,4 +64,3 @@ ai-*/
 uploads/
 docker-compose.override.yml
 localdocs/
-

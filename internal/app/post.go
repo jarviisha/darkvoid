@@ -152,6 +152,10 @@ func (ctx *PostContext) WireFeedCacheInvalidator(inv service.TrendingInvalidator
 	ctx.commentService.WithTrendingInvalidator(inv)
 }
 
+func (ctx *PostContext) WireFeedEventEmitter(e service.FeedEventEmitter) {
+	ctx.postService.WithFeedEventEmitter(e)
+}
+
 func (ctx *PostContext) WireNotificationEmitter(notif *NotificationContext) {
 	ctx.postService.WithNotificationEmitter(notif.notifService)
 	ctx.likeService.WithNotificationEmitter(notif.notifService)

@@ -261,10 +261,15 @@ type followReader struct {
 
 type feedFollowService interface {
 	GetFollowingIDs(ctx context.Context, targetID uuid.UUID) ([]uuid.UUID, error)
+	GetFollowerIDs(ctx context.Context, targetID uuid.UUID) ([]uuid.UUID, error)
 }
 
 func (r *followReader) GetFollowingIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
 	return r.followService.GetFollowingIDs(ctx, userID)
+}
+
+func (r *followReader) GetFollowerIDs(ctx context.Context, targetID uuid.UUID) ([]uuid.UUID, error) {
+	return r.followService.GetFollowerIDs(ctx, targetID)
 }
 
 // --- likeReader ---

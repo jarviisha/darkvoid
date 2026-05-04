@@ -2,7 +2,7 @@ package service
 
 import (
 	"context"
-	stderrs "errors"
+	"hash/crc32"
 	"math"
 	"sort"
 	"time"
@@ -30,23 +30,28 @@ type FeedService struct {
 	likeReader      feed.LikeReader
 	ranker          feed.Ranker
 	cache           feedcache.FeedCache
-	sessionCache    feedcache.FeedSessionCache
+	timelineStore   feed.TimelineStore
+	refresher       feed.TimelineRefresher
 	recommender     feed.Recommender     // optional: nil = no CF augmentation
 	trendingFetcher feed.TrendingFetcher // optional: nil = use local DB trending
+	timelineOptions timelineOptions
+}
+
+type timelineOptions struct {
+	configured     bool
+	servingEnabled bool
+	rolloutPercent int
+	refreshOnMiss  bool
 }
 
 // NewFeedService creates a new FeedService.
-func NewFeedService(postReader feed.PostReader, followReader feed.FollowReader, likeReader feed.LikeReader, ranker feed.Ranker, cache feedcache.FeedCache, sessionCache feedcache.FeedSessionCache) *FeedService {
-	if sessionCache == nil {
-		sessionCache = feedcache.NewNopFeedSessionCache()
-	}
+func NewFeedService(postReader feed.PostReader, followReader feed.FollowReader, likeReader feed.LikeReader, ranker feed.Ranker, cache feedcache.FeedCache) *FeedService {
 	return &FeedService{
 		postReader:   postReader,
 		followReader: followReader,
 		likeReader:   likeReader,
 		ranker:       ranker,
 		cache:        cache,
-		sessionCache: sessionCache,
 	}
 }
 
@@ -61,28 +66,53 @@ func (s *FeedService) WithTrendingFetcher(f feed.TrendingFetcher) {
 	s.trendingFetcher = f
 }
 
+// WithTimelineStore attaches a prepared timeline store for timeline-first reads.
+func (s *FeedService) WithTimelineStore(store feed.TimelineStore) {
+	s.timelineStore = store
+}
+
+// WithTimelineRefresher attaches a lazy refresher for missing prepared timelines.
+func (s *FeedService) WithTimelineRefresher(refresher feed.TimelineRefresher) {
+	s.refresher = refresher
+}
+
+// WithTimelineOptions configures rollout gates for prepared timeline reads.
+func (s *FeedService) WithTimelineOptions(servingEnabled bool, rolloutPercent int, refreshOnMiss bool) {
+	s.timelineOptions = timelineOptions{
+		configured:     true,
+		servingEnabled: servingEnabled,
+		rolloutPercent: normalizeRolloutPercent(rolloutPercent),
+		refreshOnMiss:  refreshOnMiss,
+	}
+}
+
 // GetFeed returns the cursor-paginated mixed feed for userID.
 func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
-	now := time.Now().UTC()
-	state := feed.NewFeedPageState(now)
-	if cursor != nil && cursor.State != nil {
-		state = cursor.State
-	}
-	if state.SessionID != "" {
-		cached, cacheErr := s.sessionCache.GetFeedState(ctx, state.SessionID)
-		switch {
-		case cacheErr == nil && cached != nil:
-			cached.SessionID = state.SessionID
-			state = cached
-		case cacheErr != nil && !stderrs.Is(cacheErr, feedcache.ErrFeedSessionMiss):
-			logger.LogError(ctx, cacheErr, "feed session cache read failed", "session_id", state.SessionID)
+	if cursor != nil {
+		if err := cursor.Validate(); err != nil {
+			return nil, nil, errors.NewBadRequestError("invalid cursor")
 		}
 	}
-	if err := state.Validate(now); err != nil {
-		return nil, nil, errors.NewBadRequestError("invalid cursor")
+	if s.timelineReadAllowed(userID) {
+		items, next, err := s.getFeedFromTimeline(ctx, userID, cursor)
+		if err == nil && len(items) > 0 {
+			feed.CountTimelineHit()
+			logger.Info(ctx, "timeline feed hit", "user_id", userID, "items", len(items))
+			return items, next, nil
+		}
+		if err != nil {
+			feed.CountTimelineReadError()
+			logger.LogError(ctx, err, "timeline feed read failed, falling back", "user_id", userID)
+		} else {
+			feed.CountTimelineMiss()
+			logger.Info(ctx, "timeline feed miss", "user_id", userID)
+		}
 	}
-	if state.SessionID == "" {
-		state.SessionID = uuid.NewString()
+
+	if cursor != nil && cursor.FallbackCursor != nil {
+		feed.CountFallback()
+		logger.Info(ctx, "feed fallback continuation", "user_id", userID)
+		return s.discoverFallback(ctx, userID, cursor.FallbackCursor)
 	}
 
 	cachedIDs, err := s.getFollowingIDs(ctx, userID)
@@ -98,19 +128,18 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 		followingSet[id] = true
 	}
 
-	if state.Mode == feed.PhaseDiscoverFallback {
-		return s.discoverFallbackWithState(ctx, userID, state)
-	}
-
-	candidates, followingFetched, err := s.collectMixedCandidates(ctx, userID, authorIDs, state)
+	candidates, recOffset, recTotal, followingFetched, err := s.collectMixedCandidates(ctx, userID, authorIDs, cursor)
 	if err != nil {
 		return nil, nil, err
 	}
+	candidates = filterEligibleCandidates(userID, followingSet, collapseCandidates(candidates))
 	if len(candidates) == 0 && !followingFetched {
-		state.Mode = feed.PhaseDiscoverFallback
-		return s.discoverFallbackWithState(ctx, userID, state)
+		feed.CountFallback()
+		logger.Info(ctx, "feed fallback entered", "user_id", userID)
+		return s.discoverFallback(ctx, userID, nil)
 	}
 
+	now := time.Now().UTC()
 	items := s.rankCandidates(ctx, candidates, followingSet, now)
 	s.sortFeedItems(items)
 
@@ -119,39 +148,175 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 		page = page[:pageSize]
 	}
 
-	returnedIDs := make(map[string]bool, len(page))
-	seenIDs := make([]string, 0, len(page))
-	for _, item := range page {
-		id := item.Post.ID.String()
-		returnedIDs[id] = true
-		seenIDs = append(seenIDs, id)
-	}
-	state.AddSeen(seenIDs...)
-
-	pending := make([]feed.FeedCandidate, 0, len(items)-len(page))
-	for _, item := range items {
-		id := item.Post.ID.String()
-		if returnedIDs[id] {
-			continue
-		}
-		pending = append(pending, feedCandidateFromItem(item))
-	}
-	state.PendingItems = pending
-	state.TrimPending()
-
 	s.enrichIsLiked(ctx, userID, page)
 	s.enrichIsFollowingAuthor(page, followingSet)
 
 	if len(page) == 0 {
-		s.deleteFeedSession(ctx, state)
 		return nil, nil, nil
 	}
-	if len(state.PendingItems) == 0 && !s.mayHaveMoreMixed(state, followingFetched) {
-		s.deleteFeedSession(ctx, state)
+	if recTotal == 0 || recOffset >= recTotal {
 		return page, nil, nil
 	}
-	s.storeFeedSession(ctx, state)
-	return page, &feed.FeedCursor{State: state}, nil
+	return page, &feed.FeedCursor{
+		Version:              feed.FeedCursorVersion,
+		RecommendationOffset: recOffset,
+		IssuedAt:             time.Now().UTC(),
+	}, nil
+}
+
+func (s *FeedService) timelineReadAllowed(userID uuid.UUID) bool {
+	if s.timelineStore == nil {
+		return false
+	}
+	if !s.timelineOptions.configured {
+		return true
+	}
+	return s.timelineOptions.servingEnabled && inRollout(userID, s.timelineOptions.rolloutPercent)
+}
+
+func (s *FeedService) refreshOnMissAllowed() bool {
+	if !s.timelineOptions.configured {
+		return true
+	}
+	return s.timelineOptions.refreshOnMiss
+}
+
+func normalizeRolloutPercent(percent int) int {
+	switch {
+	case percent < 0:
+		return 0
+	case percent > 100:
+		return 100
+	default:
+		return percent
+	}
+}
+
+func inRollout(userID uuid.UUID, percent int) bool {
+	percent = normalizeRolloutPercent(percent)
+	if percent == 0 {
+		return false
+	}
+	if percent == 100 {
+		return true
+	}
+	bucket := int(crc32.ChecksumIEEE([]byte(userID.String())) % 100)
+	return bucket < percent
+}
+
+func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID, cursor *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
+	position := (*feed.TimelinePosition)(nil)
+	if cursor != nil {
+		position = cursor.Timeline
+	}
+	page, err := s.timelineStore.ReadPage(ctx, userID, position, pageSize*fetchMultiplier)
+	if err != nil {
+		return nil, nil, err
+	}
+	if (page == nil || len(page.Entries) == 0) && s.refresher != nil && s.refreshOnMissAllowed() {
+		feed.CountLazyRefresh()
+		logger.Info(ctx, "timeline refresh on miss started", "user_id", userID)
+		if refreshErr := s.refresher.RefreshTimeline(ctx, userID); refreshErr != nil {
+			logger.LogError(ctx, refreshErr, "timeline refresh on miss failed", "user_id", userID)
+		} else {
+			logger.Info(ctx, "timeline refresh on miss completed", "user_id", userID)
+			page, err = s.timelineStore.ReadPage(ctx, userID, position, pageSize*fetchMultiplier)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	if page == nil || len(page.Entries) == 0 {
+		return nil, nil, nil
+	}
+
+	cachedIDs, err := s.getFollowingIDs(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	followingSet := make(map[uuid.UUID]bool, len(cachedIDs)+1)
+	for _, id := range cachedIDs {
+		followingSet[id] = true
+	}
+	followingSet[userID] = true
+
+	ids := make([]uuid.UUID, 0, len(page.Entries))
+	entryByPost := make(map[uuid.UUID]feed.TimelineEntry, len(page.Entries))
+	for _, entry := range page.Entries {
+		ids = append(ids, entry.PostID)
+		entryByPost[entry.PostID] = entry
+	}
+	posts, err := s.postReader.GetPostsByIDs(ctx, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	now := time.Now().UTC()
+	ranked := s.rankCandidates(ctx, postsToTimelineCandidates(posts), followingSet, now)
+	items := make([]*feedentity.FeedItem, 0, pageSize)
+	for _, item := range ranked {
+		if !isEligibleTimelinePost(userID, followingSet, item.Post) {
+			continue
+		}
+		item.Source = feedentity.SourceFollowing
+		items = append(items, item)
+		if len(items) == pageSize {
+			break
+		}
+	}
+	feed.CountStaleFiltered(len(page.Entries) - len(items))
+	s.enrichIsLiked(ctx, userID, items)
+	s.enrichIsFollowingAuthor(items, followingSet)
+
+	if len(items) == 0 {
+		return nil, nil, nil
+	}
+	lastEntry := entryByPost[items[len(items)-1].Post.ID]
+	next := (*feed.FeedCursor)(nil)
+	if len(items) == pageSize || len(page.Entries) == pageSize*fetchMultiplier {
+		next = &feed.FeedCursor{
+			Version: feed.FeedCursorVersion,
+			Timeline: &feed.TimelinePosition{
+				Score:  lastEntry.Score,
+				PostID: lastEntry.PostID.String(),
+			},
+			RecommendationOffset: recommendationOffset(cursor),
+			IssuedAt:             time.Now().UTC(),
+		}
+	}
+	return items, next, nil
+}
+
+func postsToTimelineCandidates(posts []*feedentity.Post) []feedCandidate {
+	candidates := make([]feedCandidate, 0, len(posts))
+	for i, p := range posts {
+		candidates = append(candidates, feedCandidate{post: p, source: feedentity.SourceFollowing, sourceRank: i + 1})
+	}
+	return candidates
+}
+
+func isEligibleTimelinePost(userID uuid.UUID, followingSet map[uuid.UUID]bool, p *feedentity.Post) bool {
+	if p == nil {
+		return false
+	}
+	if p.AuthorID != userID && !followingSet[p.AuthorID] {
+		return false
+	}
+	switch p.Visibility {
+	case "public", "followers":
+		return true
+	case "private":
+		return p.AuthorID == userID
+	default:
+		return false
+	}
+}
+
+func recommendationOffset(cursor *feed.FeedCursor) int {
+	if cursor == nil {
+		return 0
+	}
+	return cursor.RecommendationOffset
 }
 
 type feedCandidate struct {
@@ -164,49 +329,28 @@ type feedCandidate struct {
 	recommendationRank  *int
 }
 
-func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UUID, authorIDs []uuid.UUID, state *feed.FeedPageState) ([]feedCandidate, bool, error) {
-	seen := state.SeenSet()
-	candidates := make([]feedCandidate, 0, len(state.PendingItems)+pageSize*fetchMultiplier)
+func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UUID, authorIDs []uuid.UUID, cursor *feed.FeedCursor) ([]feedCandidate, int, int, bool, error) {
+	recommendationOffset := recommendationOffset(cursor)
+	candidates := make([]feedCandidate, 0, pageSize*fetchMultiplier)
 
-	if len(state.PendingItems) > 0 {
-		pending := state.PendingItems
-		state.PendingItems = nil
-		loaded, err := s.loadCandidatesByID(ctx, pending)
-		if err != nil {
-			logger.LogError(ctx, err, "failed to load pending feed candidates", "user_id", userID)
-		} else {
-			candidates = append(candidates, loaded...)
-		}
-	}
-
-	followingPosts, err := s.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, state.FollowingCursor, pageSize*fetchMultiplier)
+	followingPosts, err := s.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, nil, pageSize*fetchMultiplier)
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get following posts", "user_id", userID)
-		return nil, false, errors.NewInternalError(err)
-	}
-	if len(followingPosts) > 0 {
-		last := followingPosts[len(followingPosts)-1]
-		state.FollowingCursor = &feed.FollowingCursor{
-			Mode:      feed.ModeFollowing,
-			CreatedAt: last.CreatedAt,
-			PostID:    last.ID.String(),
-		}
+		return nil, recommendationOffset, 0, false, errors.NewInternalError(err)
 	}
 	for i, p := range followingPosts {
-		if seen[p.ID.String()] {
-			continue
-		}
 		candidates = append(candidates, feedCandidate{post: p, source: feedentity.SourceFollowing, sourceRank: i + 1})
 	}
 
+	recommendationTotal := 0
 	if s.recommender != nil {
-		recPage, recErr := s.recommender.GetRecommendations(ctx, userID.String(), pageSize, state.RecommendationOffset)
+		recPage, recErr := s.recommender.GetRecommendations(ctx, userID.String(), pageSize, recommendationOffset)
 		if recErr != nil {
 			logger.LogError(ctx, recErr, "codohue recommendations failed, skipping", "user_id", userID)
 		} else if recPage != nil {
-			state.RecommendationOffset = recPage.Offset + len(recPage.Items)
-			state.RecommendationTotal = recPage.Total
-			recCandidates, loadErr := s.loadRecommendationCandidates(ctx, recPage.Items, seen)
+			recommendationOffset = recPage.Offset + len(recPage.Items)
+			recommendationTotal = recPage.Total
+			recCandidates, loadErr := s.loadRecommendationCandidates(ctx, recPage.Items)
 			if loadErr != nil {
 				logger.LogError(ctx, loadErr, "failed to load recommendation candidates", "user_id", userID)
 			}
@@ -214,60 +358,27 @@ func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UU
 		}
 	}
 
-	if state.TrendingOffset == 0 {
+	if cursor == nil || cursor.TrendingCursor == "" {
 		trendingPosts, err := s.getTrending(ctx)
 		if err != nil {
 			logger.LogError(ctx, err, "failed to get trending posts, skipping", "user_id", userID)
 		}
+		if len(trendingPosts) > pageSize {
+			trendingPosts = trendingPosts[:pageSize]
+		}
 		for i, p := range trendingPosts {
-			if seen[p.ID.String()] {
-				continue
-			}
 			candidates = append(candidates, feedCandidate{post: p, source: feedentity.SourceTrending, sourceRank: i + 1})
 		}
-		state.TrendingOffset = len(trendingPosts)
-		state.TrendingTotal = len(trendingPosts)
 	}
 
-	return collapseCandidates(candidates), len(followingPosts) > 0, nil
+	return candidates, recommendationOffset, recommendationTotal, len(followingPosts) > 0, nil
 }
 
-func (s *FeedService) loadCandidatesByID(ctx context.Context, pending []feed.FeedCandidate) ([]feedCandidate, error) {
-	ids := make([]uuid.UUID, 0, len(pending))
-	meta := make(map[uuid.UUID]feed.FeedCandidate, len(pending))
-	for _, item := range pending {
-		id, err := uuid.Parse(item.PostID)
-		if err != nil {
-			continue
-		}
-		ids = append(ids, id)
-		meta[id] = item
-	}
-	posts, err := s.postReader.GetPostsByIDs(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]feedCandidate, 0, len(posts))
-	for _, p := range posts {
-		item := meta[p.ID]
-		result = append(result, feedCandidate{
-			post:                p,
-			source:              feedentity.Source(item.Source),
-			sourceRank:          item.SourceRank,
-			providerScore:       item.ProviderScore,
-			providerRank:        item.ProviderRank,
-			recommendationScore: item.ProviderScore,
-			recommendationRank:  item.ProviderRank,
-		})
-	}
-	return result, nil
-}
-
-func (s *FeedService) loadRecommendationCandidates(ctx context.Context, items []feed.RecommendedItem, seen map[string]bool) ([]feedCandidate, error) {
+func (s *FeedService) loadRecommendationCandidates(ctx context.Context, items []feed.RecommendedItem) ([]feedCandidate, error) {
 	ids := make([]uuid.UUID, 0, len(items))
 	meta := make(map[uuid.UUID]feed.RecommendedItem, len(items))
 	for _, item := range items {
-		if seen[item.ObjectID] || item.Score < 0 {
+		if item.Score < 0 {
 			continue
 		}
 		id, err := uuid.Parse(item.ObjectID)
@@ -326,6 +437,30 @@ func collapseCandidates(candidates []feedCandidate) []feedCandidate {
 		result = append(result, c)
 	}
 	return result
+}
+
+func filterEligibleCandidates(userID uuid.UUID, followingSet map[uuid.UUID]bool, candidates []feedCandidate) []feedCandidate {
+	filtered := candidates[:0]
+	for _, candidate := range candidates {
+		if candidate.post == nil {
+			continue
+		}
+		switch candidate.source {
+		case feedentity.SourceFollowing:
+			if isEligibleTimelinePost(userID, followingSet, candidate.post) {
+				filtered = append(filtered, candidate)
+			}
+		case feedentity.SourceRecommendation, feedentity.SourceTrending, feedentity.SourceDiscover:
+			if candidate.post.Visibility == "public" {
+				filtered = append(filtered, candidate)
+			}
+		default:
+			if candidate.post.Visibility == "public" {
+				filtered = append(filtered, candidate)
+			}
+		}
+	}
+	return filtered
 }
 
 func sourcePriority(source feedentity.Source) int {
@@ -387,40 +522,6 @@ func (s *FeedService) sortFeedItems(items []*feedentity.FeedItem) {
 	})
 }
 
-func feedCandidateFromItem(item *feedentity.FeedItem) feed.FeedCandidate {
-	return feed.FeedCandidate{
-		PostID:        item.Post.ID.String(),
-		Source:        string(item.Source),
-		ProviderScore: item.RecommendationScore,
-		ProviderRank:  item.RecommendationRank,
-		CreatedAt:     item.Post.CreatedAt,
-	}
-}
-
-func (s *FeedService) mayHaveMoreMixed(state *feed.FeedPageState, followingFetched bool) bool {
-	return followingFetched ||
-		len(state.PendingItems) > 0 ||
-		(state.RecommendationTotal > 0 && state.RecommendationOffset < state.RecommendationTotal)
-}
-
-func (s *FeedService) storeFeedSession(ctx context.Context, state *feed.FeedPageState) {
-	if state == nil || state.SessionID == "" {
-		return
-	}
-	if err := s.sessionCache.SetFeedState(ctx, state.SessionID, state); err != nil {
-		logger.LogError(ctx, err, "feed session cache write failed", "session_id", state.SessionID)
-	}
-}
-
-func (s *FeedService) deleteFeedSession(ctx context.Context, state *feed.FeedPageState) {
-	if state == nil || state.SessionID == "" {
-		return
-	}
-	if err := s.sessionCache.DeleteFeedState(ctx, state.SessionID); err != nil {
-		logger.LogError(ctx, err, "feed session cache delete failed", "session_id", state.SessionID)
-	}
-}
-
 // getFollowingIDs returns following IDs from cache, falling back to followReader on miss.
 func (s *FeedService) getFollowingIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
 	if ids, err := s.cache.GetFollowingIDs(ctx, userID); err != nil {
@@ -441,62 +542,44 @@ func (s *FeedService) getFollowingIDs(ctx context.Context, userID uuid.UUID) ([]
 	return ids, nil
 }
 
-func (s *FeedService) discoverFallbackWithState(ctx context.Context, userID uuid.UUID, state *feed.FeedPageState) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
-	fetchLimit := pageSize + 1 + len(state.SeenPostIDs)
-	if fetchLimit > 100 {
-		fetchLimit = 100
-	}
-	posts, err := s.postReader.GetDiscoverWithCursor(ctx, state.DiscoveryCursor, int32(fetchLimit), nil) //nolint:gosec // capped to 100 above
+func (s *FeedService) discoverFallback(ctx context.Context, userID uuid.UUID, cursor *feed.DiscoverCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
+	posts, err := s.postReader.GetDiscoverWithCursor(ctx, cursor, pageSize+1, nil)
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get discover fallback", "user_id", userID)
 		return nil, nil, errors.NewInternalError(err)
 	}
 
-	seen := state.SeenSet()
-	filtered := make([]*feedentity.Post, 0, pageSize+1)
-	for _, p := range posts {
-		if seen[p.ID.String()] {
-			state.DiscoveryCursor = &feed.DiscoverCursor{CreatedAt: p.CreatedAt, PostID: p.ID.String()}
-			continue
-		}
-		filtered = append(filtered, p)
-		state.DiscoveryCursor = &feed.DiscoverCursor{CreatedAt: p.CreatedAt, PostID: p.ID.String()}
-		if len(filtered) > pageSize {
-			break
-		}
-	}
-
-	hasMore := len(filtered) > pageSize || len(posts) == fetchLimit
-	if len(filtered) > pageSize {
-		filtered = filtered[:pageSize]
+	hasMore := len(posts) > pageSize
+	if hasMore {
+		posts = posts[:pageSize]
 	}
 
 	now := time.Now()
-	scores, rankErr := s.ranker.RankPosts(ctx, filtered, map[string]bool{}, now)
+	scores, rankErr := s.ranker.RankPosts(ctx, posts, map[string]bool{}, now)
 	if rankErr != nil {
 		logger.LogError(ctx, rankErr, "ranker failed in discover fallback", "user_id", userID)
 		scores = make(map[string]float64)
 	}
-	items := make([]*feedentity.FeedItem, 0, len(filtered))
-	seenIDs := make([]string, 0, len(filtered))
-	for _, p := range filtered {
+	items := make([]*feedentity.FeedItem, 0, len(posts))
+	for _, p := range posts {
 		items = append(items, &feedentity.FeedItem{
 			Post:   p,
 			Score:  scores[p.ID.String()],
 			Source: feedentity.SourceDiscover,
 		})
-		seenIDs = append(seenIDs, p.ID.String())
 	}
-	state.AddSeen(seenIDs...)
 
 	s.enrichIsLiked(ctx, userID, items)
 	s.enrichIsFollowingAuthorFromDB(ctx, userID, items)
 	if len(items) == 0 || !hasMore {
-		s.deleteFeedSession(ctx, state)
 		return items, nil, nil
 	}
-	s.storeFeedSession(ctx, state)
-	return items, &feed.FeedCursor{State: state}, nil
+	last := items[len(items)-1].Post
+	return items, &feed.FeedCursor{
+		Version:        feed.FeedCursorVersion,
+		FallbackCursor: &feed.DiscoverCursor{CreatedAt: last.CreatedAt, PostID: last.ID.String()},
+		IssuedAt:       time.Now().UTC(),
+	}, nil
 }
 
 // enrichIsLiked batch-fetches like status for the viewer and sets Post.IsLiked.

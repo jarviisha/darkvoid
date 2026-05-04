@@ -128,10 +128,10 @@ func NewFeedHandler(feedService feedService, store storage.Storage) *FeedHandler
 // GetFeed godoc
 //
 //	@Summary		Get feed
-//	@Description	Get a scored, paginated feed of posts mixed from followed users and trending posts
+//	@Description	Get a scored, cursor-paginated feed from the prepared timeline, with recommendation/trending/discover fallback positions encoded in a v2 cursor. Old session-backed feed cursors are rejected.
 //	@Tags			feed
 //	@Produce		json
-//	@Param			cursor	query		string	false	"Pagination cursor from previous response"
+//	@Param			cursor	query		string	false	"Opaque v2 pagination cursor from previous response"
 //	@Success		200		{object}	FeedResponse
 //	@Failure		400		{object}	errors.ErrorResponse
 //	@Failure		401		{object}	errors.ErrorResponse
@@ -150,6 +150,7 @@ func (h *FeedHandler) GetFeed(w http.ResponseWriter, r *http.Request) {
 
 	cursor, err := feed.DecodeFeedCursor(r.URL.Query().Get("cursor"))
 	if err != nil {
+		feed.CountCursorRejected()
 		errors.WriteJSON(w, errors.NewBadRequestError("invalid cursor"))
 		return
 	}

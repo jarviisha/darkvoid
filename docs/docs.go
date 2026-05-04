@@ -1300,7 +1300,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Get a scored, paginated feed of posts mixed from followed users and trending posts",
+                "description": "Get a scored, cursor-paginated feed from the prepared timeline, with recommendation/trending/discover fallback positions encoded in a v2 cursor. Old session-backed feed cursors are rejected.",
                 "produces": [
                     "application/json"
                 ],
@@ -1312,7 +1312,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Pagination cursor from previous response",
+                        "description": "Opaque v2 pagination cursor from previous response",
                         "name": "cursor",
                         "in": "query"
                     }

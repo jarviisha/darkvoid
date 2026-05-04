@@ -15,17 +15,18 @@ import (
 type FeedContext struct {
 	// Services
 	feedService *feedservice.FeedService
+	dispatcher  *feed.EventDispatcher
 
 	// Handlers
 	feedHandler *feedhandler.FeedHandler
 
 	// Cache is exported so app.go can wire WithTrendingInvalidator into post services.
-	cache        feedcache.FeedCache
-	sessionCache feedcache.FeedSessionCache
+	cache feedcache.FeedCache
 }
 
 type FeedPorts struct {
-	Cache feedcache.FeedCache
+	Cache      feedcache.FeedCache
+	Dispatcher *feed.EventDispatcher
 }
 
 // SetupFeedContext initializes the Feed context with all required dependencies.
@@ -36,23 +37,32 @@ type FeedPorts struct {
 func SetupFeedContext(
 	store storage.Storage,
 	postReader feed.PostReader,
-	followReader feed.FollowReader,
+	followReader feed.FollowGraphReader,
 	likeReader feed.LikeReader,
 	redisClient *pkgredis.Client,
+	feedTimelineCfg config.FeedTimelineConfig,
 	cohodueCfg config.CodohueConfig,
 ) (*FeedContext, *codohue.Client) {
 	// Build cache: Redis when available, no-op otherwise.
 	var fc feedcache.FeedCache
-	var sessionCache feedcache.FeedSessionCache
 	if redisClient != nil {
 		fc = feedcache.NewRedisFeedCache(redisClient)
-		sessionCache = feedcache.NewRedisFeedSessionCache(redisClient)
 	} else {
 		fc = feedcache.NewNopFeedCache()
-		sessionCache = feedcache.NewNopFeedSessionCache()
 	}
 
-	feedSvc := feedservice.NewFeedService(postReader, followReader, likeReader, feed.NewLocalRanker(feed.DefaultScorerConfig()), fc, sessionCache)
+	feedSvc := feedservice.NewFeedService(postReader, followReader, likeReader, feed.NewLocalRanker(feed.DefaultScorerConfig()), fc)
+	var timelineStore feed.TimelineStore
+	if redisClient != nil {
+		timelineStore = feedcache.NewRedisTimelineStore(redisClient, feedTimelineCfg.TimelineMaxItems, feedTimelineCfg.TimelineTTL)
+	} else {
+		timelineStore = feedcache.NewNopTimelineStore()
+	}
+	feedSvc.WithTimelineStore(timelineStore)
+	feedSvc.WithTimelineOptions(feedTimelineCfg.TimelineEnabled, feedTimelineCfg.TimelineRolloutPercent, feedTimelineCfg.RefreshOnMiss)
+	feedSvc.WithTimelineRefresher(feed.NewPreparedTimelineRefresher(postReader, followReader, timelineStore, feedTimelineCfg.TimelineMaxItems))
+	fanoutWorker := feed.NewFanoutWorker(followReader, timelineStore, feedTimelineCfg.FanoutMaxFollowers)
+	dispatcher := feed.NewEventDispatcher(feedTimelineCfg.FanoutEnabled, feedTimelineCfg.FanoutWorkers, feedTimelineCfg.FanoutQueueSize, fanoutWorker)
 
 	// Wire Codohue recommender and trending fetcher into the feed service when enabled.
 	// Wiring Codohue into other contexts (post services) is the caller's responsibility.
@@ -66,13 +76,13 @@ func SetupFeedContext(
 	feedHdlr := feedhandler.NewFeedHandler(feedSvc, store)
 
 	return &FeedContext{
-		feedService:  feedSvc,
-		feedHandler:  feedHdlr,
-		cache:        fc,
-		sessionCache: sessionCache,
+		feedService: feedSvc,
+		dispatcher:  dispatcher,
+		feedHandler: feedHdlr,
+		cache:       fc,
 	}, codohueClient
 }
 
 func (ctx *FeedContext) Ports() FeedPorts {
-	return FeedPorts{Cache: ctx.cache}
+	return FeedPorts{Cache: ctx.cache, Dispatcher: ctx.dispatcher}
 }

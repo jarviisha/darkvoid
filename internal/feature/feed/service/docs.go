@@ -1,4 +1,4 @@
 // Package service implements application services for the feed feature,
-// including mixed-source feed pagination, discovery fallback, and response
-// enrichment.
+// including timeline-first feed reads, v2 cursor continuation, supplemental
+// source fallback, rollout gates, discovery fallback, and response enrichment.
 package service

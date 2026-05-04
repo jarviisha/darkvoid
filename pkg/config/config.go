@@ -18,6 +18,7 @@ type Config struct {
 	Storage      StorageConfig
 	Root         RootConfig
 	Redis        RedisConfig
+	FeedTimeline FeedTimelineConfig
 	Codohue      CodohueConfig
 	Mailer       MailerConfig
 }
@@ -47,6 +48,20 @@ type RedisConfig struct {
 	Password string
 	DB       int
 	PoolSize int
+}
+
+// FeedTimelineConfig holds configuration for precomputed feed timelines and
+// in-process fanout workers.
+type FeedTimelineConfig struct {
+	TimelineEnabled        bool
+	TimelineRolloutPercent int
+	TimelineMaxItems       int
+	TimelineTTL            time.Duration
+	FanoutEnabled          bool
+	FanoutWorkers          int
+	FanoutQueueSize        int
+	FanoutMaxFollowers     int
+	RefreshOnMiss          bool
 }
 
 // RootConfig holds bootstrap configuration for the initial root/admin account.
@@ -167,6 +182,7 @@ func Load() (*Config, error) {
 		Storage:      loadStorageConfig(),
 		Root:         loadRootConfig(),
 		Redis:        loadRedisConfig(),
+		FeedTimeline: loadFeedTimelineConfig(),
 		Codohue:      loadCodohueConfig(),
 		Mailer:       loadMailerConfig(),
 	}
@@ -237,6 +253,24 @@ func (c *Config) Validate() error {
 	}
 	if c.RefreshToken.Expiry <= 0 {
 		return fmt.Errorf("refresh token expiry must be positive")
+	}
+	if c.FeedTimeline.TimelineRolloutPercent < 0 || c.FeedTimeline.TimelineRolloutPercent > 100 {
+		return fmt.Errorf("feed timeline rollout percent must be between 0 and 100")
+	}
+	if c.FeedTimeline.TimelineMaxItems < 1 {
+		return fmt.Errorf("feed timeline max items must be at least 1")
+	}
+	if c.FeedTimeline.TimelineTTL <= 0 {
+		return fmt.Errorf("feed timeline TTL must be positive")
+	}
+	if c.FeedTimeline.FanoutWorkers < 1 {
+		return fmt.Errorf("feed fanout workers must be at least 1")
+	}
+	if c.FeedTimeline.FanoutQueueSize < 1 {
+		return fmt.Errorf("feed fanout queue size must be at least 1")
+	}
+	if c.FeedTimeline.FanoutMaxFollowers < 1 {
+		return fmt.Errorf("feed fanout max followers must be at least 1")
 	}
 
 	return nil
