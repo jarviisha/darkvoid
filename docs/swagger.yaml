@@ -1700,11 +1700,11 @@ paths:
   /feed:
     get:
       description: Get a scored, cursor-paginated feed from the prepared timeline,
-        with recommendation/trending/discover fallback positions encoded in a v2 cursor.
-        Old session-backed feed cursors are rejected.
+        with timeline/recommendation/trending positions encoded in a no-version opaque
+        cursor. Versioned, nested timeline, and session-backed feed cursors are rejected.
       operationId: getFeed
       parameters:
-      - description: Opaque v2 pagination cursor from previous response
+      - description: Opaque no-version pagination cursor from previous response
         in: query
         name: cursor
         type: string

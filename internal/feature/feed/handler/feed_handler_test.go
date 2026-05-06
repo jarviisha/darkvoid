@@ -91,10 +91,11 @@ func TestGetFeed_Success(t *testing.T) {
 
 func TestGetFeed_WithNextCursor(t *testing.T) {
 	userID := uuid.New()
+	score := time.Now().UnixMicro()
 	next := &feed.FeedCursor{
-		Version:  feed.FeedCursorVersion,
-		Timeline: &feed.TimelinePosition{Score: time.Now().UnixMicro(), PostID: uuid.New().String()},
-		IssuedAt: time.Now().UTC(),
+		TimelineScore:  &score,
+		TimelinePostID: uuid.New().String(),
+		TimelineUser:   userID.String(),
 	}
 	svc := &mockFeedService{
 		getFeed: func(_ context.Context, _ uuid.UUID, _ *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
@@ -114,8 +115,12 @@ func TestGetFeed_WithNextCursor(t *testing.T) {
 	if body.NextCursor == "" {
 		t.Fatal("expected next_cursor")
 	}
-	if _, err := feed.DecodeFeedCursor(body.NextCursor); err != nil {
-		t.Fatalf("next cursor is not v2 decodable: %v", err)
+	decoded, err := feed.DecodeFeedCursor(body.NextCursor)
+	if err != nil {
+		t.Fatalf("next cursor is not decodable: %v", err)
+	}
+	if decoded.TimelineScore == nil || decoded.TimelineUser != userID.String() {
+		t.Fatalf("next cursor mismatch: %+v", decoded)
 	}
 }
 
@@ -167,9 +172,19 @@ func TestGetFeed_InvalidCursor(t *testing.T) {
 	}
 }
 
-func TestGetFeed_UnsupportedCursorVersion(t *testing.T) {
+func TestGetFeed_RejectsVersionedCursor(t *testing.T) {
 	userID := uuid.New()
-	cursor := (&feed.FeedCursor{Version: feed.FeedCursorVersion + 1}).Encode()
+	cursor := base64.RawURLEncoding.EncodeToString([]byte(`{"v":2}`))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/feed?cursor="+cursor, nil)
+	r := withAuth(req, userID)
+	w := httptest.NewRecorder()
+	newFeedHandler(&mockFeedService{}).GetFeed(w, r)
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestGetFeed_RejectsNestedTimelineCursor(t *testing.T) {
+	userID := uuid.New()
+	cursor := base64.RawURLEncoding.EncodeToString([]byte(`{"timeline":{"Score":1,"PostID":"` + uuid.NewString() + `"}}`))
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/feed?cursor="+cursor, nil)
 	r := withAuth(req, userID)
 	w := httptest.NewRecorder()

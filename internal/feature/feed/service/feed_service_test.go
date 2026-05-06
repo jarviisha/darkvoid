@@ -171,7 +171,7 @@ func TestGetFeed_MixedFallbackDoesNotEmitSessionCursor(t *testing.T) {
 		t.Fatalf("GetFeed page1: %v", err)
 	}
 	if cursor != nil {
-		t.Fatalf("cursor = %+v, want nil without v2 continuation state", cursor)
+		t.Fatalf("cursor = %+v, want nil without no-version continuation state", cursor)
 	}
 	if len(page1) == 0 {
 		t.Fatal("expected mixed fallback items")
@@ -207,7 +207,7 @@ func TestGetFeed_TimelineFirstOrderingAndCursor(t *testing.T) {
 	if page[0].Post.ID != entries[0].PostID {
 		t.Fatalf("first post = %s, want newest timeline post %s", page[0].Post.ID, entries[0].PostID)
 	}
-	if cursor == nil || cursor.Timeline == nil || cursor.Timeline.PostID != page[len(page)-1].Post.ID.String() {
+	if cursor == nil || cursor.TimelineScore == nil || cursor.TimelinePostID != page[len(page)-1].Post.ID.String() || cursor.TimelineUser != userID.String() {
 		t.Fatalf("next cursor mismatch: %+v", cursor)
 	}
 }
@@ -519,7 +519,7 @@ func TestGetFeed_SupplementalProviderFailuresReturnValidFeed(t *testing.T) {
 	}
 }
 
-func TestGetFeed_DiscoverFallbackUsesV2FallbackCursor(t *testing.T) {
+func TestGetFeed_DiscoverFallbackDoesNotEmitFeedCursor(t *testing.T) {
 	now := time.Now().UTC()
 	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
 	posts := make([]*feedentity.Post, 0, pageSize+2)
@@ -531,25 +531,12 @@ func TestGetFeed_DiscoverFallbackUsesV2FallbackCursor(t *testing.T) {
 	reader.discover = posts
 
 	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	page1, cursor, err := svc.GetFeed(context.Background(), uuid.New(), &feed.FeedCursor{
-		Version:        feed.FeedCursorVersion,
-		FallbackCursor: nil,
-	})
+	page1, cursor, err := svc.GetFeed(context.Background(), uuid.New(), nil)
 	if err != nil {
 		t.Fatalf("GetFeed page1: %v", err)
 	}
-	if len(page1) != pageSize || cursor == nil || cursor.FallbackCursor == nil {
-		t.Fatalf("page1 len/cursor = %d/%+v, want page and fallback cursor", len(page1), cursor)
-	}
-	page2, next, err := svc.GetFeed(context.Background(), uuid.New(), cursor)
-	if err != nil {
-		t.Fatalf("GetFeed page2: %v", err)
-	}
-	if next != nil {
-		t.Fatalf("next cursor = %+v, want exhausted fallback", next)
-	}
-	if len(page2) != 2 || page2[0].Post.ID != posts[pageSize].ID {
-		t.Fatalf("expected fallback page2 continuation, got %+v", page2)
+	if len(page1) != pageSize || cursor != nil {
+		t.Fatalf("page1 len/cursor = %d/%+v, want first fallback page without feed cursor", len(page1), cursor)
 	}
 }
 
@@ -592,23 +579,20 @@ func TestGetFeed_V2CursorDoesNotRequireSessionState(t *testing.T) {
 		&mockRanker{scores: map[uuid.UUID]float64{local.ID: 10}},
 		feedcache.NewNopFeedCache(),
 	)
-	page, _, err := svc.GetFeed(context.Background(), userID, &feed.FeedCursor{
-		Version:  feed.FeedCursorVersion,
-		IssuedAt: now,
-	})
+	page, _, err := svc.GetFeed(context.Background(), userID, &feed.FeedCursor{TimelineUser: userID.String()})
 	if err != nil {
-		t.Fatalf("GetFeed with v2 cursor: %v", err)
+		t.Fatalf("GetFeed with no-version cursor: %v", err)
 	}
 	if len(page) != 1 || page[0].Post.ID != local.ID {
-		t.Fatalf("expected local item with v2 cursor, got %+v", page)
+		t.Fatalf("expected local item with no-version cursor, got %+v", page)
 	}
 }
 
-func TestGetFeed_InvalidV2CursorReturnsError(t *testing.T) {
+func TestGetFeed_InvalidCursorReturnsError(t *testing.T) {
 	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
 	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
 
-	if _, _, err := svc.GetFeed(context.Background(), uuid.New(), &feed.FeedCursor{Version: 1}); err == nil {
+	if _, _, err := svc.GetFeed(context.Background(), uuid.New(), &feed.FeedCursor{RecommendationOffset: -1}); err == nil {
 		t.Fatal("expected invalid cursor error")
 	}
 }
@@ -625,8 +609,9 @@ func TestGetFeed_RecommendationOffsetContinuation(t *testing.T) {
 
 	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
 	svc.WithRecommender(&mockRecommender{items: recs})
+	userID := uuid.New()
 
-	page1, cursor, err := svc.GetFeed(context.Background(), uuid.New(), nil)
+	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
 		t.Fatalf("GetFeed page1: %v", err)
 	}
@@ -636,13 +621,71 @@ func TestGetFeed_RecommendationOffsetContinuation(t *testing.T) {
 	if cursor.RecommendationOffset != pageSize {
 		t.Fatalf("recommendation offset = %d, want %d", cursor.RecommendationOffset, pageSize)
 	}
+	if cursor.TimelineUser == "" {
+		t.Fatalf("timeline user missing from cursor: %+v", cursor)
+	}
 
-	page2, _, err := svc.GetFeed(context.Background(), uuid.New(), cursor)
+	page2, _, err := svc.GetFeed(context.Background(), userID, cursor)
 	if err != nil {
 		t.Fatalf("GetFeed page2: %v", err)
 	}
 	if len(page2) != 5 {
 		t.Fatalf("page2 len = %d, want 5", len(page2))
+	}
+}
+
+func TestGetFeed_TrendingContinuationNoDuplicates(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+	for i := 0; i < pageSize+5; i++ {
+		p := testPost(now.Add(-time.Duration(i) * time.Minute))
+		p.LikeCount = int64(pageSize + 5 - i)
+		reader.trending = append(reader.trending, p)
+		reader.byID[p.ID] = p
+		scores[p.ID] = float64(p.LikeCount)
+	}
+
+	svc := newTestService(reader, &mockRanker{scores: scores})
+	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed page1: %v", err)
+	}
+	if len(page1) != pageSize || cursor == nil || cursor.TrendingScore == nil || cursor.TrendingPostID == "" {
+		t.Fatalf("page1 len/cursor = %d/%+v, want trending continuation", len(page1), cursor)
+	}
+	page2, next, err := svc.GetFeed(context.Background(), userID, cursor)
+	if err != nil {
+		t.Fatalf("GetFeed page2: %v", err)
+	}
+	if next != nil {
+		t.Fatalf("next cursor = %+v, want exhausted trending", next)
+	}
+	if len(page2) != 5 {
+		t.Fatalf("page2 len = %d, want 5", len(page2))
+	}
+	seen := make(map[uuid.UUID]bool)
+	for _, item := range append(page1, page2...) {
+		if seen[item.Post.ID] {
+			t.Fatalf("duplicate trending post returned: %s", item.Post.ID)
+		}
+		seen[item.Post.ID] = true
+	}
+}
+
+func TestGetFeed_InvalidCursorRejectedBeforeSourceReads(t *testing.T) {
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	store := &mockTimelineStore{pages: []*feed.TimelinePage{{}}}
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	svc.WithTimelineStore(store)
+
+	_, _, err := svc.GetFeed(context.Background(), uuid.New(), &feed.FeedCursor{TimelineUser: uuid.NewString()})
+	if err == nil {
+		t.Fatal("expected invalid cursor error")
+	}
+	if store.readCount != 0 {
+		t.Fatalf("timeline read count = %d, want 0", store.readCount)
 	}
 }
 

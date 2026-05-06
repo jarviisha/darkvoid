@@ -89,7 +89,7 @@ func (s *FeedService) WithTimelineOptions(servingEnabled bool, rolloutPercent in
 // GetFeed returns the cursor-paginated mixed feed for userID.
 func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
 	if cursor != nil {
-		if err := cursor.Validate(); err != nil {
+		if err := cursor.ValidateForUser(userID); err != nil {
 			return nil, nil, errors.NewBadRequestError("invalid cursor")
 		}
 	}
@@ -109,12 +109,6 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 		}
 	}
 
-	if cursor != nil && cursor.FallbackCursor != nil {
-		feed.CountFallback()
-		logger.Info(ctx, "feed fallback continuation", "user_id", userID)
-		return s.discoverFallback(ctx, userID, cursor.FallbackCursor)
-	}
-
 	cachedIDs, err := s.getFollowingIDs(ctx, userID)
 	if err != nil {
 		return nil, nil, err
@@ -128,7 +122,7 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 		followingSet[id] = true
 	}
 
-	candidates, recOffset, recTotal, followingFetched, err := s.collectMixedCandidates(ctx, userID, authorIDs, cursor)
+	candidates, recOffset, recTotal, trendHasMore, followingFetched, err := s.collectMixedCandidates(ctx, userID, authorIDs, cursor)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -154,14 +148,7 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 	if len(page) == 0 {
 		return nil, nil, nil
 	}
-	if recTotal == 0 || recOffset >= recTotal {
-		return page, nil, nil
-	}
-	return page, &feed.FeedCursor{
-		Version:              feed.FeedCursorVersion,
-		RecommendationOffset: recOffset,
-		IssuedAt:             time.Now().UTC(),
-	}, nil
+	return page, nextMixedCursor(userID, page, recOffset, recTotal, trendHasMore), nil
 }
 
 func (s *FeedService) timelineReadAllowed(userID uuid.UUID) bool {
@@ -207,7 +194,7 @@ func inRollout(userID uuid.UUID, percent int) bool {
 func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID, cursor *feed.FeedCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
 	position := (*feed.TimelinePosition)(nil)
 	if cursor != nil {
-		position = cursor.Timeline
+		position = cursor.TimelinePosition()
 	}
 	page, err := s.timelineStore.ReadPage(ctx, userID, position, pageSize*fetchMultiplier)
 	if err != nil {
@@ -274,14 +261,15 @@ func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID,
 	lastEntry := entryByPost[items[len(items)-1].Post.ID]
 	next := (*feed.FeedCursor)(nil)
 	if len(items) == pageSize || len(page.Entries) == pageSize*fetchMultiplier {
+		score := lastEntry.Score
 		next = &feed.FeedCursor{
-			Version: feed.FeedCursorVersion,
-			Timeline: &feed.TimelinePosition{
-				Score:  lastEntry.Score,
-				PostID: lastEntry.PostID.String(),
-			},
+			TimelineScore:        &score,
+			TimelinePostID:       lastEntry.PostID.String(),
+			TimelineUser:         userID.String(),
 			RecommendationOffset: recommendationOffset(cursor),
-			IssuedAt:             time.Now().UTC(),
+		}
+		if !next.HasContinuation() {
+			next = nil
 		}
 	}
 	return items, next, nil
@@ -333,14 +321,14 @@ type feedCandidate struct {
 	recommendationRank  *int
 }
 
-func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UUID, authorIDs []uuid.UUID, cursor *feed.FeedCursor) ([]feedCandidate, int, int, bool, error) {
+func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UUID, authorIDs []uuid.UUID, cursor *feed.FeedCursor) ([]feedCandidate, int, int, bool, bool, error) {
 	recommendationOffset := recommendationOffset(cursor)
 	candidates := make([]feedCandidate, 0, pageSize*fetchMultiplier)
 
 	followingPosts, err := s.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, nil, pageSize*fetchMultiplier)
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get following posts", "user_id", userID)
-		return nil, recommendationOffset, 0, false, errors.NewInternalError(err)
+		return nil, recommendationOffset, 0, false, false, errors.NewInternalError(err)
 	}
 	for i, p := range followingPosts {
 		candidates = append(candidates, feedCandidate{post: p, source: feedentity.SourceFollowing, sourceRank: i + 1})
@@ -362,21 +350,19 @@ func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UU
 		}
 	}
 
-	// Trending only injects on page 1 (no cursor). Page 2+ is pure following.
-	if cursor == nil {
+	trendHasMore := false
+	if cursor == nil || cursor.TrendingPosition() != nil {
 		trendingPosts, err := s.getTrending(ctx)
 		if err != nil {
 			logger.LogError(ctx, err, "failed to get trending posts, skipping", "user_id", userID)
 		}
-		if len(trendingPosts) > pageSize {
-			trendingPosts = trendingPosts[:pageSize]
-		}
+		trendingPosts, trendHasMore = applyTrendingCursor(trendingPosts, cursor.TrendingPosition(), pageSize+1)
 		for i, p := range trendingPosts {
 			candidates = append(candidates, feedCandidate{post: p, source: feedentity.SourceTrending, sourceRank: i + 1})
 		}
 	}
 
-	return candidates, recommendationOffset, recommendationTotal, len(followingPosts) > 0, nil
+	return candidates, recommendationOffset, recommendationTotal, trendHasMore, len(followingPosts) > 0, nil
 }
 
 func (s *FeedService) loadRecommendationCandidates(ctx context.Context, items []feed.RecommendedItem) ([]feedCandidate, error) {
@@ -481,6 +467,29 @@ func sourcePriority(source feedentity.Source) int {
 	}
 }
 
+func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, recOffset, recTotal int, trendHasMore bool) *feed.FeedCursor {
+	next := &feed.FeedCursor{TimelineUser: userID.String()}
+	if recTotal > 0 && recOffset < recTotal {
+		next.RecommendationOffset = recOffset
+	}
+	if trendHasMore {
+		for i := len(page) - 1; i >= 0; i-- {
+			item := page[i]
+			if item.Source != feedentity.SourceTrending || item.Post == nil {
+				continue
+			}
+			score := trendScoreFromPost(item.Post)
+			next.TrendingScore = &score
+			next.TrendingPostID = item.Post.ID.String()
+			break
+		}
+	}
+	if !next.HasContinuation() {
+		return nil
+	}
+	return next
+}
+
 func (s *FeedService) rankCandidates(ctx context.Context, candidates []feedCandidate, followingSet map[uuid.UUID]bool, now time.Time) []*feedentity.FeedItem {
 	posts := make([]*feedentity.Post, len(candidates))
 	for i, c := range candidates {
@@ -548,15 +557,10 @@ func (s *FeedService) getFollowingIDs(ctx context.Context, userID uuid.UUID) ([]
 }
 
 func (s *FeedService) discoverFallback(ctx context.Context, userID uuid.UUID, cursor *feed.DiscoverCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
-	posts, err := s.postReader.GetDiscoverWithCursor(ctx, cursor, pageSize+1, nil)
+	posts, err := s.postReader.GetDiscoverWithCursor(ctx, cursor, pageSize, nil)
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get discover fallback", "user_id", userID)
 		return nil, nil, errors.NewInternalError(err)
-	}
-
-	hasMore := len(posts) > pageSize
-	if hasMore {
-		posts = posts[:pageSize]
 	}
 
 	now := time.Now().UTC()
@@ -576,15 +580,7 @@ func (s *FeedService) discoverFallback(ctx context.Context, userID uuid.UUID, cu
 
 	s.enrichIsLiked(ctx, userID, items)
 	s.enrichIsFollowingAuthorFromDB(ctx, userID, items)
-	if len(items) == 0 || !hasMore {
-		return items, nil, nil
-	}
-	last := items[len(items)-1].Post
-	return items, &feed.FeedCursor{
-		Version:        feed.FeedCursorVersion,
-		FallbackCursor: &feed.DiscoverCursor{CreatedAt: last.CreatedAt, PostID: last.ID.String()},
-		IssuedAt:       time.Now().UTC(),
-	}, nil
+	return items, nil, nil
 }
 
 // enrichIsLiked batch-fetches like status for the viewer and sets Post.IsLiked.
@@ -672,6 +668,36 @@ func filterPublicPosts(posts []*feedentity.Post) []*feedentity.Post {
 		}
 	}
 	return filtered
+}
+
+func applyTrendingCursor(posts []*feedentity.Post, cursor *feed.TrendPosition, limit int) ([]*feedentity.Post, bool) {
+	filtered := make([]*feedentity.Post, 0, len(posts))
+	for _, p := range posts {
+		if p == nil {
+			continue
+		}
+		if cursor != nil && !isAfterTrendCursor(p, cursor) {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	hasMore := len(filtered) > limit-1
+	if len(filtered) > limit-1 {
+		filtered = filtered[:limit-1]
+	}
+	return filtered, hasMore
+}
+
+func isAfterTrendCursor(p *feedentity.Post, cursor *feed.TrendPosition) bool {
+	score := trendScoreFromPost(p)
+	return score < cursor.Score || (score == cursor.Score && p.ID.String() < cursor.PostID)
+}
+
+func trendScoreFromPost(p *feedentity.Post) float64 {
+	if p == nil {
+		return math.MaxFloat64
+	}
+	return float64(p.LikeCount)
 }
 
 // GetDiscover returns the cursor-paginated public discovery feed.

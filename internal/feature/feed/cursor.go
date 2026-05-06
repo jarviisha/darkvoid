@@ -15,18 +15,34 @@ import (
 // scorePrecision is the bitSize used for float64 formatting/parsing.
 const scorePrecision = 64
 
-const (
-	// FeedCursorVersion is the current versioned feed cursor schema.
-	FeedCursorVersion = 2
-)
+var obsoleteFeedCursorFields = map[string]struct{}{
+	"v":               {},
+	"version":         {},
+	"timeline":        {},
+	"fallback_cursor": {},
+	"session_id":      {},
+	"mode":            {},
+	"pending_items":   {},
+	"seen_post_ids":   {},
+	"created_at":      {},
+	"expires_at":      {},
+	"issued_at":       {},
+}
+
+// TrendPosition identifies a continuation point in the trending source.
+type TrendPosition struct {
+	Score  float64
+	PostID string
+}
 
 // FeedCursor is the opaque continuation token for GET /feed.
 type FeedCursor struct {
-	Version              int               `json:"v"`
-	Timeline             *TimelinePosition `json:"timeline,omitempty"`
-	RecommendationOffset int               `json:"rec_offset,omitempty"`
-	FallbackCursor       *DiscoverCursor   `json:"fallback_cursor,omitempty"`
-	IssuedAt             time.Time         `json:"issued_at"`
+	TimelineScore        *int64   `json:"tl_score,omitempty"`
+	TimelinePostID       string   `json:"tl_post_id,omitempty"`
+	TimelineUser         string   `json:"tl_user,omitempty"`
+	RecommendationOffset int      `json:"rec_offset,omitempty"`
+	TrendingScore        *float64 `json:"trend_score,omitempty"`
+	TrendingPostID       string   `json:"trend_post_id,omitempty"`
 }
 
 // Encode returns the base64 JSON representation of the feed cursor.
@@ -34,21 +50,14 @@ func (c *FeedCursor) Encode() string {
 	if c == nil {
 		return ""
 	}
-	wire := *c
-	if wire.Version == 0 {
-		wire.Version = FeedCursorVersion
-	}
-	if wire.IssuedAt.IsZero() {
-		wire.IssuedAt = time.Now().UTC()
-	}
-	raw, err := json.Marshal(wire)
+	raw, err := json.Marshal(c)
 	if err != nil {
 		return ""
 	}
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
-// DecodeFeedCursor parses a versioned opaque feed cursor.
+// DecodeFeedCursor parses the no-version opaque feed cursor.
 func DecodeFeedCursor(s string) (*FeedCursor, error) {
 	if s == "" {
 		return nil, nil //nolint:nilnil // empty string means no cursor
@@ -56,6 +65,15 @@ func DecodeFeedCursor(s string) (*FeedCursor, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
 		return nil, fmt.Errorf("invalid feed cursor encoding: %w", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, fmt.Errorf("invalid feed cursor format: %w", err)
+	}
+	for field := range fields {
+		if _, obsolete := obsoleteFeedCursorFields[field]; obsolete {
+			return nil, fmt.Errorf("obsolete feed cursor field %q", field)
+		}
 	}
 	var cursor FeedCursor
 	if err := json.Unmarshal(raw, &cursor); err != nil {
@@ -67,31 +85,75 @@ func DecodeFeedCursor(s string) (*FeedCursor, error) {
 	return &cursor, nil
 }
 
-// Validate verifies the v2 feed cursor is usable.
+// Validate verifies the no-version feed cursor is usable.
 func (c *FeedCursor) Validate() error {
 	if c == nil {
 		return nil
 	}
-	if c.Version != FeedCursorVersion {
-		return fmt.Errorf("unsupported feed cursor version")
-	}
-	if c.Timeline != nil {
-		if c.Timeline.Score < 0 {
+	if c.TimelineScore != nil {
+		if *c.TimelineScore < 0 {
 			return fmt.Errorf("invalid timeline cursor score")
 		}
-		if _, err := uuid.Parse(c.Timeline.PostID); err != nil {
+		if _, err := uuid.Parse(c.TimelinePostID); err != nil {
 			return fmt.Errorf("invalid timeline cursor post_id")
 		}
+	} else if c.TimelinePostID != "" {
+		return fmt.Errorf("timeline post_id without timeline score")
 	}
 	if c.RecommendationOffset < 0 {
 		return fmt.Errorf("invalid recommendation cursor offset")
 	}
-	if c.FallbackCursor != nil {
-		if _, _, err := c.FallbackCursor.PgParams(); err != nil {
-			return fmt.Errorf("invalid fallback cursor: %w", err)
+	if c.TrendingScore != nil {
+		if *c.TrendingScore < 0 {
+			return fmt.Errorf("invalid trending cursor score")
+		}
+		if _, err := uuid.Parse(c.TrendingPostID); err != nil {
+			return fmt.Errorf("invalid trending cursor post_id")
+		}
+	} else if c.TrendingPostID != "" {
+		return fmt.Errorf("trending post_id without trending score")
+	}
+	if c.TimelineUser != "" {
+		if _, err := uuid.Parse(c.TimelineUser); err != nil {
+			return fmt.Errorf("invalid timeline cursor user")
 		}
 	}
 	return nil
+}
+
+// ValidateForUser verifies cursor ownership against the authenticated feed owner.
+func (c *FeedCursor) ValidateForUser(userID uuid.UUID) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if c == nil || c.TimelineUser == "" {
+		return nil
+	}
+	if c.TimelineUser != userID.String() {
+		return fmt.Errorf("cursor user mismatch")
+	}
+	return nil
+}
+
+// TimelinePosition returns the prepared timeline continuation point.
+func (c *FeedCursor) TimelinePosition() *TimelinePosition {
+	if c == nil || c.TimelineScore == nil {
+		return nil
+	}
+	return &TimelinePosition{Score: *c.TimelineScore, PostID: c.TimelinePostID}
+}
+
+// TrendingPosition returns the trending source continuation point.
+func (c *FeedCursor) TrendingPosition() *TrendPosition {
+	if c == nil || c.TrendingScore == nil {
+		return nil
+	}
+	return &TrendPosition{Score: *c.TrendingScore, PostID: c.TrendingPostID}
+}
+
+// HasContinuation reports whether any source has remaining cursor state.
+func (c *FeedCursor) HasContinuation() bool {
+	return c != nil && (c.TimelineScore != nil || c.RecommendationOffset > 0 || c.TrendingScore != nil)
 }
 
 // DiscoverCursor is a composite pagination cursor (created_at, post_id) for the discover feed.

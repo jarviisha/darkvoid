@@ -128,10 +128,10 @@ func NewFeedHandler(feedService feedService, store storage.Storage) *FeedHandler
 // GetFeed godoc
 //
 //	@Summary		Get feed
-//	@Description	Get a scored, cursor-paginated feed from the prepared timeline, with recommendation/trending/discover fallback positions encoded in a v2 cursor. Old session-backed feed cursors are rejected.
+//	@Description	Get a scored, cursor-paginated feed from the prepared timeline, with timeline/recommendation/trending positions encoded in a no-version opaque cursor. Versioned, nested timeline, and session-backed feed cursors are rejected.
 //	@Tags			feed
 //	@Produce		json
-//	@Param			cursor	query		string	false	"Opaque v2 pagination cursor from previous response"
+//	@Param			cursor	query		string	false	"Opaque no-version pagination cursor from previous response"
 //	@Success		200		{object}	FeedResponse
 //	@Failure		400		{object}	errors.ErrorResponse
 //	@Failure		401		{object}	errors.ErrorResponse
