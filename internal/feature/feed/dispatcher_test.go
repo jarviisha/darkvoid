@@ -79,3 +79,102 @@ func TestEventDispatcher_HandlerErrorIsNonFatal(t *testing.T) {
 		t.Fatal("timed out waiting for event")
 	}
 }
+
+// deadlineCapturingHandler records the context's deadline so tests can
+// assert the worker installs eventHandlerTimeout per event.
+type deadlineCapturingHandler struct {
+	done     chan struct{}
+	hasDL    bool
+	deadline time.Time
+}
+
+func (h *deadlineCapturingHandler) HandleFeedEvent(ctx context.Context, _ Event) error {
+	h.deadline, h.hasDL = ctx.Deadline()
+	close(h.done)
+	return nil
+}
+
+func TestEventDispatcher_WorkerAppliesPerEventTimeout(t *testing.T) {
+	handler := &deadlineCapturingHandler{done: make(chan struct{})}
+	dispatcher := NewEventDispatcher(true, 1, 1, handler)
+	defer dispatcher.Close()
+
+	start := time.Now()
+	if !dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
+		t.Fatal("dispatch failed")
+	}
+	select {
+	case <-handler.done:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not run")
+	}
+	if !handler.hasDL {
+		t.Fatal("worker context has no deadline; expected eventHandlerTimeout")
+	}
+	remaining := time.Until(handler.deadline)
+	// Deadline should be eventHandlerTimeout (30s) minus a tiny scheduling delta.
+	if remaining <= 0 || remaining > eventHandlerTimeout {
+		t.Fatalf("deadline %v out of range (now=%v, timeout=%v)", handler.deadline, start, eventHandlerTimeout)
+	}
+}
+
+// blockingHandler blocks until released, letting tests inspect graceful shutdown.
+type blockingHandler struct {
+	started chan struct{}
+	release chan struct{}
+	done    chan struct{}
+}
+
+func (h *blockingHandler) HandleFeedEvent(_ context.Context, _ Event) error {
+	close(h.started)
+	<-h.release
+	close(h.done)
+	return nil
+}
+
+func TestEventDispatcher_CloseDrainsInFlightEvents(t *testing.T) {
+	handler := &blockingHandler{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+	dispatcher := NewEventDispatcher(true, 1, 1, handler)
+
+	if !dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
+		t.Fatal("dispatch failed")
+	}
+	<-handler.started // worker is now blocked inside the handler
+
+	closeReturned := make(chan struct{})
+	go func() {
+		dispatcher.Close()
+		close(closeReturned)
+	}()
+
+	// Close must NOT return while the handler is still running.
+	select {
+	case <-closeReturned:
+		t.Fatal("Close returned before in-flight handler finished")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(handler.release)
+	select {
+	case <-closeReturned:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not return after handler completed")
+	}
+	select {
+	case <-handler.done:
+	default:
+		t.Fatal("handler did not finish before Close returned")
+	}
+}
+
+func TestEventDispatcher_DispatchAfterCloseReturnsFalse(t *testing.T) {
+	dispatcher := NewEventDispatcher(true, 1, 1, &recordingEventHandler{})
+	dispatcher.Close()
+	if dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
+		t.Fatal("expected dispatch after Close to return false")
+	}
+}

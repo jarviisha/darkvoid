@@ -21,6 +21,10 @@ const (
 	EventVisibilityChanged EventType = "post_visibility_changed"
 )
 
+// eventHandlerTimeout caps per-event handler execution. Sized for fanout to
+// the configured maxFollowers cap (~10K serial Redis writes ≈ 10s) with headroom.
+const eventHandlerTimeout = 30 * time.Second
+
 // Event is one feed-impacting mutation.
 type Event struct {
 	Type       EventType
@@ -96,10 +100,15 @@ func (d *EventDispatcher) worker() {
 	defer d.wg.Done()
 	for event := range d.jobs {
 		SetDispatchQueueDepth(len(d.jobs))
-		ctx := context.Background()
-		if err := d.handler.HandleFeedEvent(ctx, event); err != nil {
-			logger.LogError(ctx, err, "feed event handling failed", "event_type", event.Type)
-		}
+		d.handleEvent(event)
+	}
+}
+
+func (d *EventDispatcher) handleEvent(event Event) {
+	ctx, cancel := context.WithTimeout(context.Background(), eventHandlerTimeout)
+	defer cancel()
+	if err := d.handler.HandleFeedEvent(ctx, event); err != nil {
+		logger.LogError(ctx, err, "feed event handling failed", "event_type", event.Type)
 	}
 }
 

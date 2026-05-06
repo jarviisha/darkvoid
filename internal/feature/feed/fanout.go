@@ -28,7 +28,7 @@ func NewFanoutWorker(followerReader FollowerReader, timeline TimelineStore, maxF
 }
 
 func (w *FanoutWorker) HandleFeedEvent(ctx context.Context, event Event) error {
-	if w == nil || w.timeline == nil {
+	if w == nil {
 		return nil
 	}
 	switch event.Type {
@@ -53,18 +53,35 @@ func (w *FanoutWorker) handlePostCreated(ctx context.Context, event Event) error
 		logger.Info(ctx, "fanout follower list capped", "post_id", event.PostID, "author_id", event.AuthorID, "followers", originalFollowerCount, "cap", w.maxFollowers)
 	}
 	entry := TimelineEntry{PostID: event.PostID, Score: event.Score}
+	var attempted, succeeded, failed int
+	var lastErr error
 	for _, followerID := range followers {
 		if followerID == uuid.Nil {
 			continue
 		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			lastErr = ctxErr
+			break
+		}
+		attempted++
 		if err := w.timeline.AddPost(ctx, followerID, entry); err != nil {
 			CountFanoutError()
+			failed++
+			lastErr = err
 			logger.LogError(ctx, err, "fanout timeline write failed", "post_id", event.PostID, "follower_id", followerID)
-			return fmt.Errorf("fanout post %s to follower %s: %w", event.PostID, followerID, err)
+			continue
 		}
+		succeeded++
 	}
 	duration := time.Since(start)
 	ObserveFanoutProcessed(duration)
-	logger.Info(ctx, "fanout post processed", "post_id", event.PostID, "author_id", event.AuthorID, "followers", len(followers), "duration_ms", duration.Milliseconds())
+	// Surface error when nothing was successfully delivered AND we hit a real
+	// failure along the way — covers both "all writes failed" and "ctx cancelled
+	// before any write completed". A pure no-op (e.g. zero non-nil followers)
+	// stays a success.
+	if succeeded == 0 && lastErr != nil {
+		return fmt.Errorf("fanout post %s: %d attempted, 0 succeeded: %w", event.PostID, attempted, lastErr)
+	}
+	logger.Info(ctx, "fanout post processed", "post_id", event.PostID, "author_id", event.AuthorID, "followers", len(followers), "succeeded", succeeded, "failed", failed, "duration_ms", duration.Milliseconds())
 	return nil
 }

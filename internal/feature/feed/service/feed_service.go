@@ -319,6 +319,10 @@ func recommendationOffset(cursor *feed.FeedCursor) int {
 	return cursor.RecommendationOffset
 }
 
+// feedCandidate is a post being considered for inclusion in the feed.
+// recommendationScore/recommendationRank carry the upstream Codohue values for
+// observability and downstream re-ranking — they are NOT the post's final
+// position in the returned page (that is decided after sortFeedItems).
 type feedCandidate struct {
 	post                *feedentity.Post
 	source              feedentity.Source
@@ -358,7 +362,8 @@ func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UU
 		}
 	}
 
-	if cursor == nil || cursor.TrendingCursor == "" {
+	// Trending only injects on page 1 (no cursor). Page 2+ is pure following.
+	if cursor == nil {
 		trendingPosts, err := s.getTrending(ctx)
 		if err != nil {
 			logger.LogError(ctx, err, "failed to get trending posts, skipping", "user_id", userID)
@@ -554,7 +559,7 @@ func (s *FeedService) discoverFallback(ctx context.Context, userID uuid.UUID, cu
 		posts = posts[:pageSize]
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	scores, rankErr := s.ranker.RankPosts(ctx, posts, map[string]bool{}, now)
 	if rankErr != nil {
 		logger.LogError(ctx, rankErr, "ranker failed in discover fallback", "user_id", userID)

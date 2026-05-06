@@ -17,7 +17,6 @@ func TestFeedCursorV2_RoundTrip(t *testing.T) {
 		Version:              FeedCursorVersion,
 		Timeline:             &TimelinePosition{Score: TimelineScoreFromTime(now), PostID: postID.String()},
 		RecommendationOffset: 20,
-		TrendingCursor:       "trend:123",
 		FallbackCursor:       &DiscoverCursor{CreatedAt: now, PostID: fallbackPostID.String()},
 		IssuedAt:             now,
 	}).Encode()
@@ -29,7 +28,6 @@ func TestFeedCursorV2_RoundTrip(t *testing.T) {
 		decoded.Timeline == nil ||
 		decoded.Timeline.PostID != postID.String() ||
 		decoded.RecommendationOffset != 20 ||
-		decoded.TrendingCursor != "trend:123" ||
 		decoded.FallbackCursor == nil ||
 		decoded.FallbackCursor.PostID != fallbackPostID.String() {
 		t.Fatalf("decoded cursor mismatch: %+v", decoded)

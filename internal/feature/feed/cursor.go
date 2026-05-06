@@ -25,7 +25,6 @@ type FeedCursor struct {
 	Version              int               `json:"v"`
 	Timeline             *TimelinePosition `json:"timeline,omitempty"`
 	RecommendationOffset int               `json:"rec_offset,omitempty"`
-	TrendingCursor       string            `json:"trend_cursor,omitempty"`
 	FallbackCursor       *DiscoverCursor   `json:"fallback_cursor,omitempty"`
 	IssuedAt             time.Time         `json:"issued_at"`
 }
