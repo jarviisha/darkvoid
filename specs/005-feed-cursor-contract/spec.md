@@ -2,7 +2,7 @@
 
 **Feature Branch**: `005-feed-cursor-contract`  
 **Created**: 2026-05-06  
-**Status**: Draft  
+**Status**: Closed  
 **Input**: User description: "Đổi thiết kế feed cursor contract theo client đã xác nhận. Không cần field `v`/version vì sản phẩm vẫn đang phát triển và không cần giữ fallback compatibility. Cursor mới cần dùng các field như `tl_score`, `tl_user`, `rec_offset`, `trend_score` để tiếp tục các feed sources."
 
 ## User Scenarios & Testing *(mandatory)*
