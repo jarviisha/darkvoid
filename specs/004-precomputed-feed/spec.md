@@ -2,7 +2,9 @@
 
 **Feature Branch**: `004-precomputed-feed`  
 **Created**: 2026-05-02  
-**Status**: Draft  
+**Status**: Closed  
+**Closed**: 2026-05-06  
+**Closure Note**: Implementation completed with the shipped `/feed` cursor v2 contract. `/discover` pagination remains intentionally unchanged, and trending content is page-1 supplemental content rather than a separately persisted cursor position.  
 **Input**: User description: "Refactor /feed to a precomputed event-driven timeline based on localdocs/feed-refactor.md. Redis timeline is the primary read model, dynamic feed is only transition/warm support, feed session state is removed, and old client cursor compatibility is intentionally not preserved because clients must update to the new contract."
 
 ## User Scenarios & Testing *(mandatory)*

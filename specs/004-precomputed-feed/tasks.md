@@ -62,7 +62,7 @@
 
 ### Tests for User Story 1
 
-- [X] T019 [P] [US1] Add cursor v2 encode/decode tests for timeline score, timeline post ID tie-breaker, recommendation offset, trending cursor, fallback cursor, issued_at, and empty cursor behavior in `internal/feature/feed/cursor_test.go`
+- [X] T019 [P] [US1] Add cursor v2 encode/decode tests for timeline position, timeline post ID tie-breaker, recommendation offset, fallback cursor, issued_at, and empty cursor behavior in `internal/feature/feed/cursor_test.go`
 - [X] T020 [P] [US1] Add feed service tests for timeline-first reads, newest-first ordering, no duplicate posts across cursor pages, and omitted next cursor at completion in `internal/feature/feed/service/feed_service_test.go`
 - [X] T021 [P] [US1] Add feed service tests for response-time post visibility filtering and stale prepared entry suppression in `internal/feature/feed/service/feed_service_test.go`
 - [X] T022 [P] [US1] Add feed service tests for lazy refresh when the prepared timeline is missing, expired, or incomplete in `internal/feature/feed/service/feed_service_test.go`

@@ -9,11 +9,15 @@ The cursor is opaque to clients. The server may encode it as base64 JSON, but cl
 ```json
 {
   "v": 2,
-  "tl_score": 1777701600000000,
-  "tl_post_id": "post-uuid",
+  "timeline": {
+    "Score": 1777701600000000,
+    "PostID": "post-uuid"
+  },
   "rec_offset": 20,
-  "trend_cursor": "source-specific",
-  "fallback_cursor": "source-specific",
+  "fallback_cursor": {
+    "CreatedAt": "2026-05-02T10:00:00Z",
+    "PostID": "post-uuid"
+  },
   "issued_at": "2026-05-02T10:00:00Z"
 }
 ```
@@ -23,12 +27,13 @@ The cursor is opaque to clients. The server may encode it as base64 JSON, but cl
 | Field | Description |
 |-------|-------------|
 | `v` | Cursor contract version. Must be `2` for this feature. |
-| `tl_score` | Primary timeline continuation score. |
-| `tl_post_id` | Tie-breaker for primary timeline continuation when multiple posts share a score. |
+| `timeline.Score` | Primary timeline continuation score. |
+| `timeline.PostID` | Tie-breaker for primary timeline continuation when multiple posts share a score. |
 | `rec_offset` | Next recommendation source offset. |
-| `trend_cursor` | Next trending source position. |
 | `fallback_cursor` | Next fallback/discovery-like source position inside `/feed`. |
 | `issued_at` | Time the cursor was issued, used for validation and observability. |
+
+Trending content is supplemental on the first feed page and does not persist a separate cursor position in the closed implementation.
 
 ## Validation Rules
 

@@ -22,7 +22,7 @@
 
 ## Decision: Cursor v2 is a single opaque base64 JSON token for all feed sources
 
-**Rationale**: Clients should keep one `next_cursor`, while the server tracks positions for primary timeline, recommendation, trending, and fallback sources. The cursor is explicitly not compatible with v1 `FeedPageState` and contains no session ID, seen set, or pending item state.
+**Rationale**: Clients should keep one `next_cursor`, while the server tracks positions for primary timeline, recommendation, and fallback sources. Trending content remains a page-1 supplemental source in the closed implementation and does not persist a separate cursor position. The cursor is explicitly not compatible with v1 `FeedPageState` and contains no session ID, seen set, or pending item state.
 
 **Alternatives considered**:
 

@@ -9,7 +9,7 @@
 
 Refactor `/feed` from request-time mixed candidate collection plus `feed:session` continuation state to a prepared per-user followed-author timeline. Redis sorted sets become the primary read model for followed-author feed items, while PostgreSQL remains the source of truth for posts, visibility, follows, and enrichment. Feed propagation is event-driven after successful post creation, with lazy refresh on feed requests when a user's timeline is missing, expired, or incomplete.
 
-The new feed contract is intentionally breaking: old session-based feed cursors and unsupported cursor versions are rejected with `400`. Cursor v2 is still opaque to clients but carries continuation positions for primary timeline, recommendation, trending, and fallback sources. Deleted, hidden, or unfollowed content is filtered at response time; physical cleanup of stale prepared entries is lazy or best-effort.
+The new feed contract is intentionally breaking: old session-based feed cursors and unsupported cursor versions are rejected with `400`. Cursor v2 is still opaque to clients but carries continuation positions for primary timeline, recommendation, and fallback sources; trending content is page-1 supplemental content in the closed implementation. Deleted, hidden, or unfollowed content is filtered at response time; physical cleanup of stale prepared entries is lazy or best-effort.
 
 ## Technical Context
 
