@@ -8,6 +8,9 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/codohue"
 )
 
+// ensureCodohueNamespaceConfig provisions the Codohue namespace and resolves
+// the namespace key. Errors are non-fatal by design: the caller downgrades
+// them to a warning and disables Codohue for the run.
 func (app *Application) ensureCodohueNamespaceConfig(ctx context.Context) error {
 	if !app.cfg.Codohue.Enabled {
 		return nil
