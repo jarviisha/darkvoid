@@ -16,9 +16,7 @@ env:
 
 jobs:
   build-and-push:
-    # Temporarily disabled. Re-enable by removing "false &&" — the remaining
-    # condition keeps deploys gated on a successful CI run.
-    if: false && github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -55,9 +53,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   deploy:
-    # Temporarily disabled. Re-enable by removing "false &&" — the remaining
-    # condition keeps deploys gated on a successful CI run.
-    if: false && github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     needs: build-and-push
     steps:
@@ -86,38 +82,24 @@ jobs:
             set -e
             cd $HOME/darkvoid
 
-            # Login to GitHub Container Registry
-            echo "${{ secrets.GH_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-            # Pull latest images
-            docker compose -f docker-compose.prod.yml pull
-
-            # Load .env (if present) so DB_* vars match the postgres service
-            if [ -f .env ]; then
-              set -a
-              . ./.env
-              set +a
+            # docker-compose.codohue.yml is a server-local override that
+            # attaches the app to the codohue stack; use it when present.
+            COMPOSE="docker compose -f docker-compose.prod.yml"
+            if [ -f docker-compose.codohue.yml ]; then
+              COMPOSE="$COMPOSE -f docker-compose.codohue.yml"
             fi
-            DB_USER="${DB_USER:-postgres}"
-            DB_NAME="${DB_NAME:-darkvoid}"
-            : "${DB_PASSWORD:?DB_PASSWORD must be set on the server before deploy}"
 
-            # Bring up postgres first so migrations can run
-            docker compose -f docker-compose.prod.yml up -d postgres redis
+            # GITHUB_TOKEN is valid for this run only and can read the
+            # repo-linked package — no long-lived PAT on the server.
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # Run migrations for each module (separate migration tables)
-            for module in user post notification; do
-              echo "Running $module migrations..."
-              docker compose -f docker-compose.prod.yml run --rm migrate \
-                -path=/migrations/$module \
-                -database "postgres://$DB_USER:$DB_PASSWORD@postgres:5432/$DB_NAME?sslmode=disable&x-migrations-table=schema_migrations_$module" \
-                up
-            done
+            $COMPOSE pull app
 
-            # Start app (and any remaining services)
-            docker compose -f docker-compose.prod.yml up -d
+            # Migrations run automatically: the migrate-user → migrate-post →
+            # migrate-notification chain gates the app via depends_on.
+            $COMPOSE up -d
 
-            # Cleanup old images
+            docker logout ghcr.io
             docker image prune -f
 
       - name: Verify deployment
@@ -131,27 +113,24 @@ jobs:
             set -e
             cd $HOME/darkvoid
 
-            echo "Waiting for all containers to be healthy..."
-            timeout 120 bash -c '
-              while true; do
-                UNHEALTHY=$(docker compose -f docker-compose.prod.yml ps --format json | grep -c -v '"'"'"healthy"'"'"' || true)
-                TOTAL=$(docker compose -f docker-compose.prod.yml ps --format json | wc -l)
-                HEALTHY=$((TOTAL - UNHEALTHY))
-                echo "  $HEALTHY/$TOTAL healthy"
-                if [ "$UNHEALTHY" -eq 0 ] && [ "$TOTAL" -gt 0 ]; then
-                  break
-                fi
-                sleep 5
-              done
-            '
-
-            echo ""
-            echo "=== Container Status ==="
-            docker compose -f docker-compose.prod.yml ps
+            echo "Waiting for the app container to be healthy..."
+            for i in $(seq 1 24); do
+              STATUS=$(docker inspect --format '{{.State.Health.Status}}' darkvoid-app-1 2>/dev/null || echo "missing")
+              echo "  attempt $i: $STATUS"
+              if [ "$STATUS" = "healthy" ]; then
+                break
+              fi
+              if [ "$i" = "24" ]; then
+                echo "App container never became healthy:"
+                docker logs darkvoid-app-1 --tail 50
+                exit 1
+              fi
+              sleep 5
+            done
 
             echo ""
             echo "=== Health Check ==="
-            curl -sf http://localhost:${SERVER_PORT:-8080}/health
+            curl -sf http://localhost:8080/health
 
             echo ""
             echo "Deployment verified successfully."
