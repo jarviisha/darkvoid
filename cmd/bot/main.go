@@ -37,11 +37,7 @@ func main() {
 	maxPosts := flag.Int("max-posts", 0, "stop after N posts (0 = run forever)")
 	flag.Parse()
 
-	cfg, err := config.Load()
-	if err != nil {
-		logger.Error(context.Background(), "config load failed", "error", err)
-		os.Exit(1)
-	}
+	cfg := config.LoadBot()
 	log := logger.New(&logger.Config{
 		Level:   cfg.Logger.Level,
 		Format:  "text",

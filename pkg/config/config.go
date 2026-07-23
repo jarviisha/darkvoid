@@ -223,6 +223,18 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// LoadBot loads only the sections cmd/bot reads (logger + bot). It
+// deliberately skips Validate: the bot is a pure HTTP client, so server-side
+// requirements (JWT secret, DB settings, ...) must not apply to it.
+func LoadBot() *Config {
+	_ = godotenv.Load()
+
+	return &Config{
+		Logger: loadLoggerConfig(),
+		Bot:    loadBotConfig(),
+	}
+}
+
 // Validate validates the configuration
 func (c *Config) Validate() error {
 	// Validate app config
