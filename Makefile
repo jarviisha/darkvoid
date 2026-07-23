@@ -121,7 +121,7 @@ docker-up: ## Start Docker containers (PostgreSQL, Redis, app)
 	$(DOCKER_COMPOSE) up -d
 
 docker-up-app: ## Start only the app container and connect to external/local infra
-	$(DOCKER_COMPOSE) -f docker-compose.external.yml up -d
+	$(DOCKER_COMPOSE) up -d app-external
 
 docker-up-codohue: ## Start Docker containers including Codohue CF recommender (requires CODOHUE_NAMESPACE_KEY)
 	$(DOCKER_COMPOSE) --profile codohue up -d
@@ -133,16 +133,16 @@ docker-seed-reset: ## Reset seeded data and seed again inside Docker
 	$(DOCKER_COMPOSE) --profile tools run --rm seed --reset --posts=$${SEED_POSTS:-500} --likes-per-post=$${SEED_LIKES_PER_POST:-40} --comments-per-post=$${SEED_COMMENTS_PER_POST:-5}
 
 docker-down: ## Stop Docker containers (all profiles)
-	$(DOCKER_COMPOSE) --profile codohue down
+	$(DOCKER_COMPOSE) --profile codohue --profile external down
 
-docker-down-app: ## Stop the app-only Docker compose stack
-	$(DOCKER_COMPOSE) -f docker-compose.external.yml down
+docker-down-app: ## Stop the app-only container
+	$(DOCKER_COMPOSE) --profile external down app-external
 
 docker-logs: ## View Docker container logs
 	$(DOCKER_COMPOSE) logs -f
 
 docker-logs-app: ## View app-only Docker container logs
-	$(DOCKER_COMPOSE) -f docker-compose.external.yml logs -f
+	$(DOCKER_COMPOSE) logs -f app-external
 
 migrate-up: ## Run all pending migrations (user, post, notification)
 	$(call require_var,DATABASE_URL,make migrate-up DATABASE_URL=postgres://...)

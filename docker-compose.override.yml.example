@@ -21,4 +21,9 @@ services:
 
   codohue-api:
     ports:
-      - "127.0.0.1:${CODOHUE_EXPOSE_PORT:-2002}:2001"
+      - "127.0.0.1:${CODOHUE_EXPOSE_PORT:-2001}:2001"
+
+  # Admin UI/plane — open http://localhost:2002 in the browser.
+  codohue-admin:
+    ports:
+      - "127.0.0.1:${CODOHUE_ADMIN_EXPOSE_PORT:-2002}:2002"
