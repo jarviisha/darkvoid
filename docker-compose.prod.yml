@@ -104,7 +104,7 @@ services:
         condition: service_completed_successfully
 
   app:
-    image: ghcr.io/foxhathetoan/darkvoid:latest
+    image: ghcr.io/jarviisha/darkvoid:latest
     restart: unless-stopped
     ports:
       - "${SERVER_PORT:-8080}:8080"

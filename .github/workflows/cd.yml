@@ -1,11 +1,11 @@
-name: Deploy
+name: CD
 
+# Runs after the CI workflow succeeds on main (never on PRs).
 on:
-  push:
-    branches:
-      - main
-      - "feat/*"
-  pull_request:
+  workflow_run:
+    workflows: [CI]
+    types:
+      - completed
     branches:
       - main
 
@@ -15,25 +15,11 @@ env:
   DEPLOY_DIR: darkvoid
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Run vet
-        run: go vet ./...
-
-      # - name: Run tests
-      #   run: go test -race ./...
-
   build-and-push:
-    if: false
+    # Temporarily disabled. Re-enable by removing "false &&" — the remaining
+    # condition keeps deploys gated on a successful CI run.
+    if: false && github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    needs: test
     permissions:
       contents: read
       packages: write
@@ -41,6 +27,8 @@ jobs:
       image_tag: ${{ steps.meta.outputs.tags }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -67,12 +55,15 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   deploy:
-    # Temporarily disabled. Re-enable by removing this condition.
-    if: false
+    # Temporarily disabled. Re-enable by removing "false &&" — the remaining
+    # condition keeps deploys gated on a successful CI run.
+    if: false && github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     needs: build-and-push
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Copy docker-compose and migrations to VPS
         uses: appleboy/scp-action@v0.1.7
