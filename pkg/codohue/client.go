@@ -148,7 +148,8 @@ func trendingPageFromResponse(resp *codohuetypes.TrendingResponse) *feed.Trendin
 }
 
 // UpsertObjectEmbedding pushes a dense embedding vector for an item (post) to Codohue.
-func (c *Client) UpsertObjectEmbedding(ctx context.Context, objectID string, vector []float64) error {
+// A non-zero createdAt feeds Codohue's γ-based object-freshness rerank for BYOE vectors.
+func (c *Client) UpsertObjectEmbedding(ctx context.Context, objectID string, vector []float64, createdAt time.Time) error {
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -157,7 +158,12 @@ func (c *Client) UpsertObjectEmbedding(ctx context.Context, objectID string, vec
 		converted[i] = float32(v)
 	}
 
-	return c.ns.StoreObjectEmbedding(reqCtx, objectID, converted)
+	var opts []sdk.EmbeddingOption
+	if !createdAt.IsZero() {
+		opts = append(opts, sdk.WithObjectCreatedAt(createdAt.UTC()))
+	}
+
+	return c.ns.StoreObjectEmbedding(reqCtx, objectID, converted, opts...)
 }
 
 // UpsertSubjectEmbedding pushes a dense embedding vector for a user (subject) to Codohue.
@@ -171,6 +177,20 @@ func (c *Client) UpsertSubjectEmbedding(ctx context.Context, subjectID string, v
 	}
 
 	return c.ns.StoreSubjectEmbedding(reqCtx, subjectID, converted)
+}
+
+// IngestCatalogItem publishes post content to Codohue's catalog auto-embedding
+// pipeline (dense_source "catalog"). The server embeds the content
+// asynchronously; authorSubjectID is stored as ownership metadata only.
+func (c *Client) IngestCatalogItem(ctx context.Context, objectID, content, authorSubjectID string) error {
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	return c.ns.IngestCatalog(reqCtx, codohuetypes.CatalogIngestRequest{
+		ObjectID:        objectID,
+		Content:         content,
+		AuthorSubjectID: authorSubjectID,
+	})
 }
 
 // DeleteObject removes an item from the recommendation index.
@@ -189,11 +209,11 @@ func (c *Client) PublishBehaviorEvent(ctx context.Context, subjectID, objectID, 
 	}
 
 	event := codohuetypes.EventPayload{
-		Namespace: c.namespace,
-		SubjectID: subjectID,
-		ObjectID:  objectID,
-		Action:    codohuetypes.Action(action),
-		Timestamp: time.Now().UTC(),
+		Namespace:  c.namespace,
+		SubjectID:  subjectID,
+		ObjectID:   objectID,
+		Action:     codohuetypes.Action(action),
+		OccurredAt: time.Now().UTC(),
 	}
 	if objectCreatedAt != nil {
 		t := objectCreatedAt.UTC()

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -58,6 +59,13 @@ func (s *PostService) WithEmbedding(provider EmbeddingProvider, embedder ObjectE
 	s.objectEmbedder = embedder
 }
 
+// WithCatalogIngester attaches a catalog ingester. Called at wire-up time as
+// the alternative to WithEmbedding: post content is sent raw and embedded
+// server-side. When set, it takes precedence over the BYOE pair.
+func (s *PostService) WithCatalogIngester(ingester CatalogIngester) {
+	s.catalogIngester = ingester
+}
+
 // PostService handles post business logic
 type PostService struct {
 	pool          txBeginner
@@ -74,6 +82,7 @@ type PostService struct {
 	objectDeleter     ObjectDeleter       // optional: nil → no recommendation index cleanup on delete
 	embeddingProvider EmbeddingProvider   // optional: nil → no BYOE embeddings
 	objectEmbedder    ObjectEmbedder      // optional: nil → no BYOE embeddings
+	catalogIngester   CatalogIngester     // optional: non-nil → catalog mode, overrides the BYOE pair
 }
 
 // NewPostService creates a new PostService. Required dependencies are passed as positional
@@ -163,7 +172,7 @@ func (s *PostService) CreatePost(ctx context.Context, authorID uuid.UUID, conten
 	// Enrich mentions and fire notifications AFTER commit (non-fatal)
 	p.Mentions = s.enrichMentionsAfterCommit(ctx, p.ID, authorID, persistedMentionIDs)
 
-	s.pushEmbeddingAsync(p.ID.String(), p.Content, p.Tags)
+	s.pushEmbeddingAsync(p.ID.String(), p.Content, p.Tags, p.AuthorID.String(), p.CreatedAt)
 	s.emitPostCreatedFeedEvent(ctx, p)
 
 	logger.Info(ctx, "post created", "post_id", p.ID, "author_id", authorID)
@@ -314,7 +323,7 @@ func (s *PostService) UpdatePost(ctx context.Context, postID, userID uuid.UUID, 
 	s.enrichTags(ctx, []*entity.Post{updated})
 	s.enrichMentions(ctx, []*entity.Post{updated})
 
-	s.pushEmbeddingAsync(postID.String(), updated.Content, updated.Tags)
+	s.pushEmbeddingAsync(postID.String(), updated.Content, updated.Tags, updated.AuthorID.String(), updated.CreatedAt)
 
 	logger.Info(ctx, "post updated", "post_id", postID)
 	return updated, nil
@@ -349,18 +358,31 @@ func (s *PostService) DeletePost(ctx context.Context, postID, userID uuid.UUID) 
 	return nil
 }
 
-// pushEmbeddingAsync computes a TF-IDF vector for the post and uploads it to Codohue
-// in a background goroutine. Uses a detached context so it outlives the HTTP request.
-// Both embeddingProvider and objectEmbedder must be non-nil for this to run.
-func (s *PostService) pushEmbeddingAsync(postID, content string, tags []string) {
-	if s.embeddingProvider == nil || s.objectEmbedder == nil {
-		return
-	}
-
+// pushEmbeddingAsync ships the post to Codohue's dense index in a background
+// goroutine, using a detached context so it outlives the HTTP request.
+// Catalog mode (catalogIngester set): raw content is sent and embedded
+// server-side. BYOE mode: a TF-IDF vector is computed locally and uploaded;
+// createdAt is forwarded so Codohue can apply object-freshness decay.
+// No-op when neither path is wired.
+func (s *PostService) pushEmbeddingAsync(postID, content string, tags []string, authorID string, createdAt time.Time) {
 	// Combine content and hashtags — tags add vocabulary signal with no extra cost.
 	text := content
 	if len(tags) > 0 {
 		text += " " + strings.Join(tags, " ")
+	}
+
+	if s.catalogIngester != nil {
+		go func() {
+			ctx := context.Background()
+			if err := s.catalogIngester.IngestCatalogItem(ctx, postID, text, authorID); err != nil {
+				logger.LogError(ctx, err, "codohue: failed to ingest catalog item", "post_id", postID)
+			}
+		}()
+		return
+	}
+
+	if s.embeddingProvider == nil || s.objectEmbedder == nil {
+		return
 	}
 
 	go func() {
@@ -370,7 +392,7 @@ func (s *PostService) pushEmbeddingAsync(postID, content string, tags []string) 
 			logger.LogError(ctx, err, "tfidf: failed to vectorize post", "post_id", postID)
 			return
 		}
-		if err := s.objectEmbedder.UpsertObjectEmbedding(ctx, postID, vec); err != nil {
+		if err := s.objectEmbedder.UpsertObjectEmbedding(ctx, postID, vec, createdAt); err != nil {
 			logger.LogError(ctx, err, "codohue: failed to push object embedding", "post_id", postID)
 		}
 	}()

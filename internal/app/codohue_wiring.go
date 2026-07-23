@@ -20,10 +20,11 @@ func (app *Application) ensureCodohueNamespaceConfig(ctx context.Context) error 
 	defer cancel()
 
 	result, err := codohue.ProvisionNamespaceConfig(provisionCtx, codohue.NamespaceProvisionConfig{
-		BaseURL:      app.cfg.Codohue.BaseURL,
+		AdminBaseURL: app.cfg.Codohue.AdminURL,
 		AdminKey:     app.cfg.Codohue.AdminKey,
 		Namespace:    app.cfg.Codohue.Namespace,
 		EmbeddingDim: app.cfg.Codohue.EmbeddingDim,
+		DenseSource:  app.cfg.Codohue.DenseSource,
 	})
 	if err != nil {
 		return fmt.Errorf("provision codohue namespace config: %w", err)
@@ -59,10 +60,11 @@ func (app *Application) wireCodohue(ctx context.Context, codohueClient *codohue.
 		return
 	}
 
-	app.Post.WireCodohue(codohueClient, app.cfg.Codohue.EmbeddingDim)
+	app.Post.WireCodohue(codohueClient, app.cfg.Codohue.EmbeddingDim, app.cfg.Codohue.DenseSource)
 	app.log.Info("codohue client wired into post services",
 		"namespace", app.cfg.Codohue.Namespace,
 		"embedding_dim", app.cfg.Codohue.EmbeddingDim,
+		"dense_source", app.cfg.Codohue.DenseSource,
 	)
 	app.log.Info("codohue service reachable", "base_url", app.cfg.Codohue.BaseURL)
 }

@@ -157,9 +157,18 @@ type EmbeddingProvider interface {
 }
 
 // ObjectEmbedder pushes a pre-computed dense vector for an item to the recommendation engine.
-// Implementations: *codohue.Client (POST /v1/objects/{ns}/{id}/embedding).
+// Implementations: *codohue.Client (PUT /v1/namespaces/{ns}/objects/{id}/embedding).
+// A non-zero createdAt lets the engine apply object-freshness decay to the item.
 type ObjectEmbedder interface {
-	UpsertObjectEmbedding(ctx context.Context, objectID string, vector []float64) error
+	UpsertObjectEmbedding(ctx context.Context, objectID string, vector []float64, createdAt time.Time) error
+}
+
+// CatalogIngester publishes raw item content to the recommendation engine's
+// catalog auto-embedding pipeline; the engine embeds it server-side.
+// Implementations: *codohue.Client (POST /v1/namespaces/{ns}/catalog).
+// Alternative to the EmbeddingProvider+ObjectEmbedder pair — see CODOHUE_DENSE_SOURCE.
+type CatalogIngester interface {
+	IngestCatalogItem(ctx context.Context, objectID, content, authorSubjectID string) error
 }
 
 // LikeNotificationEmitter emits like/unlike notifications for posts.

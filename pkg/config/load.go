@@ -98,16 +98,20 @@ func loadRootConfig() RootConfig {
 // Set CODOHUE_ENABLED=true to enable CF recommendations and behavior event tracking.
 //
 //	CODOHUE_ENABLED        (default: false)
-//	CODOHUE_BASE_URL       (default: "")
+//	CODOHUE_BASE_URL       (default: "") — data-plane API (cmd/api)
+//	CODOHUE_ADMIN_URL      (default: "") — admin plane (cmd/admin); required for namespace provisioning
 //	CODOHUE_NAMESPACE_KEY  (default: "") — namespace key from one-time namespace creation
 //	CODOHUE_ADMIN_KEY      (default: CODOHUE_API_KEY) — admin key for namespace provisioning only
+//	CODOHUE_DENSE_SOURCE   (default: "byoe") — "byoe" or "catalog" (server-side auto-embedding)
 //	CODOHUE_NAMESPACE      (default: "darkvoid_feed")
 func loadCodohueConfig() CodohueConfig {
 	return CodohueConfig{
 		Enabled:      getEnvBool("CODOHUE_ENABLED", false),
 		BaseURL:      getEnv("CODOHUE_BASE_URL", ""),
+		AdminURL:     getEnv("CODOHUE_ADMIN_URL", ""),
 		NamespaceKey: getEnv("CODOHUE_NAMESPACE_KEY", ""),
 		AdminKey:     getEnv("CODOHUE_ADMIN_KEY", getEnv("CODOHUE_API_KEY", "")),
+		DenseSource:  getEnv("CODOHUE_DENSE_SOURCE", "byoe"),
 		Namespace:    getEnv("CODOHUE_NAMESPACE", "darkvoid_feed"),
 		EmbeddingDim: getEnvInt("CODOHUE_EMBEDDING_DIM", 64),
 	}

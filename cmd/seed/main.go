@@ -449,10 +449,11 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 		}
 
 		result, err := codohue.ProvisionNamespaceConfig(ctx, codohue.NamespaceProvisionConfig{
-			BaseURL:      cfg.Codohue.BaseURL,
+			AdminBaseURL: cfg.Codohue.AdminURL,
 			AdminKey:     cfg.Codohue.AdminKey,
 			Namespace:    cfg.Codohue.Namespace,
 			EmbeddingDim: cfg.Codohue.EmbeddingDim,
+			DenseSource:  cfg.Codohue.DenseSource,
 		})
 		if err != nil {
 			return nil, cleanup, fmt.Errorf("provision codohue namespace config: %w", err)
@@ -490,10 +491,14 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 			return nil, func() {}, fmt.Errorf("codohue ping: %w", err)
 		}
 
-		postSvc.WithEmbedding(tfidf.New(cfg.Codohue.EmbeddingDim), codohueClient)
+		if cfg.Codohue.DenseSource == codohue.DenseSourceCatalog {
+			postSvc.WithCatalogIngester(codohueClient)
+		} else {
+			postSvc.WithEmbedding(tfidf.New(cfg.Codohue.EmbeddingDim), codohueClient)
+		}
 		likeSvc.WithBehaviorEventPublisher(codohueClient)
 		commentSvc.WithBehaviorEventPublisher(codohueClient)
-		log.Printf("codohue wired for seed events and post embeddings (namespace=%s)", cfg.Codohue.Namespace)
+		log.Printf("codohue wired for seed events and post embeddings (namespace=%s dense_source=%s)", cfg.Codohue.Namespace, cfg.Codohue.DenseSource)
 	}
 
 	return &seedServices{
