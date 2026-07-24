@@ -20,6 +20,7 @@ func (m *mockFollowerReader) GetFollowerIDs(_ context.Context, _ uuid.UUID) ([]u
 
 type recordingTimelineStore struct {
 	added map[uuid.UUID][]TimelineEntry
+	set   map[uuid.UUID][]TimelineEntry
 	err   error
 }
 
@@ -34,12 +35,14 @@ func (s *recordingTimelineStore) AddPost(_ context.Context, userID uuid.UUID, en
 	return nil
 }
 
-func (s *recordingTimelineStore) AddPostsBatch(_ context.Context, userID uuid.UUID, entries []TimelineEntry) error {
-	for _, entry := range entries {
-		if err := s.AddPost(context.Background(), userID, entry); err != nil {
-			return err
-		}
+func (s *recordingTimelineStore) SetPostsBatch(_ context.Context, userID uuid.UUID, entries []TimelineEntry) error {
+	if s.err != nil {
+		return s.err
 	}
+	if s.set == nil {
+		s.set = make(map[uuid.UUID][]TimelineEntry)
+	}
+	s.set[userID] = append(s.set[userID], entries...)
 	return nil
 }
 
@@ -129,7 +132,7 @@ func (s *flakyTimelineStore) AddPost(_ context.Context, userID uuid.UUID, entry 
 	return nil
 }
 
-func (s *flakyTimelineStore) AddPostsBatch(_ context.Context, _ uuid.UUID, _ []TimelineEntry) error {
+func (s *flakyTimelineStore) SetPostsBatch(_ context.Context, _ uuid.UUID, _ []TimelineEntry) error {
 	return nil
 }
 func (s *flakyTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *TimelinePosition, _ int) (*TimelinePage, error) {

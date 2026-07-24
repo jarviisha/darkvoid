@@ -48,12 +48,34 @@ func (m *mockRefreshFollowReader) GetFollowingIDs(_ context.Context, _ uuid.UUID
 	return m.ids, nil
 }
 
-func TestPreparedTimelineRefresher_WarmTimelinesWritesBoundedEntries(t *testing.T) {
+// stubRefreshRanker returns fixed scores and records the followingSet it was
+// given, so tests can pin both the packed entry scores and the ranker inputs.
+type stubRefreshRanker struct {
+	scores       map[string]float64
+	err          error
+	gotFollowing map[string]bool
+}
+
+func (r *stubRefreshRanker) RankPosts(_ context.Context, posts []*feedentity.Post, followingSet map[string]bool, _ time.Time) (map[string]float64, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	r.gotFollowing = followingSet
+	out := make(map[string]float64, len(posts))
+	for _, p := range posts {
+		out[p.ID.String()] = r.scores[p.ID.String()]
+	}
+	return out, nil
+}
+
+func TestPreparedTimelineRefresher_WarmTimelinesWritesRankedPackedEntries(t *testing.T) {
 	now := time.Now().UTC()
 	post := &feedentity.Post{ID: uuid.New(), CreatedAt: now}
 	postReader := &mockRefreshPostReader{posts: []*feedentity.Post{post}}
 	store := &recordingTimelineStore{}
-	refresher := NewPreparedTimelineRefresher(postReader, &mockRefreshFollowReader{ids: []uuid.UUID{uuid.New()}}, store, 1)
+	followed := uuid.New()
+	ranker := &stubRefreshRanker{scores: map[string]float64{post.ID.String(): 42.5}}
+	refresher := NewPreparedTimelineRefresher(postReader, &mockRefreshFollowReader{ids: []uuid.UUID{followed}}, store, ranker, 1)
 	userA, userB := uuid.New(), uuid.New()
 
 	if err := refresher.WarmTimelines(context.Background(), []uuid.UUID{userA, userB}); err != nil {
@@ -62,16 +84,37 @@ func TestPreparedTimelineRefresher_WarmTimelinesWritesBoundedEntries(t *testing.
 	if postReader.lastLimit != 1 {
 		t.Fatalf("read limit = %d, want 1", postReader.lastLimit)
 	}
+	want := PackTimelineScore(42.5, now)
 	for _, userID := range []uuid.UUID{userA, userB} {
-		entries := store.added[userID]
-		if len(entries) != 1 || entries[0].PostID != post.ID || entries[0].Score != TimelineScoreFromTime(now) {
-			t.Fatalf("entries for %s = %+v", userID, entries)
+		entries := store.set[userID]
+		if len(entries) != 1 || entries[0].PostID != post.ID || entries[0].Score != want {
+			t.Fatalf("entries for %s = %+v, want packed score %d", userID, entries, want)
 		}
+	}
+	if len(store.added) != 0 {
+		t.Fatalf("refresher must write via SetPostsBatch (upsert), got NX adds: %+v", store.added)
+	}
+	if !ranker.gotFollowing[followed.String()] || !ranker.gotFollowing[userB.String()] {
+		t.Fatalf("ranker followingSet must contain followed authors and self, got %+v", ranker.gotFollowing)
+	}
+}
+
+func TestPreparedTimelineRefresher_RankerErrorPropagates(t *testing.T) {
+	post := &feedentity.Post{ID: uuid.New(), CreatedAt: time.Now().UTC()}
+	refresher := NewPreparedTimelineRefresher(
+		&mockRefreshPostReader{posts: []*feedentity.Post{post}},
+		&mockRefreshFollowReader{ids: []uuid.UUID{uuid.New()}},
+		&recordingTimelineStore{},
+		&stubRefreshRanker{err: errors.New("ranker down")},
+		10,
+	)
+	if err := refresher.RefreshTimeline(context.Background(), uuid.New()); err == nil {
+		t.Fatal("expected ranker error to propagate")
 	}
 }
 
 func TestPreparedTimelineRefresher_NilTimelineNoOps(t *testing.T) {
-	refresher := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, nil, 10)
+	refresher := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, nil, &stubRefreshRanker{}, 10)
 	if err := refresher.RefreshTimeline(context.Background(), uuid.New()); err != nil {
 		t.Fatalf("RefreshTimeline with nil store should no-op: %v", err)
 	}
@@ -85,6 +128,7 @@ func TestPreparedTimelineRefresher_FollowReaderErrorPropagates(t *testing.T) {
 		&mockRefreshPostReader{},
 		&mockRefreshFollowReader{err: errors.New("follow db down")},
 		&recordingTimelineStore{},
+		&stubRefreshRanker{},
 		10,
 	)
 	if err := refresher.RefreshTimeline(context.Background(), uuid.New()); err == nil {
@@ -97,6 +141,7 @@ func TestPreparedTimelineRefresher_PostReaderErrorPropagates(t *testing.T) {
 		&mockRefreshPostReader{err: errors.New("post db down")},
 		&mockRefreshFollowReader{ids: []uuid.UUID{uuid.New()}},
 		&recordingTimelineStore{},
+		&stubRefreshRanker{},
 		10,
 	)
 	if err := refresher.RefreshTimeline(context.Background(), uuid.New()); err == nil {
@@ -110,6 +155,7 @@ func TestPreparedTimelineRefresher_TimelineWriteErrorPropagates(t *testing.T) {
 		&mockRefreshPostReader{posts: []*feedentity.Post{post}},
 		&mockRefreshFollowReader{ids: []uuid.UUID{uuid.New()}},
 		&recordingTimelineStore{err: errors.New("redis down")},
+		&stubRefreshRanker{},
 		10,
 	)
 	if err := refresher.RefreshTimeline(context.Background(), uuid.New()); err == nil {
@@ -124,6 +170,7 @@ func TestPreparedTimelineRefresher_WarmTimelinesStopsOnFirstError(t *testing.T) 
 		&mockRefreshPostReader{posts: []*feedentity.Post{post}},
 		&mockRefreshFollowReader{ids: []uuid.UUID{uuid.New()}},
 		store,
+		&stubRefreshRanker{},
 		10,
 	)
 	err := refresher.WarmTimelines(context.Background(), []uuid.UUID{uuid.New(), uuid.New()})
@@ -133,11 +180,11 @@ func TestPreparedTimelineRefresher_WarmTimelinesStopsOnFirstError(t *testing.T) 
 }
 
 func TestPreparedTimelineRefresher_DefaultMaxItems(t *testing.T) {
-	r := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, &recordingTimelineStore{}, 0)
+	r := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, &recordingTimelineStore{}, &stubRefreshRanker{}, 0)
 	if r.maxItems != 1000 {
 		t.Fatalf("maxItems with 0 input = %d, want default 1000", r.maxItems)
 	}
-	r2 := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, &recordingTimelineStore{}, -5)
+	r2 := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, &recordingTimelineStore{}, &stubRefreshRanker{}, -5)
 	if r2.maxItems != 1000 {
 		t.Fatalf("maxItems with negative input = %d, want default 1000", r2.maxItems)
 	}

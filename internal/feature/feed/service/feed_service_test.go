@@ -19,6 +19,11 @@ type mockPostReader struct {
 	byID        map[uuid.UUID]*feedentity.Post
 	byIDErr     error
 	trendingErr error
+	// returnOrder, when set, forces GetPostsByIDs to return posts in this
+	// order instead of the requested ids order — GetPostsByIDs gives no
+	// ordering guarantee in production (WHERE id = ANY), and tests use this to
+	// prove the service does not depend on hydrate order.
+	returnOrder []uuid.UUID
 }
 
 func (m *mockPostReader) GetFollowingPostsWithCursor(_ context.Context, _ []uuid.UUID, cursor *feed.FollowingCursor, limit int32) ([]*feedentity.Post, error) {
@@ -40,8 +45,21 @@ func (m *mockPostReader) GetPostsByIDs(_ context.Context, ids []uuid.UUID) ([]*f
 	if m.byIDErr != nil {
 		return nil, m.byIDErr
 	}
-	result := make([]*feedentity.Post, 0, len(ids))
-	for _, id := range ids {
+	order := ids
+	if len(m.returnOrder) > 0 {
+		requested := make(map[uuid.UUID]bool, len(ids))
+		for _, id := range ids {
+			requested[id] = true
+		}
+		order = make([]uuid.UUID, 0, len(m.returnOrder))
+		for _, id := range m.returnOrder {
+			if requested[id] {
+				order = append(order, id)
+			}
+		}
+	}
+	result := make([]*feedentity.Post, 0, len(order))
+	for _, id := range order {
 		if p, ok := m.byID[id]; ok {
 			result = append(result, p)
 		}
@@ -71,10 +89,12 @@ type mockTimelineStore struct {
 }
 
 func (m *mockTimelineStore) AddPost(_ context.Context, userID uuid.UUID, entry feed.TimelineEntry) error {
-	return m.AddPostsBatch(context.Background(), userID, []feed.TimelineEntry{entry})
+	m.addedUserID = userID
+	m.addedBatch = append(m.addedBatch, entry)
+	return nil
 }
 
-func (m *mockTimelineStore) AddPostsBatch(_ context.Context, userID uuid.UUID, entries []feed.TimelineEntry) error {
+func (m *mockTimelineStore) SetPostsBatch(_ context.Context, userID uuid.UUID, entries []feed.TimelineEntry) error {
 	m.addedUserID = userID
 	m.addedBatch = append(m.addedBatch, entries...)
 	return nil
@@ -178,6 +198,106 @@ func TestGetFeed_MixedFallbackDoesNotEmitSessionCursor(t *testing.T) {
 	}
 }
 
+// TestGetFeed_TimelineOrderCharacterization pins the served order of a
+// timeline page for a fixed fixture (Constitution II: characterize before
+// refactoring). Entries are stored rank-descending and hydration returns them
+// in the same order — the stable production case — so this test must keep
+// passing UNMODIFIED through the materialized-ranking refactor: before it, the
+// order comes from realtime ranking; after it, from the ZSET entry order. The
+// fixture aligns both.
+func TestGetFeed_TimelineOrderCharacterization(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+
+	ages := []time.Duration{time.Hour, 2 * time.Hour, 3 * time.Hour, 10 * time.Hour}
+	ranks := []float64{63, 38, 21, 10.5}
+	likes := []int64{100, 10, 3, 0}
+	entries := make([]feed.TimelineEntry, 0, len(ages))
+	ordered := make([]uuid.UUID, 0, len(ages))
+	for i := range ages {
+		p := testPost(now.Add(-ages[i]))
+		p.AuthorID = userID
+		p.LikeCount = likes[i]
+		reader.byID[p.ID] = p
+		scores[p.ID] = ranks[i]
+		entries = append(entries, feed.TimelineEntry{PostID: p.ID, Score: int64(1000 - i)})
+		ordered = append(ordered, p.ID)
+	}
+	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: entries}}}
+
+	svc := newTestService(reader, &mockRanker{scores: scores})
+	svc.WithTimelineStore(store)
+	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != len(ordered) {
+		t.Fatalf("page len = %d, want %d", len(page), len(ordered))
+	}
+	for i, item := range page {
+		if item.Post.ID != ordered[i] {
+			t.Fatalf("position %d = %s, want %s", i, item.Post.ID, ordered[i])
+		}
+		if item.Source != feedentity.SourceFollowing {
+			t.Fatalf("position %d source = %s, want following", i, item.Source)
+		}
+	}
+	if cursor != nil {
+		t.Fatalf("cursor = %+v, want nil for exhausted timeline page", cursor)
+	}
+}
+
+// TestGetFeed_TimelineServesStoredOrder is the US2 behavior test: the page
+// must follow the materialized ZSET order even when (a) realtime re-ranking
+// would order differently and (b) hydration returns posts shuffled
+// (GetPostsByIDs gives no ordering guarantee). Served scores must be the
+// unpacked materialized ranks, not realtime ones.
+func TestGetFeed_TimelineServesStoredOrder(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+
+	// Stored order deliberately CONTRADICTS the realtime rank order: the
+	// first entry gets the LOWER realtime score.
+	first := testPost(now.Add(-2 * time.Hour))
+	first.AuthorID = userID
+	second := testPost(now.Add(-time.Hour))
+	second.AuthorID = userID
+	reader.byID[first.ID] = first
+	reader.byID[second.ID] = second
+	realtimeScores := map[uuid.UUID]float64{first.ID: 1, second.ID: 100}
+	entries := []feed.TimelineEntry{
+		{PostID: first.ID, Score: feed.PackTimelineScore(50, first.CreatedAt)},
+		{PostID: second.ID, Score: feed.PackTimelineScore(40, second.CreatedAt)},
+	}
+	// Hydration returns posts reversed relative to the entries.
+	reader.returnOrder = []uuid.UUID{second.ID, first.ID}
+	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: entries}}}
+
+	svc := newTestService(reader, &mockRanker{scores: realtimeScores})
+	svc.WithTimelineStore(store)
+	page, _, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != 2 || page[0].Post.ID != first.ID || page[1].Post.ID != second.ID {
+		t.Fatalf("page order = %v, want stored ZSET order [%s %s]", pageIDs(page), first.ID, second.ID)
+	}
+	if page[0].Score != 50 || page[1].Score != 40 {
+		t.Fatalf("served scores = %v/%v, want unpacked materialized ranks 50/40", page[0].Score, page[1].Score)
+	}
+}
+
+func pageIDs(page []*feedentity.FeedItem) []uuid.UUID {
+	ids := make([]uuid.UUID, len(page))
+	for i, item := range page {
+		ids[i] = item.Post.ID
+	}
+	return ids
+}
+
 func TestGetFeed_TimelineFirstOrderingAndCursor(t *testing.T) {
 	now := time.Now().UTC()
 	userID := uuid.New()
@@ -191,7 +311,7 @@ func TestGetFeed_TimelineFirstOrderingAndCursor(t *testing.T) {
 		p.AuthorID = userID
 		reader.byID[p.ID] = p
 		scores[p.ID] = float64(100 - i)
-		entries = append(entries, feed.TimelineEntry{PostID: p.ID, Score: feed.TimelineScoreFromTime(p.CreatedAt)})
+		entries = append(entries, feed.TimelineEntry{PostID: p.ID, Score: feed.PackTimelineScore(30, p.CreatedAt)})
 	}
 	store.pages = []*feed.TimelinePage{{Entries: entries}}
 
@@ -221,7 +341,7 @@ func TestGetFeed_TimelinePaginationNoDuplicates(t *testing.T) {
 		p := testPost(now.Add(-time.Duration(i) * time.Minute))
 		p.AuthorID = userID
 		reader.byID[p.ID] = p
-		allEntries = append(allEntries, feed.TimelineEntry{PostID: p.ID, Score: feed.TimelineScoreFromTime(p.CreatedAt)})
+		allEntries = append(allEntries, feed.TimelineEntry{PostID: p.ID, Score: feed.PackTimelineScore(30, p.CreatedAt)})
 	}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{
 		{Entries: allEntries[:pageSize]},
@@ -274,9 +394,9 @@ func TestGetFeed_TimelineFiltersStaleVisibilityAndFollowState(t *testing.T) {
 		},
 	}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: []feed.TimelineEntry{
-		{PostID: visible.ID, Score: feed.TimelineScoreFromTime(visible.CreatedAt)},
-		{PostID: private.ID, Score: feed.TimelineScoreFromTime(private.CreatedAt)},
-		{PostID: unfollowed.ID, Score: feed.TimelineScoreFromTime(unfollowed.CreatedAt)},
+		{PostID: visible.ID, Score: feed.PackTimelineScore(30, visible.CreatedAt)},
+		{PostID: private.ID, Score: feed.PackTimelineScore(30, private.CreatedAt)},
+		{PostID: unfollowed.ID, Score: feed.PackTimelineScore(30, unfollowed.CreatedAt)},
 	}}}}
 
 	svc := NewFeedService(
@@ -304,7 +424,7 @@ func TestGetFeed_TimelineRefreshesOnMiss(t *testing.T) {
 	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{post.ID: post}}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{
 		{},
-		{Entries: []feed.TimelineEntry{{PostID: post.ID, Score: feed.TimelineScoreFromTime(post.CreatedAt)}}},
+		{Entries: []feed.TimelineEntry{{PostID: post.ID, Score: feed.PackTimelineScore(30, post.CreatedAt)}}},
 	}}
 	refresher := &mockTimelineRefresher{}
 
@@ -337,7 +457,7 @@ func TestGetFeed_TimelineRolloutGateDisablesPreparedTimelineRead(t *testing.T) {
 		},
 	}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: []feed.TimelineEntry{
-		{PostID: timelinePost.ID, Score: feed.TimelineScoreFromTime(timelinePost.CreatedAt)},
+		{PostID: timelinePost.ID, Score: feed.PackTimelineScore(30, timelinePost.CreatedAt)},
 	}}}}
 
 	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{fallbackPost.ID: 1}})

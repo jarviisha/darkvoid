@@ -16,7 +16,7 @@ func (n *NopTimelineStore) AddPost(_ context.Context, _ uuid.UUID, _ feed.Timeli
 	return nil
 }
 
-func (n *NopTimelineStore) AddPostsBatch(_ context.Context, _ uuid.UUID, _ []feed.TimelineEntry) error {
+func (n *NopTimelineStore) SetPostsBatch(_ context.Context, _ uuid.UUID, _ []feed.TimelineEntry) error {
 	return nil
 }
 

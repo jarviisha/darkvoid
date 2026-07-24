@@ -51,7 +51,12 @@ func SetupFeedContext(
 		fc = feedcache.NewNopFeedCache()
 	}
 
-	feedSvc := feedservice.NewFeedService(postReader, followReader, likeReader, feed.NewLocalRanker(feed.DefaultScorerConfig()), fc)
+	// One ScorerConfig and one LocalRanker shared by the read path, the
+	// background refresher, and the dispatcher's write-time score, so all
+	// three stay on the same formula.
+	scorerCfg := feed.DefaultScorerConfig()
+	ranker := feed.NewLocalRanker(scorerCfg)
+	feedSvc := feedservice.NewFeedService(postReader, followReader, likeReader, ranker, fc)
 	var timelineStore feed.TimelineStore
 	if redisClient != nil {
 		timelineStore = feedcache.NewRedisTimelineStore(redisClient, feedTimelineCfg.TimelineMaxItems, feedTimelineCfg.TimelineTTL)
@@ -60,9 +65,9 @@ func SetupFeedContext(
 	}
 	feedSvc.WithTimelineStore(timelineStore)
 	feedSvc.WithTimelineOptions(feedTimelineCfg.TimelineEnabled, feedTimelineCfg.TimelineRolloutPercent, feedTimelineCfg.RefreshOnMiss)
-	feedSvc.WithTimelineRefresher(feed.NewPreparedTimelineRefresher(postReader, followReader, timelineStore, feedTimelineCfg.TimelineMaxItems))
+	feedSvc.WithTimelineRefresher(feed.NewPreparedTimelineRefresher(postReader, followReader, timelineStore, ranker, feedTimelineCfg.TimelineMaxItems))
 	fanoutWorker := feed.NewFanoutWorker(followReader, timelineStore, feedTimelineCfg.FanoutMaxFollowers)
-	dispatcher := feed.NewEventDispatcher(feedTimelineCfg.FanoutEnabled, feedTimelineCfg.FanoutWorkers, feedTimelineCfg.FanoutQueueSize, fanoutWorker)
+	dispatcher := feed.NewEventDispatcher(feedTimelineCfg.FanoutEnabled, feedTimelineCfg.FanoutWorkers, feedTimelineCfg.FanoutQueueSize, fanoutWorker, scorerCfg)
 
 	// Wire Codohue recommender and trending fetcher into the feed service when enabled.
 	// Wiring Codohue into other contexts (post services) is the caller's responsibility.

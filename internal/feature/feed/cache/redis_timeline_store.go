@@ -12,7 +12,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const timelineKeyPrefix = "feed:tl"
+// timelineKeyPrefix is versioned: v2 keys hold packed rank scores. Legacy
+// unversioned keys held UnixMicro timestamps in an overlapping numeric range,
+// so they must never be read or written again — they expire via their TTL.
+const timelineKeyPrefix = "feed:tl:v2"
 
 func timelineKey(userID uuid.UUID) string {
 	return fmt.Sprintf("%s:%s", timelineKeyPrefix, userID)
@@ -36,10 +39,18 @@ func NewRedisTimelineStore(client *pkgredis.Client, maxItems int, ttl time.Durat
 }
 
 func (s *RedisTimelineStore) AddPost(ctx context.Context, userID uuid.UUID, entry feed.TimelineEntry) error {
-	return s.AddPostsBatch(ctx, userID, []feed.TimelineEntry{entry})
+	return s.writeBatch(ctx, userID, []feed.TimelineEntry{entry}, true)
 }
 
-func (s *RedisTimelineStore) AddPostsBatch(ctx context.Context, userID uuid.UUID, entries []feed.TimelineEntry) error {
+// SetPostsBatch upserts entries, overwriting scores of existing members. It is
+// the write path for background ranking (refresher / re-rank jobs).
+func (s *RedisTimelineStore) SetPostsBatch(ctx context.Context, userID uuid.UUID, entries []feed.TimelineEntry) error {
+	return s.writeBatch(ctx, userID, entries, false)
+}
+
+// writeBatch writes entries (ZADD NX when nx — never downgrading an existing
+// score — plain upsert otherwise), trims to maxItems, and refreshes the TTL.
+func (s *RedisTimelineStore) writeBatch(ctx context.Context, userID uuid.UUID, entries []feed.TimelineEntry, nx bool) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -54,12 +65,12 @@ func (s *RedisTimelineStore) AddPostsBatch(ctx context.Context, userID uuid.UUID
 	}
 
 	pipe := s.client.Pipeline()
-	pipe.ZAddArgs(ctx, key, redis.ZAddArgs{NX: true, Members: members})
+	pipe.ZAddArgs(ctx, key, redis.ZAddArgs{NX: nx, Members: members})
 	pipe.ZRemRangeByRank(ctx, key, 0, int64(-s.maxItems-1))
 	pipe.Expire(ctx, key, s.ttl)
 	if _, err := pipe.Exec(ctx); err != nil {
 		feed.ObserveRedisError(err)
-		return fmt.Errorf("redis timeline add batch: %w", err)
+		return fmt.Errorf("redis timeline write batch: %w", err)
 	}
 	return nil
 }
