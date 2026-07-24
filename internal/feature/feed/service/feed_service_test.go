@@ -249,6 +249,55 @@ func TestGetFeed_TimelineOrderCharacterization(t *testing.T) {
 	}
 }
 
+// TestGetFeed_TimelineServesStoredOrder is the US2 behavior test: the page
+// must follow the materialized ZSET order even when (a) realtime re-ranking
+// would order differently and (b) hydration returns posts shuffled
+// (GetPostsByIDs gives no ordering guarantee). Served scores must be the
+// unpacked materialized ranks, not realtime ones.
+func TestGetFeed_TimelineServesStoredOrder(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+
+	// Stored order deliberately CONTRADICTS the realtime rank order: the
+	// first entry gets the LOWER realtime score.
+	first := testPost(now.Add(-2 * time.Hour))
+	first.AuthorID = userID
+	second := testPost(now.Add(-time.Hour))
+	second.AuthorID = userID
+	reader.byID[first.ID] = first
+	reader.byID[second.ID] = second
+	realtimeScores := map[uuid.UUID]float64{first.ID: 1, second.ID: 100}
+	entries := []feed.TimelineEntry{
+		{PostID: first.ID, Score: feed.PackTimelineScore(50, first.CreatedAt)},
+		{PostID: second.ID, Score: feed.PackTimelineScore(40, second.CreatedAt)},
+	}
+	// Hydration returns posts reversed relative to the entries.
+	reader.returnOrder = []uuid.UUID{second.ID, first.ID}
+	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: entries}}}
+
+	svc := newTestService(reader, &mockRanker{scores: realtimeScores})
+	svc.WithTimelineStore(store)
+	page, _, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != 2 || page[0].Post.ID != first.ID || page[1].Post.ID != second.ID {
+		t.Fatalf("page order = %v, want stored ZSET order [%s %s]", pageIDs(page), first.ID, second.ID)
+	}
+	if page[0].Score != 50 || page[1].Score != 40 {
+		t.Fatalf("served scores = %v/%v, want unpacked materialized ranks 50/40", page[0].Score, page[1].Score)
+	}
+}
+
+func pageIDs(page []*feedentity.FeedItem) []uuid.UUID {
+	ids := make([]uuid.UUID, len(page))
+	for i, item := range page {
+		ids[i] = item.Post.ID
+	}
+	return ids
+}
+
 func TestGetFeed_TimelineFirstOrderingAndCursor(t *testing.T) {
 	now := time.Now().UTC()
 	userID := uuid.New()

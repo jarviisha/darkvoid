@@ -229,24 +229,33 @@ func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID,
 
 	ids := make([]uuid.UUID, 0, len(page.Entries))
 	entryByPost := make(map[uuid.UUID]feed.TimelineEntry, len(page.Entries))
-	for _, entry := range page.Entries {
+	entryOrder := make(map[uuid.UUID]int, len(page.Entries))
+	for i, entry := range page.Entries {
 		ids = append(ids, entry.PostID)
 		entryByPost[entry.PostID] = entry
+		entryOrder[entry.PostID] = i
 	}
 	posts, err := s.postReader.GetPostsByIDs(ctx, ids)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	now := time.Now().UTC()
-	ranked := s.rankCandidates(ctx, postsToTimelineCandidates(posts), followingSet, now)
+	// The timeline is already ranked (materialized packed scores) — serve it
+	// in ZSET order, no realtime ranking. GetPostsByIDs gives no ordering
+	// guarantee, so the hydrated posts are reordered explicitly.
+	sort.Slice(posts, func(i, j int) bool {
+		return entryOrder[posts[i].ID] < entryOrder[posts[j].ID]
+	})
 	items := make([]*feedentity.FeedItem, 0, pageSize)
-	for _, item := range ranked {
-		if !isEligibleTimelinePost(userID, followingSet, item.Post) {
+	for _, p := range posts {
+		if !isEligibleTimelinePost(userID, followingSet, p) {
 			continue
 		}
-		item.Source = feedentity.SourceFollowing
-		items = append(items, item)
+		items = append(items, &feedentity.FeedItem{
+			Post:   p,
+			Score:  feed.UnpackTimelineRank(entryByPost[p.ID].Score),
+			Source: feedentity.SourceFollowing,
+		})
 		if len(items) == pageSize {
 			break
 		}
@@ -273,14 +282,6 @@ func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID,
 		}
 	}
 	return items, next, nil
-}
-
-func postsToTimelineCandidates(posts []*feedentity.Post) []feedCandidate {
-	candidates := make([]feedCandidate, 0, len(posts))
-	for i, p := range posts {
-		candidates = append(candidates, feedCandidate{post: p, source: feedentity.SourceFollowing, sourceRank: i + 1})
-	}
-	return candidates
 }
 
 func isEligibleTimelinePost(userID uuid.UUID, followingSet map[uuid.UUID]bool, p *feedentity.Post) bool {
