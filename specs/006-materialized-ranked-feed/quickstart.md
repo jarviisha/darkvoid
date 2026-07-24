@@ -63,12 +63,12 @@ redis-cli --scan --pattern 'feed:tl:*' | grep -v ':v2:'   # only pre-existing, T
 
 ## Acceptance checklist
 
-- [ ] `PackTimelineScore` guarantees 1–6 of contracts/timeline-score.md covered by unit tests
-- [ ] NX-vs-upsert behavior pinned by real-Redis tests (contracts/timeline-store.md tests 1–6)
-- [ ] Characterization test written BEFORE hot-path refactor, still green after
-- [ ] 005 cursor/handler contract tests pass **unmodified**
-- [ ] No new env vars; `.env.example` untouched
-- [ ] `docs.go` updated for packages whose responsibilities shifted
-- [ ] `make test` and `make lint` green
-- [ ] Timeline hot path no longer calls `RankPosts` (verify by reading the final diff, and
+- [x] `PackTimelineScore` guarantees 1–6 of contracts/timeline-score.md covered by unit tests
+- [x] NX-vs-upsert behavior pinned by real-Redis tests (contracts/timeline-store.md tests 1–6)
+- [x] Characterization test written BEFORE hot-path refactor, still green after
+- [x] 005 cursor/handler contract tests pass **unmodified**
+- [x] No new env vars; `.env.example` untouched
+- [x] `docs.go` updated for packages whose responsibilities shifted
+- [x] `make test` and `make lint` green
+- [x] Timeline hot path no longer calls `RankPosts` (verify by reading the final diff, and
       optionally via a test asserting the service's Ranker is not invoked on the timeline path)
