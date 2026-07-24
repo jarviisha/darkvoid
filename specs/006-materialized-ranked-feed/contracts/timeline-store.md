@@ -6,13 +6,17 @@ semantics of the rest.
 
 ## Methods
 
-### `AddPost(ctx, userID, entry)` / `AddPostsBatch(ctx, userID, entries)` — NX add
+### `AddPost(ctx, userID, entry)` — NX add
 
 - MUST NOT modify the score of an existing member (`ZADD NX`).
 - Rationale (load-bearing): a post-created event processed *after* a refresh has already
   scored that post must not replace the refreshed score with the write-time constant.
-- Callers: fan-out worker (`AddPost`).
+- Callers: fan-out worker.
 - After adding: trim to `maxItems` by rank (lowest scores evicted), refresh key TTL.
+- The former `AddPostsBatch` was REMOVED from the interface (analysis finding U1): after
+  the refresher moved to `SetPostsBatch` it had no production caller, and dead interface
+  surface violates Constitution I. The Redis implementation keeps a private `writeBatch`
+  helper shared by both write paths.
 
 ### `SetPostsBatch(ctx, userID, entries)` — upsert (NEW in P1)
 
@@ -30,6 +34,11 @@ semantics of the rest.
   skip `postID >= after.PostID`. Unchanged from current implementation; the 005 cursor
   contract depends on it.
 - Returns at most `limit` entries plus `Last` position.
+- **Known limitation (accepted)**: the fetch window is `Count = 2×limit` from the boundary
+  score, so continuation across an equal-score block only survives blocks of at most
+  ~2×limit members. Larger blocks would stall the cursor. With packed scores an equal
+  score requires same rank bucket AND same createdAt second, so realistic blocks are tiny;
+  tests exercising block pagination MUST size blocks ≤ 2×limit.
 
 ### `Trim` / `RemovePostBestEffort` — unchanged
 
@@ -47,12 +56,14 @@ semantics of the rest.
 
 ## Required tests (real Redis via `REDIS_TEST_ADDR`, DB 15)
 
-1. `AddPostsBatch` then `AddPostsBatch` same member, new score → score unchanged (NX
+1. `AddPost` then `AddPost` same member, new score → score unchanged (NX
    characterization — this pins the bug the v1 design missed).
-2. `AddPostsBatch` then `SetPostsBatch` same member, new score → score overwritten.
-3. `SetPostsBatch` inserts members that did not exist.
+2. `AddPost` then `SetPostsBatch` same member, new score → score overwritten.
+3. `SetPostsBatch` inserts members that did not exist; empty batch is a no-op.
 4. `SetPostsBatch` respects trim (`maxItems`) and sets TTL.
-5. Keys are written under `feed:tl:v2:` (assert exact key, so an accidental prefix revert
-   fails loudly).
+5. Keys are written under `feed:tl:v2:` (assert exact key literal AND absence of the
+   legacy `feed:tl:<uuid>` key, so an accidental prefix revert fails loudly).
 6. `ReadPage` continuation across equal-score members (the fan-out constant-bucket case)
-   pages without loss or duplication.
+   pages without loss or duplication — block sized ≤ 2×limit per the known limitation.
+7. A legacy UnixMicro-scale position (~1.7e15) over v2 packed data degrades to "read from
+   top" without error (accepted deploy-window behavior).

@@ -19,6 +19,11 @@ type mockPostReader struct {
 	byID        map[uuid.UUID]*feedentity.Post
 	byIDErr     error
 	trendingErr error
+	// returnOrder, when set, forces GetPostsByIDs to return posts in this
+	// order instead of the requested ids order — GetPostsByIDs gives no
+	// ordering guarantee in production (WHERE id = ANY), and tests use this to
+	// prove the service does not depend on hydrate order.
+	returnOrder []uuid.UUID
 }
 
 func (m *mockPostReader) GetFollowingPostsWithCursor(_ context.Context, _ []uuid.UUID, cursor *feed.FollowingCursor, limit int32) ([]*feedentity.Post, error) {
@@ -40,8 +45,21 @@ func (m *mockPostReader) GetPostsByIDs(_ context.Context, ids []uuid.UUID) ([]*f
 	if m.byIDErr != nil {
 		return nil, m.byIDErr
 	}
-	result := make([]*feedentity.Post, 0, len(ids))
-	for _, id := range ids {
+	order := ids
+	if len(m.returnOrder) > 0 {
+		requested := make(map[uuid.UUID]bool, len(ids))
+		for _, id := range ids {
+			requested[id] = true
+		}
+		order = make([]uuid.UUID, 0, len(m.returnOrder))
+		for _, id := range m.returnOrder {
+			if requested[id] {
+				order = append(order, id)
+			}
+		}
+	}
+	result := make([]*feedentity.Post, 0, len(order))
+	for _, id := range order {
 		if p, ok := m.byID[id]; ok {
 			result = append(result, p)
 		}
@@ -71,10 +89,12 @@ type mockTimelineStore struct {
 }
 
 func (m *mockTimelineStore) AddPost(_ context.Context, userID uuid.UUID, entry feed.TimelineEntry) error {
-	return m.AddPostsBatch(context.Background(), userID, []feed.TimelineEntry{entry})
+	m.addedUserID = userID
+	m.addedBatch = append(m.addedBatch, entry)
+	return nil
 }
 
-func (m *mockTimelineStore) AddPostsBatch(_ context.Context, userID uuid.UUID, entries []feed.TimelineEntry) error {
+func (m *mockTimelineStore) SetPostsBatch(_ context.Context, userID uuid.UUID, entries []feed.TimelineEntry) error {
 	m.addedUserID = userID
 	m.addedBatch = append(m.addedBatch, entries...)
 	return nil
@@ -175,6 +195,57 @@ func TestGetFeed_MixedFallbackDoesNotEmitSessionCursor(t *testing.T) {
 	}
 	if len(page1) == 0 {
 		t.Fatal("expected mixed fallback items")
+	}
+}
+
+// TestGetFeed_TimelineOrderCharacterization pins the served order of a
+// timeline page for a fixed fixture (Constitution II: characterize before
+// refactoring). Entries are stored rank-descending and hydration returns them
+// in the same order — the stable production case — so this test must keep
+// passing UNMODIFIED through the materialized-ranking refactor: before it, the
+// order comes from realtime ranking; after it, from the ZSET entry order. The
+// fixture aligns both.
+func TestGetFeed_TimelineOrderCharacterization(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+
+	ages := []time.Duration{time.Hour, 2 * time.Hour, 3 * time.Hour, 10 * time.Hour}
+	ranks := []float64{63, 38, 21, 10.5}
+	likes := []int64{100, 10, 3, 0}
+	entries := make([]feed.TimelineEntry, 0, len(ages))
+	ordered := make([]uuid.UUID, 0, len(ages))
+	for i := range ages {
+		p := testPost(now.Add(-ages[i]))
+		p.AuthorID = userID
+		p.LikeCount = likes[i]
+		reader.byID[p.ID] = p
+		scores[p.ID] = ranks[i]
+		entries = append(entries, feed.TimelineEntry{PostID: p.ID, Score: int64(1000 - i)})
+		ordered = append(ordered, p.ID)
+	}
+	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: entries}}}
+
+	svc := newTestService(reader, &mockRanker{scores: scores})
+	svc.WithTimelineStore(store)
+	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != len(ordered) {
+		t.Fatalf("page len = %d, want %d", len(page), len(ordered))
+	}
+	for i, item := range page {
+		if item.Post.ID != ordered[i] {
+			t.Fatalf("position %d = %s, want %s", i, item.Post.ID, ordered[i])
+		}
+		if item.Source != feedentity.SourceFollowing {
+			t.Fatalf("position %d source = %s, want following", i, item.Source)
+		}
+	}
+	if cursor != nil {
+		t.Fatalf("cursor = %+v, want nil for exhausted timeline page", cursor)
 	}
 }
 

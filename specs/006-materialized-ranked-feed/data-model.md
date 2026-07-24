@@ -54,10 +54,13 @@ the cursor continuation value (`tl_score`).
 | Method | ZADD mode | Caller | Semantics |
 |---|---|---|---|
 | `AddPost` | NX | fan-out worker | insert-if-absent; never downgrades a refreshed score |
-| `AddPostsBatch` | NX | (legacy batch add) | same as above, batched |
 | `SetPostsBatch` **(new)** | plain (upsert) | refresher | overwrite scores; the materialized re-rank write |
 | `ReadPage` | — | hot path | unchanged `(score, postID)` continuation |
 | `Trim`, `RemovePostBestEffort` | — | maintenance/events | unchanged |
+
+`AddPostsBatch` was removed from the interface (analysis U1): no production caller after
+the refresher switched to `SetPostsBatch`. The Redis implementation shares a private
+`writeBatch(nx bool)` helper between `AddPost` and `SetPostsBatch`.
 
 Implementations: `RedisTimelineStore` (real), `NopTimelineStore` (Redis disabled — returns
 nil). Both gain `SetPostsBatch`.

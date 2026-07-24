@@ -68,5 +68,5 @@ func (r *PreparedTimelineRefresher) refreshOne(ctx context.Context, userID uuid.
 			Score:  TimelineScoreFromTime(p.CreatedAt),
 		})
 	}
-	return r.timeline.AddPostsBatch(ctx, userID, entries)
+	return r.timeline.SetPostsBatch(ctx, userID, entries)
 }

@@ -17,8 +17,8 @@ func TestNopTimelineStore_MissAndNonFatalOperations(t *testing.T) {
 	if err := store.AddPost(ctx, userID, feed.TimelineEntry{PostID: postID, Score: 1}); err != nil {
 		t.Fatalf("AddPost: %v", err)
 	}
-	if err := store.AddPostsBatch(ctx, userID, []feed.TimelineEntry{{PostID: postID, Score: 1}}); err != nil {
-		t.Fatalf("AddPostsBatch: %v", err)
+	if err := store.SetPostsBatch(ctx, userID, []feed.TimelineEntry{{PostID: postID, Score: 1}}); err != nil {
+		t.Fatalf("SetPostsBatch: %v", err)
 	}
 	page, err := store.ReadPage(ctx, userID, nil, 20)
 	if err != nil {

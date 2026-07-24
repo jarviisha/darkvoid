@@ -63,7 +63,7 @@ func TestPreparedTimelineRefresher_WarmTimelinesWritesBoundedEntries(t *testing.
 		t.Fatalf("read limit = %d, want 1", postReader.lastLimit)
 	}
 	for _, userID := range []uuid.UUID{userA, userB} {
-		entries := store.added[userID]
+		entries := store.set[userID]
 		if len(entries) != 1 || entries[0].PostID != post.ID || entries[0].Score != TimelineScoreFromTime(now) {
 			t.Fatalf("entries for %s = %+v", userID, entries)
 		}
