@@ -49,9 +49,16 @@ type EventDispatcher struct {
 	handler EventHandler
 	closed  atomic.Bool
 	wg      sync.WaitGroup
+	// writeScore is the rank score given to a brand-new post at fan-out time.
+	// For a fresh post the local formula degenerates to exactly
+	// RecencyScale + RelationshipBonus (zero likes, zero age, author followed
+	// by every fan-out recipient), so the constant is used openly; the
+	// createdAt component of the packed score keeps fan-out writes
+	// newest-first inside this shared rank bucket.
+	writeScore float64
 }
 
-func NewEventDispatcher(enabled bool, workers int, queueSize int, handler EventHandler) *EventDispatcher {
+func NewEventDispatcher(enabled bool, workers int, queueSize int, handler EventHandler, scorerCfg ScorerConfig) *EventDispatcher {
 	if workers <= 0 {
 		workers = 1
 	}
@@ -59,9 +66,10 @@ func NewEventDispatcher(enabled bool, workers int, queueSize int, handler EventH
 		queueSize = 1
 	}
 	d := &EventDispatcher{
-		enabled: enabled,
-		jobs:    make(chan Event, queueSize),
-		handler: handler,
+		enabled:    enabled,
+		jobs:       make(chan Event, queueSize),
+		handler:    handler,
+		writeScore: scorerCfg.RecencyScale + scorerCfg.RelationshipBonus,
 	}
 	if enabled && handler != nil {
 		for i := 0; i < workers; i++ {
@@ -120,7 +128,7 @@ func (d *EventDispatcher) EmitPostCreated(ctx context.Context, postID, authorID 
 		AuthorID:   authorID,
 		Visibility: visibility,
 		CreatedAt:  createdAt,
-		Score:      TimelineScoreFromTime(createdAt),
+		Score:      PackTimelineScore(d.writeScore, createdAt),
 	})
 	return nil
 }

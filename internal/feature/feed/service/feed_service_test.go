@@ -262,7 +262,7 @@ func TestGetFeed_TimelineFirstOrderingAndCursor(t *testing.T) {
 		p.AuthorID = userID
 		reader.byID[p.ID] = p
 		scores[p.ID] = float64(100 - i)
-		entries = append(entries, feed.TimelineEntry{PostID: p.ID, Score: feed.TimelineScoreFromTime(p.CreatedAt)})
+		entries = append(entries, feed.TimelineEntry{PostID: p.ID, Score: feed.PackTimelineScore(30, p.CreatedAt)})
 	}
 	store.pages = []*feed.TimelinePage{{Entries: entries}}
 
@@ -292,7 +292,7 @@ func TestGetFeed_TimelinePaginationNoDuplicates(t *testing.T) {
 		p := testPost(now.Add(-time.Duration(i) * time.Minute))
 		p.AuthorID = userID
 		reader.byID[p.ID] = p
-		allEntries = append(allEntries, feed.TimelineEntry{PostID: p.ID, Score: feed.TimelineScoreFromTime(p.CreatedAt)})
+		allEntries = append(allEntries, feed.TimelineEntry{PostID: p.ID, Score: feed.PackTimelineScore(30, p.CreatedAt)})
 	}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{
 		{Entries: allEntries[:pageSize]},
@@ -345,9 +345,9 @@ func TestGetFeed_TimelineFiltersStaleVisibilityAndFollowState(t *testing.T) {
 		},
 	}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: []feed.TimelineEntry{
-		{PostID: visible.ID, Score: feed.TimelineScoreFromTime(visible.CreatedAt)},
-		{PostID: private.ID, Score: feed.TimelineScoreFromTime(private.CreatedAt)},
-		{PostID: unfollowed.ID, Score: feed.TimelineScoreFromTime(unfollowed.CreatedAt)},
+		{PostID: visible.ID, Score: feed.PackTimelineScore(30, visible.CreatedAt)},
+		{PostID: private.ID, Score: feed.PackTimelineScore(30, private.CreatedAt)},
+		{PostID: unfollowed.ID, Score: feed.PackTimelineScore(30, unfollowed.CreatedAt)},
 	}}}}
 
 	svc := NewFeedService(
@@ -375,7 +375,7 @@ func TestGetFeed_TimelineRefreshesOnMiss(t *testing.T) {
 	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{post.ID: post}}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{
 		{},
-		{Entries: []feed.TimelineEntry{{PostID: post.ID, Score: feed.TimelineScoreFromTime(post.CreatedAt)}}},
+		{Entries: []feed.TimelineEntry{{PostID: post.ID, Score: feed.PackTimelineScore(30, post.CreatedAt)}}},
 	}}
 	refresher := &mockTimelineRefresher{}
 
@@ -408,7 +408,7 @@ func TestGetFeed_TimelineRolloutGateDisablesPreparedTimelineRead(t *testing.T) {
 		},
 	}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: []feed.TimelineEntry{
-		{PostID: timelinePost.ID, Score: feed.TimelineScoreFromTime(timelinePost.CreatedAt)},
+		{PostID: timelinePost.ID, Score: feed.PackTimelineScore(30, timelinePost.CreatedAt)},
 	}}}}
 
 	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{fallbackPost.ID: 1}})

@@ -80,11 +80,3 @@ func UnpackTimelineRank(score int64) float64 {
 	}
 	return float64(score>>32) / timelineRankScale
 }
-
-// TimelineScoreFromTime converts a post creation time to a Redis-safe
-// microsecond score. Legacy timestamp-only scoring, superseded by
-// PackTimelineScore; kept only while writer call sites migrate and deleted at
-// the end of the materialized-ranking change.
-func TimelineScoreFromTime(t time.Time) int64 {
-	return t.UTC().UnixMicro()
-}

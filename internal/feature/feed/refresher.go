@@ -2,6 +2,7 @@ package feed
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -11,15 +12,19 @@ type TimelineRefresher interface {
 	RefreshTimeline(ctx context.Context, userID uuid.UUID) error
 }
 
-// PreparedTimelineRefresher refreshes a prepared timeline from current follows and recent posts.
+// PreparedTimelineRefresher refreshes a prepared timeline from current follows
+// and recent posts, materializing rank scores so the read path never ranks.
+// This is the background re-rank write path: it overwrites fan-out write-time
+// scores via SetPostsBatch.
 type PreparedTimelineRefresher struct {
 	postReader   PostReader
 	followReader FollowReader
 	timeline     TimelineStore
+	ranker       Ranker
 	maxItems     int
 }
 
-func NewPreparedTimelineRefresher(postReader PostReader, followReader FollowReader, timeline TimelineStore, maxItems int) *PreparedTimelineRefresher {
+func NewPreparedTimelineRefresher(postReader PostReader, followReader FollowReader, timeline TimelineStore, ranker Ranker, maxItems int) *PreparedTimelineRefresher {
 	if maxItems <= 0 {
 		maxItems = 1000
 	}
@@ -27,6 +32,7 @@ func NewPreparedTimelineRefresher(postReader PostReader, followReader FollowRead
 		postReader:   postReader,
 		followReader: followReader,
 		timeline:     timeline,
+		ranker:       ranker,
 		maxItems:     maxItems,
 	}
 }
@@ -61,11 +67,24 @@ func (r *PreparedTimelineRefresher) refreshOne(ctx context.Context, userID uuid.
 	if err != nil {
 		return err
 	}
+
+	followingSet := make(map[string]bool, len(authorIDs))
+	for _, id := range authorIDs {
+		followingSet[id.String()] = true
+	}
+	scores := map[string]float64{}
+	if r.ranker != nil {
+		scores, err = r.ranker.RankPosts(ctx, posts, followingSet, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+	}
+
 	entries := make([]TimelineEntry, 0, len(posts))
 	for _, p := range posts {
 		entries = append(entries, TimelineEntry{
 			PostID: p.ID,
-			Score:  TimelineScoreFromTime(p.CreatedAt),
+			Score:  PackTimelineScore(scores[p.ID.String()], p.CreatedAt),
 		})
 	}
 	return r.timeline.SetPostsBatch(ctx, userID, entries)

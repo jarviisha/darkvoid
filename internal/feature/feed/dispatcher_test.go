@@ -21,9 +21,37 @@ func (h *recordingEventHandler) HandleFeedEvent(_ context.Context, event Event) 
 	return h.err
 }
 
+func TestEventDispatcher_EmitPostCreatedWritesPackedWriteTimeScore(t *testing.T) {
+	handler := &recordingEventHandler{events: make(chan Event, 1)}
+	cfg := DefaultScorerConfig()
+	dispatcher := NewEventDispatcher(true, 1, 1, handler, cfg)
+	defer dispatcher.Close()
+
+	postID, authorID := uuid.New(), uuid.New()
+	createdAt := time.Date(2026, 7, 24, 9, 30, 0, 0, time.UTC)
+	if err := dispatcher.EmitPostCreated(context.Background(), postID, authorID, "public", createdAt); err != nil {
+		t.Fatalf("EmitPostCreated: %v", err)
+	}
+	select {
+	case got := <-handler.events:
+		// Write-time score is the degenerate local formula for a fresh post
+		// (RecencyScale + RelationshipBonus) packed with the post's createdAt —
+		// NOT time.Now() — so same-bucket fan-out writes stay newest-first.
+		want := PackTimelineScore(cfg.RecencyScale+cfg.RelationshipBonus, createdAt)
+		if got.Score != want {
+			t.Fatalf("event score = %d, want packed write-time constant %d", got.Score, want)
+		}
+		if got.PostID != postID || got.AuthorID != authorID || !got.CreatedAt.Equal(createdAt) {
+			t.Fatalf("event fields mismatch: %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for event")
+	}
+}
+
 func TestEventDispatcher_DisabledDoesNotEnqueue(t *testing.T) {
 	handler := &recordingEventHandler{events: make(chan Event, 1)}
-	dispatcher := NewEventDispatcher(false, 1, 1, handler)
+	dispatcher := NewEventDispatcher(false, 1, 1, handler, DefaultScorerConfig())
 
 	if dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
 		t.Fatal("disabled dispatcher should not enqueue")
@@ -35,7 +63,7 @@ func TestEventDispatcher_DisabledDoesNotEnqueue(t *testing.T) {
 
 func TestEventDispatcher_EnqueueSuccess(t *testing.T) {
 	handler := &recordingEventHandler{events: make(chan Event, 1)}
-	dispatcher := NewEventDispatcher(true, 1, 1, handler)
+	dispatcher := NewEventDispatcher(true, 1, 1, handler, DefaultScorerConfig())
 	defer dispatcher.Close()
 
 	postID := uuid.New()
@@ -67,7 +95,7 @@ func TestEventDispatcher_FullQueueReturnsFalse(t *testing.T) {
 
 func TestEventDispatcher_HandlerErrorIsNonFatal(t *testing.T) {
 	handler := &recordingEventHandler{events: make(chan Event, 1), err: errors.New("boom")}
-	dispatcher := NewEventDispatcher(true, 1, 1, handler)
+	dispatcher := NewEventDispatcher(true, 1, 1, handler, DefaultScorerConfig())
 	defer dispatcher.Close()
 
 	if !dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
@@ -96,7 +124,7 @@ func (h *deadlineCapturingHandler) HandleFeedEvent(ctx context.Context, _ Event)
 
 func TestEventDispatcher_WorkerAppliesPerEventTimeout(t *testing.T) {
 	handler := &deadlineCapturingHandler{done: make(chan struct{})}
-	dispatcher := NewEventDispatcher(true, 1, 1, handler)
+	dispatcher := NewEventDispatcher(true, 1, 1, handler, DefaultScorerConfig())
 	defer dispatcher.Close()
 
 	start := time.Now()
@@ -138,7 +166,7 @@ func TestEventDispatcher_CloseDrainsInFlightEvents(t *testing.T) {
 		release: make(chan struct{}),
 		done:    make(chan struct{}),
 	}
-	dispatcher := NewEventDispatcher(true, 1, 1, handler)
+	dispatcher := NewEventDispatcher(true, 1, 1, handler, DefaultScorerConfig())
 
 	if !dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
 		t.Fatal("dispatch failed")
@@ -172,7 +200,7 @@ func TestEventDispatcher_CloseDrainsInFlightEvents(t *testing.T) {
 }
 
 func TestEventDispatcher_DispatchAfterCloseReturnsFalse(t *testing.T) {
-	dispatcher := NewEventDispatcher(true, 1, 1, &recordingEventHandler{})
+	dispatcher := NewEventDispatcher(true, 1, 1, &recordingEventHandler{}, DefaultScorerConfig())
 	dispatcher.Close()
 	if dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
 		t.Fatal("expected dispatch after Close to return false")
