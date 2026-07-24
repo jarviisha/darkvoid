@@ -72,7 +72,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
-          source: "docker-compose.prod.yml,migrations/**"
+          source: "docker-compose.prod.yml,migrations/**,scripts/**"
           target: ${{ env.DEPLOY_DIR }}
 
       - name: Deploy to VPS
@@ -102,6 +102,12 @@ jobs:
             # Migrations run automatically: the migrate-user → migrate-post →
             # migrate-notification chain gates the app via depends_on.
             $COMPOSE up -d
+
+            # Install the dvctl operator-CLI wrapper system-wide so it stays in
+            # sync with the repo (no more hand-edited /usr/local/bin script).
+            if [ -f scripts/dvctl ]; then
+              sudo install -m 755 scripts/dvctl /usr/local/bin/dvctl
+            fi
 
             docker logout ghcr.io
             docker image prune -f

@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/term"
 
 	"github.com/jarviisha/darkvoid/internal/feature/user/dto"
 	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
@@ -20,6 +23,37 @@ import (
 )
 
 const adminRoleName = "admin"
+
+// passwordEnv lets automation pass a password without exposing it on the
+// command line (argv is world-readable via /proc and lands in shell history).
+//
+//nolint:gosec // G101: this is the env var *name*, not a credential value.
+const passwordEnv = "DARKVOIDCTL_PASSWORD"
+
+// readPassword resolves a password without ever taking it as a flag:
+//  1. the DARKVOIDCTL_PASSWORD env var (for scripted/automated use), else
+//  2. an interactive prompt with echo disabled (a real terminal), else
+//  3. a single line piped on stdin.
+func readPassword(prompt string) (string, error) {
+	if pw := os.Getenv(passwordEnv); pw != "" {
+		return pw, nil
+	}
+	fd := int(os.Stdin.Fd()) //nolint:gosec // G115: a process file descriptor is a small non-negative int.
+	if term.IsTerminal(fd) {
+		fmt.Fprintf(os.Stderr, "%s: ", prompt)
+		b, err := term.ReadPassword(fd)
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return "", fmt.Errorf("read password: %w", err)
+		}
+		return string(b), nil
+	}
+	sc := bufio.NewScanner(os.Stdin)
+	if sc.Scan() {
+		return strings.TrimRight(sc.Text(), "\r\n"), nil
+	}
+	return "", fmt.Errorf("no password provided (set %s, pipe on stdin, or run interactively)", passwordEnv)
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -43,12 +77,15 @@ func usage() {
 	fmt.Fprint(os.Stderr, `darkvoidctl — DarkVoid operator CLI
 
 Usage:
-  darkvoidctl user reset-password -username <u> -password <p>
-  darkvoidctl user create -username <u> -email <e> -display-name <n> -password <p>
+  darkvoidctl user reset-password -username <u>
+  darkvoidctl user create -username <u> -email <e> [-display-name <n>]
   darkvoidctl user list [-q <query>] [-limit <n>] [-active-only]
   darkvoidctl user promote -username <u>       grant the admin role
   darkvoidctl user demote  -username <u>       revoke the admin role
   darkvoidctl user deactivate -username <u>
+
+Passwords are never taken as flags: reset-password and create prompt
+interactively (echo off), or read `+passwordEnv+` / a piped stdin line.
 
 Reads DB settings from the environment / .env (same as the API server).
 `)
@@ -146,10 +183,16 @@ func resolveUser(ctx context.Context, d *deps, username string) (*entity.User, e
 func cmdResetPassword(args []string) error {
 	fs := flag.NewFlagSet("user reset-password", flag.ExitOnError)
 	username := fs.String("username", "", "username of the account (required)")
-	password := fs.String("password", "", "new password (required; min 8 chars, letters + numbers)")
 	_ = fs.Parse(args)
-	if *username == "" || *password == "" {
-		return fmt.Errorf("-username and -password are required")
+	if *username == "" {
+		return fmt.Errorf("-username is required")
+	}
+	password, err := readPassword("New password")
+	if err != nil {
+		return err
+	}
+	if password == "" {
+		return fmt.Errorf("password must not be empty")
 	}
 
 	ctx := context.Background()
@@ -163,7 +206,7 @@ func cmdResetPassword(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := d.userSvc.AdminResetPassword(ctx, u.ID, *password); err != nil {
+	if err := d.userSvc.AdminResetPassword(ctx, u.ID, password); err != nil {
 		return err
 	}
 	fmt.Printf("password reset for %s (%s)\n", u.Username, u.ID)
@@ -175,10 +218,16 @@ func cmdCreate(args []string) error {
 	username := fs.String("username", "", "username (required)")
 	email := fs.String("email", "", "email (required)")
 	displayName := fs.String("display-name", "", "display name (defaults to username)")
-	password := fs.String("password", "", "password (required; min 8 chars, letters + numbers)")
 	_ = fs.Parse(args)
-	if *username == "" || *email == "" || *password == "" {
-		return fmt.Errorf("-username, -email and -password are required")
+	if *username == "" || *email == "" {
+		return fmt.Errorf("-username and -email are required")
+	}
+	password, err := readPassword("Password")
+	if err != nil {
+		return err
+	}
+	if password == "" {
+		return fmt.Errorf("password must not be empty")
 	}
 	dn := *displayName
 	if dn == "" {
@@ -196,7 +245,7 @@ func cmdCreate(args []string) error {
 		Username:    *username,
 		Email:       *email,
 		DisplayName: dn,
-		Password:    *password,
+		Password:    password,
 	})
 	if err != nil {
 		return err

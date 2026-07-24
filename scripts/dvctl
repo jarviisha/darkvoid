@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# dvctl — run the darkvoidctl operator CLI as a one-off container inside the
+# deployment's compose project, so the database is reachable by service name
+# and the CLI travels with the deployed image (no hand-installed host binary).
+#
+# Installed onto the server by the CD pipeline (see .github/workflows/cd.yml).
+# Override the deployment location / compose file per environment:
+#
+#   DARKVOID_DIR      deployment directory        (default: /opt/darkvoid-dev)
+#   DARKVOID_COMPOSE  compose file to use          (default: docker-compose.prod.yml)
+#
+# Password input is never passed as a flag — reset-password/create prompt
+# interactively (echo off), or read DARKVOIDCTL_PASSWORD, which this wrapper
+# forwards into the container when set. Examples:
+#
+#   dvctl user list
+#   dvctl user reset-password -username root          # interactive prompt
+#   DARKVOIDCTL_PASSWORD='New123' dvctl user reset-password -username root
+#
+# --no-deps: never implicitly start postgres/redis; the CLI just connects to
+# whatever is already running (fail fast if the stack is down).
+set -euo pipefail
+
+cd "${DARKVOID_DIR:-/opt/darkvoid-dev}"
+
+exec docker compose -f "${DARKVOID_COMPOSE:-docker-compose.prod.yml}" \
+  --profile tools run --rm --no-deps \
+  -e DARKVOIDCTL_PASSWORD \
+  ctl "$@"
