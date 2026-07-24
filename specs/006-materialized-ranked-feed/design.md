@@ -210,8 +210,10 @@ Vì sao encoding này đúng:
 - **Bỏ** bước `rankCandidates` realtime.
 - Đọc ZSET (đã theo rank), hydrate `GetPostsByIDs`, **sort lại kết quả hydrate
   theo đúng thứ tự entries của ZSET** — `GetPostsByIDs` (`WHERE id = ANY`)
-  không bảo toàn thứ tự, hiện nay `rankCandidates` đang vô tình làm việc sắp
-  xếp này; bỏ nó đi thì phải sort tường minh (map postID → index entry).
+  không bảo toàn thứ tự. (Phát hiện khi implement: timeline path trước giờ
+  KHÔNG hề sort — `rankCandidates` chỉ tính điểm hiển thị, `sortFeedItems` chỉ
+  chạy ở mixed path — nên thứ tự trang âm thầm theo thứ tự DB trả về, một bug
+  tiềm ẩn mà bước sort tường minh này sửa luôn.)
 - Enrich `isLiked`/`isFollowing`, filter eligibility như cũ, cắt trang, trả.
 - Cursor: `TimelinePosition{Score, PostID}` vẫn hoạt động vì phân trang theo
   score ZSET. Quyết định cursor "mềm" — xem §11/Q1.

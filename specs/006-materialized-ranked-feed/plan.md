@@ -106,7 +106,7 @@ Research is captured in [research.md](./research.md). All open questions were re
 - **Key version bump `feed:tl:v2`** over in-place flush (old/new score ranges overlap numerically; TTL handles cleanup for free) and over a cursor version field (one-time soft degradation accepted per soft-cursor decision).
 - **Soft cursor** (Q1) and **additive CF blend** (Q2, P2-relevant) recorded with rationale.
 - **Write-time fan-out score = `RecencyScale + RelationshipBonus`** as an explicit constant rather than a fake scorer call.
-- **Explicit hot-path reorder**: `GetPostsByIDs` does not preserve order; today `rankCandidates` masks that — the refactor must add a deliberate sort by ZSET entry index.
+- **Explicit hot-path reorder**: `GetPostsByIDs` does not preserve order; implementation revealed the timeline path never sorted at all (order silently followed DB return order — a latent bug), so the deliberate sort by ZSET entry index is both the replacement for realtime ranking and a bug fix.
 
 ## Phase 1: Design & Contracts
 

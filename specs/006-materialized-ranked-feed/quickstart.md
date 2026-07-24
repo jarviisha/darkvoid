@@ -43,11 +43,12 @@ make docker-up
 # 1. Log in as a user following at least one author; call feed once to trigger lazy refresh:
 curl -s -H "Authorization: Bearer $TOKEN" 'localhost:8080/api/v1/feed' | jq '.data[].id'
 
-# 2. Inspect the materialized scores — expect packed values (~1e13..4.5e15 range is WRONG;
-#    correct packed values are < 4.51e15 with rank bucket visible via >>32):
+# 2. Inspect the materialized scores:
 redis-cli --scan --pattern 'feed:tl:v2:*'
 redis-cli ZREVRANGE feed:tl:v2:<userID> 0 5 WITHSCORES
-#    sanity: score>>32 ∈ [0, 1048575] (rank×1000); score&0xFFFFFFFF = seconds since 2020.
+#    sanity: score>>32 ∈ [0, 1048575] (= rank×1000); score & 0xFFFFFFFF = seconds
+#    since 2020-01-01. Example: default fan-out writes rank 30 → bucket 30000 →
+#    packed ≈ 1.29e14. Any score ≥ 4.51e15 or with bucket > 1048575 is wrong.
 
 # 3. Create a post from a followed author → verify it appears at the write-time bucket
 #    (RecencyScale+RelationshipBonus = 30 by default → bucket 30000) and shows in feed

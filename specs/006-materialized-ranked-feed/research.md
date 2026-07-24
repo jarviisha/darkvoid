@@ -99,10 +99,13 @@ CLARIFICATION items remain for P1.
 - **Decision**: `getFeedFromTimeline` must explicitly reorder hydrated posts to the ZSET
   entry order (index map over `page.Entries`) before eligibility filtering and enrichment.
   The mixed/discover path keeps `rankCandidates` — P1 does not touch it.
-- **Rationale**: `GetPostsByIDs` (`WHERE id = ANY(...)`) does not guarantee result order;
-  today the hot path is accidentally correct because `rankCandidates` re-sorts. Removing it
-  without an explicit sort would return DB-arbitrary order. This is the single subtlest step
-  of P1 and gets a characterization test *before* the refactor (Constitution II).
+- **Rationale**: `GetPostsByIDs` (`WHERE id = ANY(...)`) does not guarantee result order.
+  IMPLEMENTATION FINDING (corrects the original assumption): the timeline path never
+  sorted at all — `rankCandidates` only computes display scores and `sortFeedItems` runs
+  only on the mixed path — so page order silently followed DB return order, a latent
+  production bug. The explicit reorder therefore both replaces the removed ranking step
+  AND fixes that bug. Pinned by the characterization test (stable case) plus a
+  stored-order behavior test with shuffled hydration (Constitution II).
 - **Alternatives considered**: `ORDER BY array_position(...)` in SQL — rejected: touches
   hand-patched generated query files for a problem trivially solved in Go at page size.
 
