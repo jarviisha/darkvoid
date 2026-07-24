@@ -233,6 +233,29 @@ services:
       migrate-notification:
         condition: service_completed_successfully
 
+  # Operator CLI — run one-off admin commands inside the compose network so the
+  # DB is reachable by service name. Usage:
+  #   docker compose --profile tools run --rm ctl user list
+  #   docker compose --profile tools run --rm ctl user reset-password -username root -password 'New123'
+  ctl:
+    build: .
+    profiles: [tools]
+    restart: "no"
+    entrypoint: ["/app/darkvoidctl"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-darkvoid}
+      DB_SSLMODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # ---------------------------------------------------------------------------
   # Codohue profile — start with: make docker-up-codohue
   # ---------------------------------------------------------------------------

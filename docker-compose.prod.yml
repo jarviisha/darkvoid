@@ -159,6 +159,29 @@ services:
       redis:
         condition: service_healthy
 
+  # Operator CLI — same image as app, run as a one-off inside the compose
+  # network (DB reachable by service name). Ships with every deploy, so no
+  # hand-installed binary. Usage:
+  #   docker compose -f docker-compose.prod.yml --profile tools run --rm ctl user list
+  ctl:
+    image: ghcr.io/jarviisha/darkvoid:latest
+    profiles: [tools]
+    restart: "no"
+    entrypoint: ["/app/darkvoidctl"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      DB_NAME: ${DB_NAME:-darkvoid}
+      DB_SSLMODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:
