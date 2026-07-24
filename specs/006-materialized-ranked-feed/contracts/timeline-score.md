@@ -13,9 +13,12 @@ const (
     timelineRankScale = 1000
 )
 
-packed = clamp(int64(rankScore*timelineRankScale), 0, timelineRankMax) << 32
+packed = clamp(int64(math.Round(rankScore*timelineRankScale)), 0, timelineRankMax) << 32
        | clamp(createdAt.UTC().Unix()-timelineEpoch, 0, 1<<32-1)
 ```
+
+`math.Round` on the bucket is load-bearing: plain truncation puts e.g. `10.001` into
+bucket `10000` (`10.001×1000` floats to `10000.999…8`), silently breaking guarantee 3.
 
 ## Guarantees (MUST hold, tested)
 
@@ -42,8 +45,13 @@ packed = clamp(int64(rankScore*timelineRankScale), 0, timelineRankMax) << 32
 
 ## Consumer rules
 
-- The read path MUST NOT decode the components — it only compares packed values (ZSET does
-  this) and threads them through `TimelinePosition`/cursor opaquely.
+- For ordering and pagination, the read path only compares packed values (the ZSET does
+  this) and threads them through `TimelinePosition`/cursor opaquely — ordering logic MUST
+  NOT branch on decoded components.
+- Decoding the RANK component via `UnpackTimelineRank` is allowed for display and
+  observability only: the serialized `FeedItem.Score` field is populated this way
+  (amended post-implementation — the `score` field in the client response made this
+  necessary; see contracts/feed-api.md).
 - Nothing may reconstruct `createdAt` from a packed score for display or logic (seconds
   truncation + clamping make it lossy by design).
 

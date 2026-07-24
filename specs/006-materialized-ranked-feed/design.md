@@ -119,7 +119,9 @@ const (
 // Primary order: rank score (độ phân giải 0.001). Secondary: createdAt (giây).
 // Tie-break cuối cùng: postID (đã có sẵn trong TimelinePosition/ReadPage).
 func PackTimelineScore(rankScore float64, createdAt time.Time) int64 {
-    bucket := int64(rankScore * timelineRankScale)
+    // Round, không truncate: 10.001×1000 float ra 10000.999…8, truncate sẽ
+    // rơi nhầm bucket và phá bảo đảm "hơn nhau 0.001 là thắng".
+    bucket := int64(math.Round(rankScore * timelineRankScale))
     bucket = min(max(bucket, 0), timelineRankMax)
     ts := createdAt.UTC().Unix() - timelineEpoch
     ts = min(max(ts, 0), math.MaxUint32)
@@ -237,7 +239,6 @@ sai hoàn toàn cho re-rank job. Bổ sung:
 ```go
 type TimelineStore interface {
     AddPost(ctx, userID, entry) error            // NX — fan-out
-    AddPostsBatch(ctx, userID, entries) error    // NX — giữ nguyên
     SetPostsBatch(ctx, userID, entries) error    // MỚI: ZADD thường (upsert),
                                                  // ghi đè score — refresher/re-rank
     ReadPage(...)
@@ -245,6 +246,10 @@ type TimelineStore interface {
     RemovePostBestEffort(...)
 }
 ```
+
+(Chốt ở review U1: `AddPostsBatch` bị **bỏ khỏi interface** — sau khi refresher chuyển
+sang `SetPostsBatch` nó không còn caller production nào; Redis impl dùng helper nội bộ
+`writeBatch(nx bool)` chung cho cả hai đường ghi.)
 
 - `SetPostsBatch` = pipeline `ZADD` (không NX) + `ZRemRangeByRank` trim +
   `Expire`, y hệt `AddPostsBatch` chỉ khác flag.

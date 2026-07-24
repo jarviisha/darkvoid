@@ -23,6 +23,12 @@ explicit, reviewed, and testable rather than assumed.
   (write-time constant or refreshed local score) instead of request-time re-scoring. Under
   local-only P1 both orders derive from the same formula; drift between them is bounded by
   refresh staleness, which the design accepts (soft feed, design.md §11/Q1).
+- The `score` field VALUE on timeline-served items is now the unpacked materialized rank
+  (`rank bucket / 1000` via `UnpackTimelineRank` — e.g. a fresh fan-out post serves
+  exactly `30.0` under default config) instead of a per-request realtime computation.
+  Field type and presence are unchanged; only the value source is. Mixed/discover pages
+  keep realtime scores. Clients were never given value semantics for `score`, so this is
+  documented for transparency, not as a breaking change.
 
 ## One-time deploy-window behavior (accepted, documented)
 

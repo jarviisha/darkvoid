@@ -17,7 +17,7 @@ the cursor continuation value (`tl_score`).
 
 | Component | Definition | Range | Notes |
 |---|---|---|---|
-| rank bucket | `int64(rankScore × 1000)`, clamped to `[0, 2^20-1]` | 0 … 1,048,575 (= rank 0 … 1048.575) | 0.001 rank resolution; local formula tops out < 200 in practice |
+| rank bucket | `int64(round(rankScore × 1000))`, clamped to `[0, 2^20-1]` | 0 … 1,048,575 (= rank 0 … 1048.575) | 0.001 resolution; rounding (not truncation) is load-bearing — see contracts/timeline-score.md |
 | ts component | `createdAt.UTC().Unix() − 1577836800`, clamped to `[0, 2^32-1]` | 2020-01-01 … ~2156 | seconds precision is enough below 0.001-rank ties |
 
 **Invariants**
