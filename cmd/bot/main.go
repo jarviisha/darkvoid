@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -72,7 +73,7 @@ func main() {
 		gemini: &geminiClient{
 			baseURL: cfg.GeminiBaseURL,
 			apiKey:  cfg.GeminiAPIKey,
-			model:   cfg.GeminiModel,
+			models:  cfg.GeminiModels,
 			http:    &http.Client{Timeout: 60 * time.Second},
 		},
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())), //nolint:gosec // content variety, not crypto
@@ -83,7 +84,7 @@ func main() {
 
 	logger.Info(ctx, "bot starting",
 		"api", cfg.APIBaseURL,
-		"model", cfg.GeminiModel,
+		"models", strings.Join(cfg.GeminiModels, ","),
 		"accounts", n,
 		"interval", cfg.Interval.String(),
 	)

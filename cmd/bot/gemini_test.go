@@ -103,7 +103,7 @@ func TestGeneratePost_CallsEndpointWithKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := &geminiClient{baseURL: srv.URL, apiKey: "secret", model: "gemini-2.5-flash", http: srv.Client()}
+	g := &geminiClient{baseURL: srv.URL, apiKey: "secret", models: []string{"gemini-2.5-flash"}, http: srv.Client()}
 	post, err := g.GeneratePost(context.Background(), personas[0], "chủ đề", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -119,15 +119,59 @@ func TestGeneratePost_CallsEndpointWithKey(t *testing.T) {
 	}
 }
 
-func TestGeneratePost_NonOKStatus(t *testing.T) {
+func TestGeneratePost_AllModelsRateLimited(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"quota"}`, http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
 
-	g := &geminiClient{baseURL: srv.URL, apiKey: "k", model: "m", http: srv.Client()}
+	g := &geminiClient{baseURL: srv.URL, apiKey: "k", models: []string{"m1", "m2"}, http: srv.Client()}
 	if _, err := g.GeneratePost(context.Background(), personas[0], "chủ đề", nil); err == nil {
-		t.Fatal("expected error for 429 response")
+		t.Fatal("expected error when every model is 429")
+	}
+}
+
+// A 429 on the preferred model must roll over to the next model in the list.
+func TestGeneratePost_RotatesPast429(t *testing.T) {
+	var triedPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		triedPaths = append(triedPaths, r.URL.Path)
+		if strings.Contains(r.URL.Path, "busy-model") {
+			http.Error(w, `{"error":"quota"}`, http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write(geminiBody(t, generatedPost{Content: "đã xoay vòng", Tags: nil}))
+	}))
+	defer srv.Close()
+
+	g := &geminiClient{baseURL: srv.URL, apiKey: "k", models: []string{"busy-model", "spare-model"}, http: srv.Client()}
+	post, err := g.GeneratePost(context.Background(), personas[0], "chủ đề", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if post.Content != "đã xoay vòng" {
+		t.Errorf("content = %q, want fallback model output", post.Content)
+	}
+	if len(triedPaths) != 2 {
+		t.Fatalf("tried %d models, want 2 (busy then spare): %v", len(triedPaths), triedPaths)
+	}
+}
+
+// A non-quota error (e.g. 400) must fail fast without burning the fallbacks.
+func TestGeneratePost_RealErrorDoesNotRotate(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	g := &geminiClient{baseURL: srv.URL, apiKey: "k", models: []string{"m1", "m2"}, http: srv.Client()}
+	if _, err := g.GeneratePost(context.Background(), personas[0], "chủ đề", nil); err == nil {
+		t.Fatal("expected error for 400 response")
+	}
+	if calls != 1 {
+		t.Fatalf("made %d calls, want 1 (no rotation on a real error)", calls)
 	}
 }
 
