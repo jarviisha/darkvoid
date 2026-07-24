@@ -217,6 +217,37 @@ func (s *UserService) DeactivateUser(ctx context.Context, id uuid.UUID, updatedB
 	return nil
 }
 
+// AdminResetPassword sets a user's password directly, without requiring the
+// current one. It is meant for operator tooling (cmd/darkvoidctl) and is not
+// exposed over HTTP — the authenticated flow is AuthService.ChangePassword,
+// which verifies the old password. The new password still goes through the
+// standard strength rules.
+func (s *UserService) AdminResetPassword(ctx context.Context, userID uuid.UUID, newPassword string) error {
+	if err := validatePassword(newPassword); err != nil {
+		return err
+	}
+
+	if _, err := s.userRepo.GetUserByID(ctx, userID); err != nil {
+		if errors.Is(err, errors.ErrNotFound) {
+			return user.ErrUserNotFound
+		}
+		return errors.NewInternalError(err)
+	}
+
+	hashedPassword, err := hashPassword(newPassword)
+	if err != nil {
+		return errors.NewInternalError(err)
+	}
+
+	if err := s.userRepo.UpdateUserPassword(ctx, userID, hashedPassword, nil); err != nil {
+		logger.LogError(ctx, err, "failed to reset password", "user_id", userID)
+		return errors.NewInternalError(err)
+	}
+
+	logger.Info(ctx, "password reset by operator", "user_id", userID)
+	return nil
+}
+
 func (s *UserService) BootstrapRootUser(ctx context.Context, email, password, username, displayName string) (bool, error) {
 	existsRootUser, err := s.userRepo.ExistsUsername(ctx, username)
 	if err != nil {

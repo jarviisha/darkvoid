@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 .PHONY: help \
 	sqlc-generate sqlc-clean swagger-init swagger-generate swagger-serve generate \
-	build run dev bot clean \
+	build run dev bot ctl clean \
 	test test-v test-cover test-cover-html test-feature lint deps \
 	docker-up docker-up-app docker-up-codohue docker-seed docker-seed-reset docker-down docker-down-app docker-logs docker-logs-app \
 	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-down-notification migrate-create migrate-status migrate-force \
@@ -86,6 +86,9 @@ dev: ## Run in development mode with hot reload (requires air)
 
 bot: ## Run the Gemini content bot against a running API (usage: make bot BOT_ARGS="--interval=1m")
 	$(GO) run ./cmd/bot $(BOT_ARGS)
+
+ctl: ## Run the operator CLI (usage: make ctl CTL_ARGS="user list")
+	$(GO) run ./cmd/darkvoidctl $(CTL_ARGS)
 
 clean: ## Clean build artifacts
 	rm -rf $(BIN_DIR) $(COVERAGE_FILE)
