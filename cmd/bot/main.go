@@ -23,7 +23,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jarviisha/darkvoid/pkg/config"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
 
@@ -37,9 +36,9 @@ func main() {
 	maxPosts := flag.Int("max-posts", 0, "stop after N posts (0 = run forever)")
 	flag.Parse()
 
-	cfg := config.LoadBot()
+	cfg := loadConfig()
 	log := logger.New(&logger.Config{
-		Level:   cfg.Logger.Level,
+		Level:   cfg.LogLevel,
 		Format:  "text",
 		Output:  os.Stdout,
 		Service: "darkvoid-bot",
@@ -52,43 +51,43 @@ func main() {
 	// logger must ride along in the context for the package-level helpers.
 	ctx = logger.WithLogger(ctx, log)
 
-	if cfg.Bot.GeminiAPIKey == "" {
+	if cfg.GeminiAPIKey == "" {
 		logger.Error(ctx, "GEMINI_API_KEY is required")
 		os.Exit(1)
 	}
 	if *interval > 0 {
-		cfg.Bot.Interval = *interval
+		cfg.Interval = *interval
 	}
 	if *accounts > 0 {
-		cfg.Bot.Accounts = *accounts
+		cfg.Accounts = *accounts
 	}
-	n := min(max(cfg.Bot.Accounts, 1), len(personas))
+	n := min(max(cfg.Accounts, 1), len(personas))
 
 	bot := &runner{
 		api: &apiClient{
-			baseURL: cfg.Bot.APIBaseURL,
+			baseURL: cfg.APIBaseURL,
 			http:    &http.Client{Timeout: 15 * time.Second},
 			now:     time.Now,
 		},
 		gemini: &geminiClient{
-			baseURL: cfg.Bot.GeminiBaseURL,
-			apiKey:  cfg.Bot.GeminiAPIKey,
-			model:   cfg.Bot.GeminiModel,
+			baseURL: cfg.GeminiBaseURL,
+			apiKey:  cfg.GeminiAPIKey,
+			model:   cfg.GeminiModel,
 			http:    &http.Client{Timeout: 60 * time.Second},
 		},
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())), //nolint:gosec // content variety, not crypto
 	}
 	for _, p := range personas[:n] {
-		bot.accounts = append(bot.accounts, &botAccount{persona: p, password: cfg.Bot.Password})
+		bot.accounts = append(bot.accounts, &botAccount{persona: p, password: cfg.Password})
 	}
 
 	logger.Info(ctx, "bot starting",
-		"api", cfg.Bot.APIBaseURL,
-		"model", cfg.Bot.GeminiModel,
+		"api", cfg.APIBaseURL,
+		"model", cfg.GeminiModel,
 		"accounts", n,
-		"interval", cfg.Bot.Interval.String(),
+		"interval", cfg.Interval.String(),
 	)
-	bot.run(ctx, cfg.Bot.Interval, *maxPosts)
+	bot.run(ctx, cfg.Interval, *maxPosts)
 	logger.Info(ctx, "bot stopped")
 }
 

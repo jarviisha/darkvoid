@@ -139,28 +139,6 @@ func loadMailerConfig() MailerConfig {
 	}
 }
 
-// loadBotConfig loads content-bot configuration from environment variables.
-// Used only by cmd/bot; the API server ignores this section.
-//
-//	BOT_API_BASE_URL  (default: "http://localhost:8080/api/v1")
-//	BOT_PASSWORD      (default: "Bot@12345")
-//	BOT_ACCOUNTS      (default: 3)
-//	BOT_POST_INTERVAL (default: 30s)
-//	GEMINI_API_KEY    (default: "") — required by cmd/bot
-//	GEMINI_MODEL      (default: "gemini-2.5-flash")
-//	GEMINI_BASE_URL   (default: "https://generativelanguage.googleapis.com")
-func loadBotConfig() BotConfig {
-	return BotConfig{
-		APIBaseURL:    getEnv("BOT_API_BASE_URL", "http://localhost:8080/api/v1"),
-		Password:      getEnv("BOT_PASSWORD", "Bot@12345"),
-		Accounts:      getEnvInt("BOT_ACCOUNTS", 3),
-		Interval:      getEnvDuration("BOT_POST_INTERVAL", 30*time.Second),
-		GeminiAPIKey:  getEnv("GEMINI_API_KEY", ""),
-		GeminiModel:   getEnv("GEMINI_MODEL", "gemini-2.5-flash"),
-		GeminiBaseURL: getEnv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
-	}
-}
-
 // loadRedisConfig loads Redis configuration from environment variables.
 // Set REDIS_ENABLED=true to enable caching; all other vars have sensible defaults.
 //
