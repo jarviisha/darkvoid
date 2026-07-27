@@ -23,13 +23,12 @@ type notifEmitter interface {
 }
 
 // roleStore is the narrow interface the admin service needs for role management.
+// There is no ListRoles/CreateRole: the assignable roles are entity.AllRoles, a
+// compile-time set, not a table.
 type roleStore interface {
-	ListRoles(ctx context.Context) ([]*entity.Role, error)
-	CreateRole(ctx context.Context, name string, description *string) (*entity.Role, error)
-	GetRoleByID(ctx context.Context, id uuid.UUID) (*entity.Role, error)
-	GetUserRoles(ctx context.Context, userID uuid.UUID) ([]*entity.Role, error)
-	AssignRole(ctx context.Context, userID, roleID uuid.UUID, assignedBy *uuid.UUID) error
-	RemoveRole(ctx context.Context, userID, roleID uuid.UUID) error
+	GetUserRoles(ctx context.Context, userID uuid.UUID) ([]*entity.RoleAssignment, error)
+	AssignRole(ctx context.Context, userID uuid.UUID, role entity.Role, assignedBy *uuid.UUID) error
+	RemoveRole(ctx context.Context, userID uuid.UUID, role entity.Role) error
 	UserHasAnyRole(ctx context.Context, userID uuid.UUID, roleNames []string) (bool, error)
 }
 

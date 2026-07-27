@@ -7,196 +7,302 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jarviisha/darkvoid/internal/feature/user/db"
+	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
 )
 
 // --------------------------------------------------------------------------
-// dbRoleToEntity mapping
+// dbRoleAssignmentToEntity mapping
 // --------------------------------------------------------------------------
 
-func TestDbRoleToEntity_NilDescription(t *testing.T) {
-	role := dbRoleToEntity(db.UsrRole{
-		ID:          uuid.New(),
-		Name:        "admin",
-		Description: nil,
+func TestDbRoleAssignmentToEntity_NilAssignedBy(t *testing.T) {
+	a := dbRoleAssignmentToEntity(db.GetUserRolesRow{
+		Role:       "admin",
+		AssignedBy: pgtype.UUID{Valid: false},
 	})
 
-	if role.Description != "" {
-		t.Errorf("expected empty description, got %q", role.Description)
+	if a.Role != entity.RoleAdmin {
+		t.Errorf("expected role %q, got %q", entity.RoleAdmin, a.Role)
+	}
+	if a.AssignedBy != nil {
+		t.Errorf("AssignedBy should be nil for a system grant, got %v", *a.AssignedBy)
 	}
 }
 
-func TestDbRoleToEntity_WithDescription(t *testing.T) {
-	desc := "full access"
-	role := dbRoleToEntity(db.UsrRole{
-		Name:        "admin",
-		Description: &desc,
+func TestDbRoleAssignmentToEntity_WithAssignedBy(t *testing.T) {
+	admin := uuid.New()
+	a := dbRoleAssignmentToEntity(db.GetUserRolesRow{
+		Role:       "moderator",
+		AssignedBy: pgtype.UUID{Bytes: admin, Valid: true},
 	})
 
-	if role.Description != desc {
-		t.Errorf("expected %q, got %q", desc, role.Description)
+	if a.AssignedBy == nil {
+		t.Fatal("AssignedBy should not be nil")
+	}
+	if *a.AssignedBy != admin {
+		t.Errorf("AssignedBy mismatch: want %v got %v", admin, *a.AssignedBy)
 	}
 }
 
-func TestDbRoleToEntity_UpdatedAtNil(t *testing.T) {
-	role := dbRoleToEntity(db.UsrRole{Name: "viewer"})
-
-	if role.UpdatedAt != nil {
-		t.Errorf("UpdatedAt should be nil when DB field invalid")
-	}
-}
-
-func TestDbRoleToEntity_UpdatedAtSet(t *testing.T) {
+func TestDbRoleAssignmentToEntity_AssignedAt(t *testing.T) {
 	ts := time.Now().UTC().Truncate(time.Microsecond)
-	role := dbRoleToEntity(db.UsrRole{
-		Name:      "editor",
-		UpdatedAt: pgtype.Timestamp{Time: ts, Valid: true},
+	a := dbRoleAssignmentToEntity(db.GetUserRolesRow{
+		Role:       "admin",
+		AssignedAt: pgtype.Timestamp{Time: ts, Valid: true},
 	})
 
-	if role.UpdatedAt == nil {
-		t.Fatal("UpdatedAt should not be nil")
-	}
-	if !role.UpdatedAt.Equal(ts) {
-		t.Errorf("UpdatedAt mismatch: want %v got %v", ts, *role.UpdatedAt)
+	if !a.AssignedAt.Equal(ts) {
+		t.Errorf("AssignedAt mismatch: want %v got %v", ts, a.AssignedAt)
 	}
 }
 
 // --------------------------------------------------------------------------
-// UserHasAnyRole — branching logic
+// GetUserRoles
 // --------------------------------------------------------------------------
 
-func TestUserHasAnyRole_NoRolesExist(t *testing.T) {
-	// GetRoleByName always returns ErrNoRows — role names are unknown, should skip all.
+func TestGetUserRoles_MapsEveryRow(t *testing.T) {
 	q := &mockQuerier{
-		getRoleByName: func(_ context.Context, _ string) (db.UsrRole, error) {
-			return db.UsrRole{}, pgx.ErrNoRows
+		getUserRoles: func(_ context.Context, _ uuid.UUID) ([]db.GetUserRolesRow, error) {
+			return []db.GetUserRolesRow{
+				{Role: "admin"},
+				{Role: "moderator"},
+			}, nil
 		},
 	}
 
 	repo := &RoleRepository{queries: q}
-	ok, err := repo.UserHasAnyRole(context.Background(), uuid.New(), []string{"admin", "editor"})
+	got, err := repo.GetUserRoles(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 assignments, got %d", len(got))
+	}
+	if got[0].Role != entity.RoleAdmin || got[1].Role != entity.RoleModerator {
+		t.Errorf("unexpected roles: %q, %q", got[0].Role, got[1].Role)
+	}
+}
 
+func TestGetUserRoles_NoRolesReturnsEmptySlice(t *testing.T) {
+	q := &mockQuerier{
+		getUserRoles: func(_ context.Context, _ uuid.UUID) ([]db.GetUserRolesRow, error) {
+			return nil, nil
+		},
+	}
+
+	repo := &RoleRepository{queries: q}
+	got, err := repo.GetUserRoles(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Error("expected an empty slice, not nil — it is serialized straight to JSON")
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 assignments, got %d", len(got))
+	}
+}
+
+func TestGetUserRoles_DBError(t *testing.T) {
+	q := &mockQuerier{
+		getUserRoles: func(_ context.Context, _ uuid.UUID) ([]db.GetUserRolesRow, error) {
+			return nil, errors.New("connection refused")
+		},
+	}
+
+	repo := &RoleRepository{queries: q}
+	if _, err := repo.GetUserRoles(context.Background(), uuid.New()); err == nil {
+		t.Fatal("expected an error to propagate")
+	}
+}
+
+// --------------------------------------------------------------------------
+// UserHasAnyRole — this gates every admin request
+// --------------------------------------------------------------------------
+
+func TestUserHasAnyRole_EmptyRoleNamesSkipsQuery(t *testing.T) {
+	called := false
+	q := &mockQuerier{
+		checkUserHasAnyRole: func(_ context.Context, _ db.CheckUserHasAnyRoleParams) (bool, error) {
+			called = true
+			return true, nil
+		},
+	}
+
+	repo := &RoleRepository{queries: q}
+	ok, err := repo.UserHasAnyRole(context.Background(), uuid.New(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ok {
-		t.Errorf("expected false when no roles exist")
+		t.Error("no role names can never be satisfied")
+	}
+	if called {
+		t.Error("should not hit the DB when there is nothing to check")
 	}
 }
 
-func TestUserHasAnyRole_FirstRoleMatches(t *testing.T) {
-	roleID := uuid.New()
+func TestUserHasAnyRole_SingleQueryForAllNames(t *testing.T) {
 	userID := uuid.New()
+	calls := 0
+	var gotParams db.CheckUserHasAnyRoleParams
 
 	q := &mockQuerier{
-		getRoleByName: func(_ context.Context, name string) (db.UsrRole, error) {
-			return db.UsrRole{ID: roleID, Name: name}, nil
-		},
-		checkUserHasRole: func(_ context.Context, p db.CheckUserHasRoleParams) (bool, error) {
-			return p.UserID == userID && p.RoleID == roleID, nil
+		checkUserHasAnyRole: func(_ context.Context, arg db.CheckUserHasAnyRoleParams) (bool, error) {
+			calls++
+			gotParams = arg
+			return true, nil
 		},
 	}
 
 	repo := &RoleRepository{queries: q}
-	ok, err := repo.UserHasAnyRole(context.Background(), userID, []string{"admin"})
-
+	ok, err := repo.UserHasAnyRole(context.Background(), userID, []string{"admin", "moderator"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !ok {
-		t.Errorf("expected true when user has the role")
+		t.Error("expected true")
 	}
-}
-
-func TestUserHasAnyRole_SecondRoleMatchesAfterMiss(t *testing.T) {
-	adminID := uuid.New()
-	editorID := uuid.New()
-	userID := uuid.New()
-
-	q := &mockQuerier{
-		getRoleByName: func(_ context.Context, name string) (db.UsrRole, error) {
-			switch name {
-			case "admin":
-				return db.UsrRole{ID: adminID, Name: "admin"}, nil
-			case "editor":
-				return db.UsrRole{ID: editorID, Name: "editor"}, nil
-			}
-			return db.UsrRole{}, pgx.ErrNoRows
-		},
-		checkUserHasRole: func(_ context.Context, p db.CheckUserHasRoleParams) (bool, error) {
-			// user has editor but not admin
-			return p.RoleID == editorID, nil
-		},
+	if calls != 1 {
+		t.Errorf("expected exactly 1 query regardless of role count, got %d", calls)
 	}
-
-	repo := &RoleRepository{queries: q}
-	ok, err := repo.UserHasAnyRole(context.Background(), userID, []string{"admin", "editor"})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if gotParams.UserID != userID {
+		t.Errorf("user_id mismatch: want %v got %v", userID, gotParams.UserID)
 	}
-	if !ok {
-		t.Errorf("expected true when user has second role")
+	if len(gotParams.Roles) != 2 || gotParams.Roles[0] != "admin" || gotParams.Roles[1] != "moderator" {
+		t.Errorf("role names not passed through: %v", gotParams.Roles)
 	}
 }
 
 func TestUserHasAnyRole_UserHasNone(t *testing.T) {
-	roleID := uuid.New()
-
 	q := &mockQuerier{
-		getRoleByName: func(_ context.Context, name string) (db.UsrRole, error) {
-			return db.UsrRole{ID: roleID, Name: name}, nil
-		},
-		checkUserHasRole: func(_ context.Context, _ db.CheckUserHasRoleParams) (bool, error) {
+		checkUserHasAnyRole: func(_ context.Context, _ db.CheckUserHasAnyRoleParams) (bool, error) {
 			return false, nil
 		},
 	}
 
 	repo := &RoleRepository{queries: q}
-	ok, err := repo.UserHasAnyRole(context.Background(), uuid.New(), []string{"admin", "editor"})
-
+	ok, err := repo.UserHasAnyRole(context.Background(), uuid.New(), []string{"admin"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ok {
-		t.Errorf("expected false when user has no matching role")
+		t.Error("expected false")
 	}
 }
 
-func TestUserHasAnyRole_CheckUserHasRoleError(t *testing.T) {
-	roleID := uuid.New()
-	sentinel := errors.New("db error")
-
+// A DB failure must surface as an error so the middleware returns 500 and denies
+// the request. Reporting "false, nil" would make an outage indistinguishable from
+// a genuine permission denial — the old per-name loop swallowed exactly this.
+func TestUserHasAnyRole_DBErrorIsNotSwallowed(t *testing.T) {
 	q := &mockQuerier{
-		getRoleByName: func(_ context.Context, name string) (db.UsrRole, error) {
-			return db.UsrRole{ID: roleID, Name: name}, nil
-		},
-		checkUserHasRole: func(_ context.Context, _ db.CheckUserHasRoleParams) (bool, error) {
-			return false, sentinel
+		checkUserHasAnyRole: func(_ context.Context, _ db.CheckUserHasAnyRoleParams) (bool, error) {
+			return false, errors.New("connection refused")
 		},
 	}
 
 	repo := &RoleRepository{queries: q}
 	ok, err := repo.UserHasAnyRole(context.Background(), uuid.New(), []string{"admin"})
-
 	if err == nil {
-		t.Fatal("expected error from CheckUserHasRole, got nil")
+		t.Fatal("a DB failure must not be reported as a clean permission denial")
 	}
 	if ok {
-		t.Errorf("expected false on error")
+		t.Error("expected false alongside the error")
 	}
 }
 
-func TestUserHasAnyRole_EmptyRoleNames(t *testing.T) {
-	repo := &RoleRepository{queries: &mockQuerier{}}
-	ok, err := repo.UserHasAnyRole(context.Background(), uuid.New(), []string{})
+// --------------------------------------------------------------------------
+// AssignRole / RemoveRole
+// --------------------------------------------------------------------------
 
-	if err != nil {
+func TestAssignRole_SystemGrantHasNullAssignedBy(t *testing.T) {
+	var got db.AssignRoleToUserParams
+	q := &mockQuerier{
+		assignRoleToUser: func(_ context.Context, arg db.AssignRoleToUserParams) error {
+			got = arg
+			return nil
+		},
+	}
+
+	repo := &RoleRepository{queries: q}
+	if err := repo.AssignRole(context.Background(), uuid.New(), entity.RoleAdmin, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ok {
-		t.Errorf("expected false for empty role list")
+	if got.Role != "admin" {
+		t.Errorf("expected role %q, got %q", "admin", got.Role)
+	}
+	if got.AssignedBy.Valid {
+		t.Error("AssignedBy must be NULL when the system grants the role")
+	}
+}
+
+func TestAssignRole_RecordsAssigningAdmin(t *testing.T) {
+	admin := uuid.New()
+	var got db.AssignRoleToUserParams
+	q := &mockQuerier{
+		assignRoleToUser: func(_ context.Context, arg db.AssignRoleToUserParams) error {
+			got = arg
+			return nil
+		},
+	}
+
+	repo := &RoleRepository{queries: q}
+	if err := repo.AssignRole(context.Background(), uuid.New(), entity.RoleModerator, &admin); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got.AssignedBy.Valid {
+		t.Fatal("AssignedBy should be set")
+	}
+	if uuid.UUID(got.AssignedBy.Bytes) != admin {
+		t.Errorf("AssignedBy mismatch: want %v got %v", admin, uuid.UUID(got.AssignedBy.Bytes))
+	}
+	if got.Role != "moderator" {
+		t.Errorf("expected role %q, got %q", "moderator", got.Role)
+	}
+}
+
+func TestAssignRole_DBError(t *testing.T) {
+	q := &mockQuerier{
+		assignRoleToUser: func(_ context.Context, _ db.AssignRoleToUserParams) error {
+			return errors.New("check constraint violated")
+		},
+	}
+
+	repo := &RoleRepository{queries: q}
+	if err := repo.AssignRole(context.Background(), uuid.New(), entity.RoleAdmin, nil); err == nil {
+		t.Fatal("expected an error to propagate")
+	}
+}
+
+func TestRemoveRole_PassesRoleName(t *testing.T) {
+	userID := uuid.New()
+	var got db.RemoveRoleFromUserParams
+	q := &mockQuerier{
+		removeRoleFromUser: func(_ context.Context, arg db.RemoveRoleFromUserParams) error {
+			got = arg
+			return nil
+		},
+	}
+
+	repo := &RoleRepository{queries: q}
+	if err := repo.RemoveRole(context.Background(), userID, entity.RoleAdmin); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.UserID != userID || got.Role != "admin" {
+		t.Errorf("unexpected params: %+v", got)
+	}
+}
+
+func TestRemoveRole_DBError(t *testing.T) {
+	q := &mockQuerier{
+		removeRoleFromUser: func(_ context.Context, _ db.RemoveRoleFromUserParams) error {
+			return errors.New("connection refused")
+		},
+	}
+
+	repo := &RoleRepository{queries: q}
+	if err := repo.RemoveRole(context.Background(), uuid.New(), entity.RoleAdmin); err == nil {
+		t.Fatal("expected an error to propagate")
 	}
 }

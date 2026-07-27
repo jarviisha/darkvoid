@@ -87,7 +87,7 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	userID, err := parseUUID(r, "id")
+	userID, err := parseUserID(r)
 	if err != nil {
 		errors.WriteJSON(w, err)
 		return
@@ -128,7 +128,7 @@ func (h *AdminHandler) SetUserStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetID, err := parseUUID(r, "id")
+	targetID, err := parseUserID(r)
 	if err != nil {
 		errors.WriteJSON(w, err)
 		return
@@ -153,8 +153,8 @@ func (h *AdminHandler) SetUserStatus(w http.ResponseWriter, r *http.Request) {
 
 // ListRoles godoc
 //
-//	@Summary		List all roles
-//	@Description	Returns all roles defined in the system.
+//	@Summary		List assignable roles
+//	@Description	Returns the fixed set of roles that can be assigned to users. Roles are defined by the application, not created at runtime.
 //	@Tags			admin
 //	@Produce		json
 //	@Success		200	{object}	dto.ListRolesResponse
@@ -163,51 +163,8 @@ func (h *AdminHandler) SetUserStatus(w http.ResponseWriter, r *http.Request) {
 //	@ID				adminListRoles
 //	@Router			/admin/roles [get]
 //	@Security		BearerAuth
-func (h *AdminHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	resp, err := h.adminService.ListRoles(ctx)
-	if err != nil {
-		errors.WriteJSON(w, err)
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, resp)
-}
-
-// CreateRole godoc
-//
-//	@Summary		Create a role
-//	@Description	Creates a new role that can be assigned to users.
-//	@Tags			admin
-//	@Accept			json
-//	@Produce		json
-//	@Param			body	body		dto.CreateRoleRequest	true	"Role data"
-//	@Success		201		{object}	dto.RoleResponse
-//	@Failure		400		{object}	errors.ErrorResponse
-//	@Failure		401		{object}	errors.ErrorResponse
-//	@Failure		403		{object}	errors.ErrorResponse
-//	@Failure		409		{object}	errors.ErrorResponse
-//	@ID				adminCreateRole
-//	@Router			/admin/roles [post]
-//	@Security		BearerAuth
-func (h *AdminHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	var req dto.CreateRoleRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Warn(ctx, "admin: invalid create role request body", "error", err)
-		errors.WriteJSON(w, errors.NewBadRequestError("invalid request body"))
-		return
-	}
-
-	resp, err := h.adminService.CreateRole(ctx, &req)
-	if err != nil {
-		errors.WriteJSON(w, err)
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusCreated, resp)
+func (h *AdminHandler) ListRoles(w http.ResponseWriter, _ *http.Request) {
+	httputil.WriteJSON(w, http.StatusOK, h.adminService.ListRoles())
 }
 
 // GetUserRoles godoc
@@ -228,7 +185,7 @@ func (h *AdminHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) GetUserRoles(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	userID, err := parseUUID(r, "id")
+	userID, err := parseUserID(r)
 	if err != nil {
 		errors.WriteJSON(w, err)
 		return
@@ -253,11 +210,10 @@ func (h *AdminHandler) GetUserRoles(w http.ResponseWriter, r *http.Request) {
 //	@Param			id		path	string					true	"User UUID"
 //	@Param			body	body	dto.AssignRoleRequest	true	"Role to assign"
 //	@Success		204		"No Content"
-//	@Failure		400		{object}	errors.ErrorResponse
+//	@Failure		400		{object}	errors.ErrorResponse	"Unknown role name"
 //	@Failure		401		{object}	errors.ErrorResponse
 //	@Failure		403		{object}	errors.ErrorResponse
 //	@Failure		404		{object}	errors.ErrorResponse
-//	@Failure		409		{object}	errors.ErrorResponse	"User already has this role"
 //	@ID				adminAssignRole
 //	@Router			/admin/users/{id}/roles [post]
 //	@Security		BearerAuth
@@ -270,7 +226,7 @@ func (h *AdminHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := parseUUID(r, "id")
+	userID, err := parseUserID(r)
 	if err != nil {
 		errors.WriteJSON(w, err)
 		return
@@ -283,13 +239,7 @@ func (h *AdminHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roleID, err := uuid.Parse(req.RoleID)
-	if err != nil {
-		errors.WriteJSON(w, errors.NewBadRequestError("invalid role_id"))
-		return
-	}
-
-	if err := h.adminService.AssignRole(ctx, userID, roleID, *adminID); err != nil {
+	if err := h.adminService.AssignRole(ctx, userID, req.Role, *adminID); err != nil {
 		errors.WriteJSON(w, err)
 		return
 	}
@@ -304,13 +254,13 @@ func (h *AdminHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 //	@Tags			admin
 //	@Produce		json
 //	@Param			id		path	string	true	"User UUID"
-//	@Param			roleId	path	string	true	"Role UUID"
+//	@Param			role	path	string	true	"Role name"	Enums(admin, moderator)
 //	@Success		204		"No Content"
-//	@Failure		400		{object}	errors.ErrorResponse
+//	@Failure		400		{object}	errors.ErrorResponse	"Unknown role name"
 //	@Failure		401		{object}	errors.ErrorResponse
 //	@Failure		403		{object}	errors.ErrorResponse
 //	@ID				adminRemoveRole
-//	@Router			/admin/users/{id}/roles/{roleId} [delete]
+//	@Router			/admin/users/{id}/roles/{role} [delete]
 //	@Security		BearerAuth
 func (h *AdminHandler) RemoveRole(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -321,19 +271,13 @@ func (h *AdminHandler) RemoveRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := parseUUID(r, "id")
+	userID, err := parseUserID(r)
 	if err != nil {
 		errors.WriteJSON(w, err)
 		return
 	}
 
-	roleID, err := parseUUID(r, "roleId")
-	if err != nil {
-		errors.WriteJSON(w, err)
-		return
-	}
-
-	if err := h.adminService.RemoveRole(ctx, userID, roleID, *adminID); err != nil {
+	if err := h.adminService.RemoveRole(ctx, userID, chi.URLParam(r, "role"), *adminID); err != nil {
 		errors.WriteJSON(w, err)
 		return
 	}
@@ -396,7 +340,7 @@ func (h *AdminHandler) SendNotificationToUser(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	targetID, err := parseUUID(r, "id")
+	targetID, err := parseUserID(r)
 	if err != nil {
 		errors.WriteJSON(w, err)
 		return
@@ -459,11 +403,13 @@ func (h *AdminHandler) BroadcastNotification(w http.ResponseWriter, r *http.Requ
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-func parseUUID(r *http.Request, param string) (uuid.UUID, error) {
-	raw := chi.URLParam(r, param)
-	id, err := uuid.Parse(raw)
+// parseUserID reads the {id} path parameter every /admin route uses to address a
+// user. Roles are addressed by name, not UUID, so this is the only ID in the
+// admin surface.
+func parseUserID(r *http.Request) (uuid.UUID, error) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		return uuid.Nil, errors.NewBadRequestError("invalid " + param + " — must be a UUID")
+		return uuid.Nil, errors.NewBadRequestError("invalid id — must be a UUID")
 	}
 	return id, nil
 }

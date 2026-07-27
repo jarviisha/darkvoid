@@ -7,14 +7,15 @@ import (
 	appMiddleware "github.com/jarviisha/darkvoid/internal/app/middleware"
 	adminHandler "github.com/jarviisha/darkvoid/internal/feature/admin/handler"
 	adminService "github.com/jarviisha/darkvoid/internal/feature/admin/service"
+	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
 	"github.com/jarviisha/darkvoid/internal/feature/user/repository"
-	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/storage"
 )
 
 // adminRoleName is the role required by the /api/v1/admin routes and the admin
-// Swagger UI (see RequireRole wiring in admin_routes.go and app.go).
-const adminRoleName = "admin"
+// Swagger UI (see RequireRole wiring in admin_routes.go and app.go). The
+// RoleChecker middleware works in plain strings, so unwrap the entity constant.
+const adminRoleName = string(entity.RoleAdmin)
 
 // AdminContext holds all dependencies for the admin bounded context.
 type AdminContext struct {
@@ -52,20 +53,9 @@ func (ctx *AdminContext) WireNotificationEmitter(notif *NotificationContext) {
 	ctx.adminService.WithNotificationEmitter(notif.notifService)
 }
 
-// GrantAdminRole makes sure the admin role exists and is held by userID.
-// It is idempotent: the role is created only when the seed migration never ran,
-// and re-granting an existing assignment is a no-op.
+// GrantAdminRole grants the admin role to userID. It is idempotent — re-granting
+// an assignment the user already holds is a no-op — so it is safe to call on
+// every boot. AssignedBy is nil to mark the grant as made by the system itself.
 func (ctx *AdminContext) GrantAdminRole(c context.Context, userID uuid.UUID) error {
-	role, err := ctx.roleRepo.GetRoleByName(c, adminRoleName)
-	if err != nil {
-		if !errors.Is(err, errors.ErrNotFound) {
-			return err
-		}
-		desc := "Administrator"
-		role, err = ctx.roleRepo.CreateRole(c, adminRoleName, &desc)
-		if err != nil {
-			return err
-		}
-	}
-	return ctx.roleRepo.AssignRole(c, userID, role.ID, nil)
+	return ctx.roleRepo.AssignRole(c, userID, entity.RoleAdmin, nil)
 }

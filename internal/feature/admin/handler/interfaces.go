@@ -15,12 +15,12 @@ type adminService interface {
 	GetUser(ctx context.Context, userID uuid.UUID) (*dto.AdminUserResponse, error)
 	SetUserActive(ctx context.Context, targetUserID uuid.UUID, isActive bool, adminID uuid.UUID) error
 
-	// Role management
-	ListRoles(ctx context.Context) (*dto.ListRolesResponse, error)
-	CreateRole(ctx context.Context, req *dto.CreateRoleRequest) (*dto.RoleResponse, error)
+	// Role management. Roles are addressed by name — the assignable set is fixed
+	// by the application, so there is no create-role operation.
+	ListRoles() *dto.ListRolesResponse
 	GetUserRoles(ctx context.Context, userID uuid.UUID) (*dto.UserRolesResponse, error)
-	AssignRole(ctx context.Context, userID, roleID uuid.UUID, adminID uuid.UUID) error
-	RemoveRole(ctx context.Context, userID, roleID uuid.UUID, adminID uuid.UUID) error
+	AssignRole(ctx context.Context, userID uuid.UUID, role string, adminID uuid.UUID) error
+	RemoveRole(ctx context.Context, userID uuid.UUID, role string, adminID uuid.UUID) error
 
 	// Notifications
 	SendNotificationToUser(ctx context.Context, adminID, targetUserID uuid.UUID, req *dto.AdminSendNotificationRequest) error

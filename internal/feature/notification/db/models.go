@@ -48,14 +48,6 @@ type UsrRefreshToken struct {
 	IsRevoked bool             `json:"is_revoked"`
 }
 
-type UsrRole struct {
-	ID          uuid.UUID        `json:"id"`
-	Name        string           `json:"name"`
-	Description *string          `json:"description"`
-	CreatedAt   pgtype.Timestamp `json:"created_at"`
-	UpdatedAt   pgtype.Timestamp `json:"updated_at"`
-}
-
 type UsrUser struct {
 	ID             uuid.UUID        `json:"id"`
 	Username       string           `json:"username"`
@@ -78,7 +70,7 @@ type UsrUser struct {
 
 type UsrUserRole struct {
 	UserID     uuid.UUID        `json:"user_id"`
-	RoleID     uuid.UUID        `json:"role_id"`
 	AssignedAt pgtype.Timestamp `json:"assigned_at"`
 	AssignedBy pgtype.UUID      `json:"assigned_by"`
+	Role       string           `json:"role"`
 }

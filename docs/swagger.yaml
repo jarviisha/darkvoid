@@ -99,8 +99,8 @@ definitions:
     type: object
   dto.AssignRoleRequest:
     properties:
-      role_id:
-        example: 550e8400-e29b-41d4-a716-446655440000
+      role:
+        example: moderator
         type: string
     type: object
   dto.AuthorResponse:
@@ -222,15 +222,6 @@ definitions:
         type: array
       visibility:
         example: public
-        type: string
-    type: object
-  dto.CreateRoleRequest:
-    properties:
-      description:
-        example: Can moderate content
-        type: string
-      name:
-        example: moderator
         type: string
     type: object
   dto.FollowListResponse:
@@ -517,20 +508,11 @@ definitions:
     type: object
   dto.RoleResponse:
     properties:
-      created_at:
-        example: "2024-01-15T10:30:00Z"
-        type: string
       description:
-        example: Can moderate content
-        type: string
-      id:
-        example: 550e8400-e29b-41d4-a716-446655440000
+        example: Reserved for content moderation
         type: string
       name:
         example: moderator
-        type: string
-      updated_at:
-        example: "2024-02-01T08:00:00Z"
         type: string
     type: object
   dto.SearchResponse:
@@ -671,11 +653,26 @@ definitions:
       username:
         type: string
     type: object
+  dto.UserRoleResponse:
+    properties:
+      assigned_at:
+        example: "2024-01-15T10:30:00Z"
+        type: string
+      assigned_by:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      description:
+        example: Reserved for content moderation
+        type: string
+      role:
+        example: moderator
+        type: string
+    type: object
   dto.UserRolesResponse:
     properties:
       roles:
         items:
-          $ref: '#/definitions/dto.RoleResponse'
+          $ref: '#/definitions/dto.UserRoleResponse'
         type: array
       user_id:
         example: 550e8400-e29b-41d4-a716-446655440000
@@ -937,7 +934,8 @@ paths:
       - admin
   /admin/roles:
     get:
-      description: Returns all roles defined in the system.
+      description: Returns the fixed set of roles that can be assigned to users. Roles
+        are defined by the application, not created at runtime.
       operationId: adminListRoles
       produces:
       - application/json
@@ -956,47 +954,7 @@ paths:
             $ref: '#/definitions/errors.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: List all roles
-      tags:
-      - admin
-    post:
-      consumes:
-      - application/json
-      description: Creates a new role that can be assigned to users.
-      operationId: adminCreateRole
-      parameters:
-      - description: Role data
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/dto.CreateRoleRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/dto.RoleResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/errors.ErrorResponse'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/errors.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Create a role
+      summary: List assignable roles
       tags:
       - admin
   /admin/stats:
@@ -1173,7 +1131,7 @@ paths:
         "204":
           description: No Content
         "400":
-          description: Bad Request
+          description: Unknown role name
           schema:
             $ref: '#/definitions/errors.ErrorResponse'
         "401":
@@ -1188,16 +1146,12 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/errors.ErrorResponse'
-        "409":
-          description: User already has this role
-          schema:
-            $ref: '#/definitions/errors.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Assign a role to a user
       tags:
       - admin
-  /admin/users/{id}/roles/{roleId}:
+  /admin/users/{id}/roles/{role}:
     delete:
       description: Revokes a role from the specified user.
       operationId: adminRemoveRole
@@ -1207,9 +1161,12 @@ paths:
         name: id
         required: true
         type: string
-      - description: Role UUID
+      - description: Role name
+        enum:
+        - admin
+        - moderator
         in: path
-        name: roleId
+        name: role
         required: true
         type: string
       produces:
@@ -1218,7 +1175,7 @@ paths:
         "204":
           description: No Content
         "400":
-          description: Bad Request
+          description: Unknown role name
           schema:
             $ref: '#/definitions/errors.ErrorResponse'
         "401":

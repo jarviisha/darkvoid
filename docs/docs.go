@@ -156,14 +156,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns all roles defined in the system.",
+                "description": "Returns the fixed set of roles that can be assigned to users. Roles are defined by the application, not created at runtime.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "admin"
                 ],
-                "summary": "List all roles",
+                "summary": "List assignable roles",
                 "operationId": "adminListRoles",
                 "responses": {
                     "200": {
@@ -180,68 +180,6 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/errors.ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Creates a new role that can be assigned to users.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "admin"
-                ],
-                "summary": "Create a role",
-                "operationId": "adminCreateRole",
-                "parameters": [
-                    {
-                        "description": "Role data",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/dto.CreateRoleRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/dto.RoleResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/errors.ErrorResponse"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/errors.ErrorResponse"
                         }
@@ -521,7 +459,7 @@ const docTemplate = `{
                         "description": "No Content"
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "Unknown role name",
                         "schema": {
                             "$ref": "#/definitions/errors.ErrorResponse"
                         }
@@ -543,17 +481,11 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/errors.ErrorResponse"
                         }
-                    },
-                    "409": {
-                        "description": "User already has this role",
-                        "schema": {
-                            "$ref": "#/definitions/errors.ErrorResponse"
-                        }
                     }
                 }
             }
         },
-        "/admin/users/{id}/roles/{roleId}": {
+        "/admin/users/{id}/roles/{role}": {
             "delete": {
                 "security": [
                     {
@@ -578,9 +510,13 @@ const docTemplate = `{
                         "required": true
                     },
                     {
+                        "enum": [
+                            "admin",
+                            "moderator"
+                        ],
                         "type": "string",
-                        "description": "Role UUID",
-                        "name": "roleId",
+                        "description": "Role name",
+                        "name": "role",
                         "in": "path",
                         "required": true
                     }
@@ -590,7 +526,7 @@ const docTemplate = `{
                         "description": "No Content"
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "Unknown role name",
                         "schema": {
                             "$ref": "#/definitions/errors.ErrorResponse"
                         }
@@ -3394,9 +3330,9 @@ const docTemplate = `{
         "dto.AssignRoleRequest": {
             "type": "object",
             "properties": {
-                "role_id": {
+                "role": {
                     "type": "string",
-                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                    "example": "moderator"
                 }
             }
         },
@@ -3576,19 +3512,6 @@ const docTemplate = `{
                 "visibility": {
                     "type": "string",
                     "example": "public"
-                }
-            }
-        },
-        "dto.CreateRoleRequest": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string",
-                    "example": "Can moderate content"
-                },
-                "name": {
-                    "type": "string",
-                    "example": "moderator"
                 }
             }
         },
@@ -4025,25 +3948,13 @@ const docTemplate = `{
         "dto.RoleResponse": {
             "type": "object",
             "properties": {
-                "created_at": {
-                    "type": "string",
-                    "example": "2024-01-15T10:30:00Z"
-                },
                 "description": {
                     "type": "string",
-                    "example": "Can moderate content"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                    "example": "Reserved for content moderation"
                 },
                 "name": {
                     "type": "string",
                     "example": "moderator"
-                },
-                "updated_at": {
-                    "type": "string",
-                    "example": "2024-02-01T08:00:00Z"
                 }
             }
         },
@@ -4249,13 +4160,34 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.UserRoleResponse": {
+            "type": "object",
+            "properties": {
+                "assigned_at": {
+                    "type": "string",
+                    "example": "2024-01-15T10:30:00Z"
+                },
+                "assigned_by": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Reserved for content moderation"
+                },
+                "role": {
+                    "type": "string",
+                    "example": "moderator"
+                }
+            }
+        },
         "dto.UserRolesResponse": {
             "type": "object",
             "properties": {
                 "roles": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/dto.RoleResponse"
+                        "$ref": "#/definitions/dto.UserRoleResponse"
                     }
                 },
                 "user_id": {

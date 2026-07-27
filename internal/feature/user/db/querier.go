@@ -15,16 +15,17 @@ type Querier interface {
 	// Admin Queries
 	AdminListUsers(ctx context.Context, arg AdminListUsersParams) ([]UsrUser, error)
 	AdminSetUserActive(ctx context.Context, arg AdminSetUserActiveParams) error
-	// User-Role Relationship Queries
+	// User-Role Assignment Queries
+	//
+	// Role names are stored inline on usr.user_roles and constrained by a CHECK;
+	// there is no roles lookup table to join against.
 	AssignRoleToUser(ctx context.Context, arg AssignRoleToUserParams) error
-	CheckUserHasRole(ctx context.Context, arg CheckUserHasRoleParams) (bool, error)
+	CheckUserHasAnyRole(ctx context.Context, arg CheckUserHasAnyRoleParams) (bool, error)
 	CountFollowers(ctx context.Context, followeeID uuid.UUID) (int64, error)
 	CountFollowing(ctx context.Context, followerID uuid.UUID) (int64, error)
 	CountSearchUsers(ctx context.Context, query *string) (int64, error)
 	CreateEmailToken(ctx context.Context, arg CreateEmailTokenParams) (UsrEmailToken, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (UsrRefreshToken, error)
-	// Role Queries
-	CreateRole(ctx context.Context, arg CreateRoleParams) (UsrRole, error)
 	// User Queries
 	CreateUser(ctx context.Context, arg CreateUserParams) (UsrUser, error)
 	DeactivateUser(ctx context.Context, arg DeactivateUserParams) error
@@ -41,19 +42,16 @@ type Querier interface {
 	GetFollowers(ctx context.Context, arg GetFollowersParams) ([]UsrFollow, error)
 	GetFollowing(ctx context.Context, arg GetFollowingParams) ([]UsrFollow, error)
 	GetRefreshTokenByToken(ctx context.Context, token string) (UsrRefreshToken, error)
-	GetRoleByID(ctx context.Context, id uuid.UUID) (UsrRole, error)
-	GetRoleByName(ctx context.Context, name string) (UsrRole, error)
 	GetUserByEmail(ctx context.Context, email string) (UsrUser, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (UsrUser, error)
 	GetUserByIDAny(ctx context.Context, id uuid.UUID) (UsrUser, error)
 	GetUserByUsername(ctx context.Context, username string) (UsrUser, error)
-	GetUserRoles(ctx context.Context, userID uuid.UUID) ([]UsrRole, error)
+	GetUserRoles(ctx context.Context, userID uuid.UUID) ([]GetUserRolesRow, error)
 	GetUsersByIDs(ctx context.Context, dollar_1 []uuid.UUID) ([]UsrUser, error)
 	GetUsersByIDsAny(ctx context.Context, dollar_1 []uuid.UUID) ([]UsrUser, error)
 	GetUsersByUsernames(ctx context.Context, dollar_1 []string) ([]UsrUser, error)
 	IsFollowing(ctx context.Context, arg IsFollowingParams) (bool, error)
 	ListAllActiveUserIDs(ctx context.Context) ([]uuid.UUID, error)
-	ListRoles(ctx context.Context) ([]UsrRole, error)
 	MarkEmailTokenUsed(ctx context.Context, id uuid.UUID) error
 	RemoveRoleFromUser(ctx context.Context, arg RemoveRoleFromUserParams) error
 	RevokeAllUserRefreshTokens(ctx context.Context, userID uuid.UUID) error

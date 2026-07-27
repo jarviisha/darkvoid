@@ -10,7 +10,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/term"
 
@@ -21,8 +20,6 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/config"
 	"github.com/jarviisha/darkvoid/pkg/database"
 )
-
-const adminRoleName = "admin"
 
 // passwordEnv lets automation pass a password without exposing it on the
 // command line (argv is world-readable via /proc and lands in shell history).
@@ -321,38 +318,20 @@ func cmdSetAdmin(args []string, grant bool) error {
 		return err
 	}
 
-	roleID, err := d.ensureAdminRole(ctx)
-	if err != nil {
-		return err
-	}
-
+	// Both operations are idempotent, so promoting an existing admin or demoting
+	// a plain user succeeds without a prior membership check.
 	if grant {
-		if err := d.roleRepo.AssignRole(ctx, u.ID, roleID, nil); err != nil {
+		if err := d.roleRepo.AssignRole(ctx, u.ID, entity.RoleAdmin, nil); err != nil {
 			return fmt.Errorf("assign admin role: %w", err)
 		}
 		fmt.Printf("granted admin to %s (%s)\n", u.Username, u.ID)
 		return nil
 	}
-	if err := d.roleRepo.RemoveRole(ctx, u.ID, roleID); err != nil {
+	if err := d.roleRepo.RemoveRole(ctx, u.ID, entity.RoleAdmin); err != nil {
 		return fmt.Errorf("remove admin role: %w", err)
 	}
 	fmt.Printf("revoked admin from %s (%s)\n", u.Username, u.ID)
 	return nil
-}
-
-// ensureAdminRole returns the admin role id, creating the role if the seed
-// migration never inserted it.
-func (d *deps) ensureAdminRole(ctx context.Context) (uuid.UUID, error) {
-	role, err := d.roleRepo.GetRoleByName(ctx, adminRoleName)
-	if err == nil {
-		return role.ID, nil
-	}
-	desc := "Administrator"
-	created, createErr := d.roleRepo.CreateRole(ctx, adminRoleName, &desc)
-	if createErr != nil {
-		return uuid.Nil, fmt.Errorf("resolve admin role (lookup: %v; create: %w)", err, createErr)
-	}
-	return created.ID, nil
 }
 
 func cmdDeactivate(args []string) error {

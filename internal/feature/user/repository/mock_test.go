@@ -15,13 +15,12 @@ type mockQuerier struct {
 	adminListUsers                 func(context.Context, db.AdminListUsersParams) ([]db.UsrUser, error)
 	adminSetUserActive             func(context.Context, db.AdminSetUserActiveParams) error
 	assignRoleToUser               func(context.Context, db.AssignRoleToUserParams) error
-	checkUserHasRole               func(context.Context, db.CheckUserHasRoleParams) (bool, error)
+	checkUserHasAnyRole            func(context.Context, db.CheckUserHasAnyRoleParams) (bool, error)
 	countFollowers                 func(context.Context, uuid.UUID) (int64, error)
 	countFollowing                 func(context.Context, uuid.UUID) (int64, error)
 	countSearchUsers               func(context.Context, *string) (int64, error)
 	createEmailToken               func(context.Context, db.CreateEmailTokenParams) (db.UsrEmailToken, error)
 	createRefreshToken             func(context.Context, db.CreateRefreshTokenParams) (db.UsrRefreshToken, error)
-	createRole                     func(context.Context, db.CreateRoleParams) (db.UsrRole, error)
 	createUser                     func(context.Context, db.CreateUserParams) (db.UsrUser, error)
 	deactivateUser                 func(context.Context, db.DeactivateUserParams) error
 	deleteEmailTokensByUserAndType func(context.Context, db.DeleteEmailTokensByUserAndTypeParams) error
@@ -36,19 +35,16 @@ type mockQuerier struct {
 	getFollowers                   func(context.Context, db.GetFollowersParams) ([]db.UsrFollow, error)
 	getFollowing                   func(context.Context, db.GetFollowingParams) ([]db.UsrFollow, error)
 	getRefreshTokenByToken         func(context.Context, string) (db.UsrRefreshToken, error)
-	getRoleByID                    func(context.Context, uuid.UUID) (db.UsrRole, error)
-	getRoleByName                  func(context.Context, string) (db.UsrRole, error)
 	getUserByEmail                 func(context.Context, string) (db.UsrUser, error)
 	getUserByID                    func(context.Context, uuid.UUID) (db.UsrUser, error)
 	getUserByIDAny                 func(context.Context, uuid.UUID) (db.UsrUser, error)
 	getUserByUsername              func(context.Context, string) (db.UsrUser, error)
-	getUserRoles                   func(context.Context, uuid.UUID) ([]db.UsrRole, error)
+	getUserRoles                   func(context.Context, uuid.UUID) ([]db.GetUserRolesRow, error)
 	getUsersByIDs                  func(context.Context, []uuid.UUID) ([]db.UsrUser, error)
 	getUsersByIDsAny               func(context.Context, []uuid.UUID) ([]db.UsrUser, error)
 	getUsersByUsernames            func(context.Context, []string) ([]db.UsrUser, error)
 	isFollowing                    func(context.Context, db.IsFollowingParams) (bool, error)
 	listAllActiveUserIDs           func(context.Context) ([]uuid.UUID, error)
-	listRoles                      func(context.Context) ([]db.UsrRole, error)
 	markEmailTokenUsed             func(context.Context, uuid.UUID) error
 	removeRoleFromUser             func(context.Context, db.RemoveRoleFromUserParams) error
 	revokeAllUserRefreshTokens     func(context.Context, uuid.UUID) error
@@ -89,9 +85,9 @@ func (m *mockQuerier) AssignRoleToUser(ctx context.Context, arg db.AssignRoleToU
 	return nil
 }
 
-func (m *mockQuerier) CheckUserHasRole(ctx context.Context, arg db.CheckUserHasRoleParams) (bool, error) {
-	if m.checkUserHasRole != nil {
-		return m.checkUserHasRole(ctx, arg)
+func (m *mockQuerier) CheckUserHasAnyRole(ctx context.Context, arg db.CheckUserHasAnyRoleParams) (bool, error) {
+	if m.checkUserHasAnyRole != nil {
+		return m.checkUserHasAnyRole(ctx, arg)
 	}
 	return false, nil
 }
@@ -129,13 +125,6 @@ func (m *mockQuerier) CreateRefreshToken(ctx context.Context, arg db.CreateRefre
 		return m.createRefreshToken(ctx, arg)
 	}
 	return db.UsrRefreshToken{}, nil
-}
-
-func (m *mockQuerier) CreateRole(ctx context.Context, arg db.CreateRoleParams) (db.UsrRole, error) {
-	if m.createRole != nil {
-		return m.createRole(ctx, arg)
-	}
-	return db.UsrRole{}, nil
 }
 
 func (m *mockQuerier) CreateUser(ctx context.Context, arg db.CreateUserParams) (db.UsrUser, error) {
@@ -236,20 +225,6 @@ func (m *mockQuerier) GetRefreshTokenByToken(ctx context.Context, token string) 
 	return db.UsrRefreshToken{}, nil
 }
 
-func (m *mockQuerier) GetRoleByID(ctx context.Context, id uuid.UUID) (db.UsrRole, error) {
-	if m.getRoleByID != nil {
-		return m.getRoleByID(ctx, id)
-	}
-	return db.UsrRole{}, nil
-}
-
-func (m *mockQuerier) GetRoleByName(ctx context.Context, name string) (db.UsrRole, error) {
-	if m.getRoleByName != nil {
-		return m.getRoleByName(ctx, name)
-	}
-	return db.UsrRole{}, nil
-}
-
 func (m *mockQuerier) GetUserByEmail(ctx context.Context, email string) (db.UsrUser, error) {
 	if m.getUserByEmail != nil {
 		return m.getUserByEmail(ctx, email)
@@ -278,7 +253,7 @@ func (m *mockQuerier) GetUserByUsername(ctx context.Context, username string) (d
 	return db.UsrUser{}, nil
 }
 
-func (m *mockQuerier) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]db.UsrRole, error) {
+func (m *mockQuerier) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]db.GetUserRolesRow, error) {
 	if m.getUserRoles != nil {
 		return m.getUserRoles(ctx, userID)
 	}
@@ -316,13 +291,6 @@ func (m *mockQuerier) IsFollowing(ctx context.Context, arg db.IsFollowingParams)
 func (m *mockQuerier) ListAllActiveUserIDs(ctx context.Context) ([]uuid.UUID, error) {
 	if m.listAllActiveUserIDs != nil {
 		return m.listAllActiveUserIDs(ctx)
-	}
-	return nil, nil
-}
-
-func (m *mockQuerier) ListRoles(ctx context.Context) ([]db.UsrRole, error) {
-	if m.listRoles != nil {
-		return m.listRoles(ctx)
 	}
 	return nil, nil
 }

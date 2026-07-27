@@ -58,7 +58,7 @@ func TruncateTables(ctx context.Context, pool *pgxpool.Pool, tables ...string) e
 // Usage in tests:
 //
 //	pool := database.SetupTestDB(t)
-//	defer database.TruncateTables(ctx, pool, "users", "roles", "user_roles")
+//	defer database.TruncateTables(ctx, pool, "users", "user_roles")
 func SeedTestData(ctx context.Context, pool *pgxpool.Pool, setupFunc func(context.Context, *pgxpool.Pool) error) error {
 	return setupFunc(ctx, pool)
 }

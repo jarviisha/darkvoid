@@ -6,7 +6,6 @@ sql:
     queries:
       - "internal/feature/user/sql/user_queries.sql"
       - "internal/feature/user/sql/refresh_token_queries.sql"
-      - "internal/feature/user/sql/role_queries.sql"
       - "internal/feature/user/sql/user_role_queries.sql"
       - "internal/feature/user/sql/follow_queries.sql"
       - "internal/feature/user/sql/email_token_queries.sql"

@@ -33,35 +33,38 @@ type AdminSetUserStatusRequest struct {
 
 // ─── Role Management ─────────────────────────────────────────────────────────
 
-// RoleResponse is the public representation of a role.
+// RoleResponse describes a role the system recognises. Roles are fixed by the
+// application, so a role has no ID or timestamps of its own — the name is the key.
 type RoleResponse struct {
-	ID          string  `json:"id"                   example:"550e8400-e29b-41d4-a716-446655440000"`
-	Name        string  `json:"name"                 example:"moderator"`
-	Description string  `json:"description"          example:"Can moderate content"`
-	CreatedAt   string  `json:"created_at"           example:"2024-01-15T10:30:00Z"`
-	UpdatedAt   *string `json:"updated_at,omitempty" example:"2024-02-01T08:00:00Z"`
+	Name        string `json:"name"        example:"moderator"`
+	Description string `json:"description" example:"Reserved for content moderation"`
 }
 
-// ListRolesResponse wraps a list of roles.
+// ListRolesResponse wraps the fixed set of assignable roles.
 type ListRolesResponse struct {
 	Data []RoleResponse `json:"data"`
 }
 
-// CreateRoleRequest defines the payload for creating a new role.
-type CreateRoleRequest struct {
-	Name        string  `json:"name"        example:"moderator"`
-	Description *string `json:"description" example:"Can moderate content"`
+// AssignRoleRequest defines the payload for assigning a role to a user.
+// Name must be one of the roles returned by GET /admin/roles.
+type AssignRoleRequest struct {
+	Role string `json:"role" example:"moderator"`
 }
 
-// AssignRoleRequest defines the payload for assigning a role to a user.
-type AssignRoleRequest struct {
-	RoleID string `json:"role_id" example:"550e8400-e29b-41d4-a716-446655440000"`
+// UserRoleResponse is a single role assignment, including who granted it.
+// AssignedBy is null for grants made by the system itself (root bootstrap on
+// boot, or darkvoidctl).
+type UserRoleResponse struct {
+	Role        string  `json:"role"                  example:"moderator"`
+	Description string  `json:"description"           example:"Reserved for content moderation"`
+	AssignedAt  string  `json:"assigned_at"           example:"2024-01-15T10:30:00Z"`
+	AssignedBy  *string `json:"assigned_by,omitempty" example:"550e8400-e29b-41d4-a716-446655440000"`
 }
 
 // UserRolesResponse wraps the roles held by a specific user.
 type UserRolesResponse struct {
-	UserID string         `json:"user_id" example:"550e8400-e29b-41d4-a716-446655440000"`
-	Roles  []RoleResponse `json:"roles"`
+	UserID string             `json:"user_id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Roles  []UserRoleResponse `json:"roles"`
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────

@@ -91,94 +91,82 @@ func (s *AdminService) SetUserActive(ctx context.Context, targetUserID uuid.UUID
 
 // ─── Role Management ─────────────────────────────────────────────────────────
 
-// ListRoles returns all roles in the system.
-func (s *AdminService) ListRoles(ctx context.Context) (*dto.ListRolesResponse, error) {
-	roles, err := s.roleStore.ListRoles(ctx)
-	if err != nil {
-		logger.LogError(ctx, err, "admin: failed to list roles")
-		return nil, errors.NewInternalError(err)
+// ListRoles returns the roles that can be assigned. The set is fixed at compile
+// time (entity.AllRoles) and mirrored by a CHECK constraint, so this never
+// touches the DB and cannot fail — it exists to document the valid values for
+// AssignRole.
+func (s *AdminService) ListRoles() *dto.ListRolesResponse {
+	data := make([]dto.RoleResponse, 0, len(entity.AllRoles))
+	for _, r := range entity.AllRoles {
+		data = append(data, dto.RoleResponse{
+			Name:        r.String(),
+			Description: r.Description(),
+		})
 	}
-	data := make([]dto.RoleResponse, 0, len(roles))
-	for _, r := range roles {
-		data = append(data, toRoleResponse(r))
-	}
-	return &dto.ListRolesResponse{Data: data}, nil
+	return &dto.ListRolesResponse{Data: data}
 }
 
-// CreateRole creates a new role.
-func (s *AdminService) CreateRole(ctx context.Context, req *dto.CreateRoleRequest) (*dto.RoleResponse, error) {
-	if req.Name == "" {
-		return nil, errors.NewBadRequestError("role name is required")
-	}
-
-	role, err := s.roleStore.CreateRole(ctx, req.Name, req.Description)
-	if err != nil {
-		if errors.Is(err, errors.ErrConflict) {
-			return nil, errors.NewConflictError("role already exists")
-		}
-		logger.LogError(ctx, err, "admin: failed to create role", "name", req.Name)
-		return nil, errors.NewInternalError(err)
-	}
-
-	logger.Info(ctx, "admin: role created", "role_id", role.ID, "name", role.Name)
-	resp := toRoleResponse(role)
-	return &resp, nil
-}
-
-// GetUserRoles returns the roles held by a user.
+// GetUserRoles returns the roles held by a user, each with its audit trail.
 func (s *AdminService) GetUserRoles(ctx context.Context, userID uuid.UUID) (*dto.UserRolesResponse, error) {
-	roles, err := s.roleStore.GetUserRoles(ctx, userID)
+	assignments, err := s.roleStore.GetUserRoles(ctx, userID)
 	if err != nil {
 		logger.LogError(ctx, err, "admin: failed to get user roles", "user_id", userID)
 		return nil, errors.NewInternalError(err)
 	}
-	data := make([]dto.RoleResponse, 0, len(roles))
-	for _, r := range roles {
-		data = append(data, toRoleResponse(r))
+	data := make([]dto.UserRoleResponse, 0, len(assignments))
+	for _, a := range assignments {
+		data = append(data, toUserRoleResponse(a))
 	}
 	return &dto.UserRolesResponse{UserID: userID.String(), Roles: data}, nil
 }
 
-// AssignRole grants a role to a user.
-func (s *AdminService) AssignRole(ctx context.Context, userID, roleID uuid.UUID, adminID uuid.UUID) error {
+// AssignRole grants a role to a user. Unknown role names are rejected here so
+// they surface as a 400 rather than an opaque CHECK-constraint violation.
+// Granting a role the user already holds is a no-op, not a conflict.
+func (s *AdminService) AssignRole(ctx context.Context, userID uuid.UUID, roleName string, adminID uuid.UUID) error {
+	role, ok := entity.ParseRole(roleName)
+	if !ok {
+		return errors.NewBadRequestError(fmt.Sprintf("unknown role %q", roleName))
+	}
 	if _, err := s.userStore.GetUserByID(ctx, userID); err != nil {
 		return err
 	}
-	if _, err := s.roleStore.GetRoleByID(ctx, roleID); err != nil {
-		return err
-	}
 
-	if err := s.roleStore.AssignRole(ctx, userID, roleID, &adminID); err != nil {
-		if errors.Is(err, errors.ErrConflict) {
-			return errors.NewConflictError("user already has this role")
-		}
+	if err := s.roleStore.AssignRole(ctx, userID, role, &adminID); err != nil {
 		logger.LogError(ctx, err, "admin: failed to assign role",
 			"user_id", userID,
-			"role_id", roleID,
+			"role", role,
 		)
 		return errors.NewInternalError(err)
 	}
 
 	logger.Info(ctx, "admin: role assigned",
 		"user_id", userID,
-		"role_id", roleID,
+		"role", role,
 		"admin_id", adminID,
 	)
 	return nil
 }
 
-// RemoveRole revokes a role from a user.
-func (s *AdminService) RemoveRole(ctx context.Context, userID, roleID uuid.UUID, adminID uuid.UUID) error {
-	if err := s.roleStore.RemoveRole(ctx, userID, roleID); err != nil {
+// RemoveRole revokes a role from a user. Revoking a role the user does not hold
+// is a no-op.
+func (s *AdminService) RemoveRole(ctx context.Context, userID uuid.UUID, roleName string, adminID uuid.UUID) error {
+	role, ok := entity.ParseRole(roleName)
+	if !ok {
+		return errors.NewBadRequestError(fmt.Sprintf("unknown role %q", roleName))
+	}
+
+	if err := s.roleStore.RemoveRole(ctx, userID, role); err != nil {
 		logger.LogError(ctx, err, "admin: failed to remove role",
 			"user_id", userID,
-			"role_id", roleID,
+			"role", role,
 		)
-		return fmt.Errorf("remove role %s from user %s: %w", roleID, userID, err)
+		return errors.NewInternalError(err)
 	}
+
 	logger.Info(ctx, "admin: role removed",
 		"user_id", userID,
-		"role_id", roleID,
+		"role", role,
 		"admin_id", adminID,
 	)
 	return nil
@@ -216,17 +204,12 @@ func (s *AdminService) GetStats(ctx context.Context) (*dto.AdminStatsResponse, e
 		return nil, errors.NewInternalError(err)
 	}
 
-	roles, err := s.roleStore.ListRoles(ctx)
-	if err != nil {
-		logger.LogError(ctx, err, "admin: failed to count roles")
-		return nil, errors.NewInternalError(err)
-	}
-
 	return &dto.AdminStatsResponse{
 		TotalUsers:    total,
 		ActiveUsers:   active,
 		InactiveUsers: inactive,
-		TotalRoles:    int64(len(roles)),
+		// Roles are a compile-time set, so this is a constant rather than a count.
+		TotalRoles: int64(len(entity.AllRoles)),
 	}, nil
 }
 
@@ -314,16 +297,15 @@ func toAdminUserResponse(u *entity.User, s storage.Storage) dto.AdminUserRespons
 	return resp
 }
 
-func toRoleResponse(r *entity.Role) dto.RoleResponse {
-	resp := dto.RoleResponse{
-		ID:          r.ID.String(),
-		Name:        r.Name,
-		Description: r.Description,
-		CreatedAt:   r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+func toUserRoleResponse(a *entity.RoleAssignment) dto.UserRoleResponse {
+	resp := dto.UserRoleResponse{
+		Role:        a.Role.String(),
+		Description: a.Role.Description(),
+		AssignedAt:  a.AssignedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
-	if r.UpdatedAt != nil {
-		t := r.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z")
-		resp.UpdatedAt = &t
+	if a.AssignedBy != nil {
+		id := a.AssignedBy.String()
+		resp.AssignedBy = &id
 	}
 	return resp
 }

@@ -16,67 +16,70 @@ const assignRoleToUser = `-- name: AssignRoleToUser :exec
 
 INSERT INTO usr.user_roles (
     user_id,
-    role_id,
+    role,
     assigned_by
 ) VALUES (
     $1, $2, $3
-) ON CONFLICT (user_id, role_id) DO NOTHING
+) ON CONFLICT (user_id, role) DO NOTHING
 `
 
 type AssignRoleToUserParams struct {
 	UserID     uuid.UUID   `json:"user_id"`
-	RoleID     uuid.UUID   `json:"role_id"`
+	Role       string      `json:"role"`
 	AssignedBy pgtype.UUID `json:"assigned_by"`
 }
 
-// User-Role Relationship Queries
+// User-Role Assignment Queries
+//
+// Role names are stored inline on usr.user_roles and constrained by a CHECK;
+// there is no roles lookup table to join against.
 func (q *Queries) AssignRoleToUser(ctx context.Context, arg AssignRoleToUserParams) error {
-	_, err := q.db.Exec(ctx, assignRoleToUser, arg.UserID, arg.RoleID, arg.AssignedBy)
+	_, err := q.db.Exec(ctx, assignRoleToUser, arg.UserID, arg.Role, arg.AssignedBy)
 	return err
 }
 
-const checkUserHasRole = `-- name: CheckUserHasRole :one
-SELECT EXISTS(
+const checkUserHasAnyRole = `-- name: CheckUserHasAnyRole :one
+SELECT EXISTS (
     SELECT 1 FROM usr.user_roles
-    WHERE user_id = $1 AND role_id = $2
+    WHERE user_id = $1 AND role = ANY($2::text[])
 )
 `
 
-type CheckUserHasRoleParams struct {
+type CheckUserHasAnyRoleParams struct {
 	UserID uuid.UUID `json:"user_id"`
-	RoleID uuid.UUID `json:"role_id"`
+	Roles  []string  `json:"roles"`
 }
 
-func (q *Queries) CheckUserHasRole(ctx context.Context, arg CheckUserHasRoleParams) (bool, error) {
-	row := q.db.QueryRow(ctx, checkUserHasRole, arg.UserID, arg.RoleID)
+func (q *Queries) CheckUserHasAnyRole(ctx context.Context, arg CheckUserHasAnyRoleParams) (bool, error) {
+	row := q.db.QueryRow(ctx, checkUserHasAnyRole, arg.UserID, arg.Roles)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
 }
 
 const getUserRoles = `-- name: GetUserRoles :many
-SELECT r.id, r.name, r.description, r.created_at, r.updated_at FROM usr.roles r
-INNER JOIN usr.user_roles ur ON r.id = ur.role_id
-WHERE ur.user_id = $1
-ORDER BY r.name
+SELECT role, assigned_at, assigned_by
+FROM usr.user_roles
+WHERE user_id = $1
+ORDER BY role
 `
 
-func (q *Queries) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]UsrRole, error) {
+type GetUserRolesRow struct {
+	Role       string           `json:"role"`
+	AssignedAt pgtype.Timestamp `json:"assigned_at"`
+	AssignedBy pgtype.UUID      `json:"assigned_by"`
+}
+
+func (q *Queries) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]GetUserRolesRow, error) {
 	rows, err := q.db.Query(ctx, getUserRoles, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []UsrRole{}
+	items := []GetUserRolesRow{}
 	for rows.Next() {
-		var i UsrRole
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Description,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
+		var i GetUserRolesRow
+		if err := rows.Scan(&i.Role, &i.AssignedAt, &i.AssignedBy); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -89,15 +92,15 @@ func (q *Queries) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]UsrRole
 
 const removeRoleFromUser = `-- name: RemoveRoleFromUser :exec
 DELETE FROM usr.user_roles
-WHERE user_id = $1 AND role_id = $2
+WHERE user_id = $1 AND role = $2
 `
 
 type RemoveRoleFromUserParams struct {
 	UserID uuid.UUID `json:"user_id"`
-	RoleID uuid.UUID `json:"role_id"`
+	Role   string    `json:"role"`
 }
 
 func (q *Queries) RemoveRoleFromUser(ctx context.Context, arg RemoveRoleFromUserParams) error {
-	_, err := q.db.Exec(ctx, removeRoleFromUser, arg.UserID, arg.RoleID)
+	_, err := q.db.Exec(ctx, removeRoleFromUser, arg.UserID, arg.Role)
 	return err
 }
