@@ -47,6 +47,7 @@ type Application struct {
 	Notification *NotificationContext
 	Search       *SearchContext
 	Admin        *AdminContext
+	Bot          *BotContext
 }
 
 // New creates and initializes a new Application
@@ -350,7 +351,10 @@ func (app *Application) registerRoutes() {
 			app.Feed.RegisterRoutes(r, auth)
 			app.Notification.RegisterRoutes(r, auth)
 			app.Search.RegisterRoutes(r, auth)
-			app.Admin.RegisterRoutes(r, auth)
+			// Admin mounts /admin/bots/* inside its own group; the bot agent plane
+			// is separate because it is guarded by the bot role, not admin.
+			app.Admin.RegisterRoutes(r, auth, app.Bot)
+			app.Bot.RegisterRoutes(r, auth, app.Admin.Ports().RoleChecker)
 		})
 	})
 }

@@ -114,6 +114,48 @@ definitions:
       username:
         type: string
     type: object
+  dto.BotResponse:
+    properties:
+      created_at:
+        example: "2026-07-27T08:00:00Z"
+        type: string
+      display_name:
+        example: Sky Vũ
+        type: string
+      enabled:
+        example: true
+        type: boolean
+      errors_last_24h:
+        example: 2
+        type: integer
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      last_error_at:
+        example: "2026-07-27T09:14:00Z"
+        type: string
+      last_success_at:
+        example: "2026-07-27T10:28:00Z"
+        type: string
+      run_requested_at:
+        example: "2026-07-27T10:30:00Z"
+        type: string
+      style:
+        example: giọng trẻ trung, hài hước
+        type: string
+      successes_last_24h:
+        example: 41
+        type: integer
+      updated_at:
+        example: "2026-07-27T10:30:00Z"
+        type: string
+      user_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      username:
+        example: bot_sky
+        type: string
+    type: object
   dto.ChangePasswordRequest:
     properties:
       new_password:
@@ -175,6 +217,42 @@ definitions:
       reply_count:
         type: integer
     type: object
+  dto.ConfigResponse:
+    properties:
+      accounts:
+        example: 3
+        type: integer
+      models:
+        example:
+        - gemini-2.5-flash
+        items:
+          type: string
+        type: array
+      paused:
+        example: false
+        type: boolean
+      post_interval_seconds:
+        example: 120
+        type: integer
+      updated_at:
+        example: "2026-07-27T10:30:00Z"
+        type: string
+      updated_by:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  dto.CreateBotRequest:
+    properties:
+      display_name:
+        example: Sky Vũ
+        type: string
+      style:
+        example: giọng trẻ trung, hài hước, hay dùng emoji
+        type: string
+      username:
+        example: bot_sky
+        type: string
+    type: object
   dto.CreateCommentRequest:
     properties:
       content:
@@ -224,6 +302,12 @@ definitions:
         example: public
         type: string
     type: object
+  dto.CreateTopicRequest:
+    properties:
+      content:
+        example: một món ăn đường phố Việt Nam đáng nhớ
+        type: string
+    type: object
   dto.FollowListResponse:
     properties:
       data:
@@ -266,11 +350,50 @@ definitions:
           type: string
         type: array
     type: object
+  dto.LinkIdentityRequest:
+    properties:
+      user_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  dto.ListBotsResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/dto.BotResponse'
+        type: array
+    type: object
   dto.ListRolesResponse:
     properties:
       data:
         items:
           $ref: '#/definitions/dto.RoleResponse'
+        type: array
+    type: object
+  dto.ListRunsResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/dto.RunResponse'
+        type: array
+      limit:
+        description: Max items per page
+        example: 20
+        type: integer
+      offset:
+        description: Number of items to skip
+        example: 0
+        type: integer
+      total:
+        description: Total number of records
+        example: 100
+        type: integer
+    type: object
+  dto.ListTopicsResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/dto.TopicResponse'
         type: array
     type: object
   dto.LoginRequest:
@@ -353,6 +476,52 @@ definitions:
         type: string
       type:
         type: string
+    type: object
+  dto.PlanBot:
+    properties:
+      display_name:
+        example: Sky Vũ
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      run_requested:
+        description: RunRequested asks for an immediate post, out of band from the
+          interval.
+        example: false
+        type: boolean
+      style:
+        example: giọng trẻ trung, hài hước
+        type: string
+      username:
+        example: bot_sky
+        type: string
+    type: object
+  dto.PlanResponse:
+    properties:
+      bots:
+        items:
+          $ref: '#/definitions/dto.PlanBot'
+        type: array
+      models:
+        example:
+        - gemini-2.5-flash
+        items:
+          type: string
+        type: array
+      paused:
+        description: Paused tells the bot to keep polling but publish nothing.
+        example: false
+        type: boolean
+      post_interval_seconds:
+        example: 120
+        type: integer
+      topics:
+        example:
+        - quán cà phê mới phát hiện ở góc phố quen
+        items:
+          type: string
+        type: array
     type: object
   dto.PostListResponse:
     properties:
@@ -491,6 +660,32 @@ definitions:
         example: 550e8400-e29b-41d4-a716-446655440000
         type: string
     type: object
+  dto.ReportRunRequest:
+    properties:
+      bot_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      error:
+        example: 'gemini: all models exhausted (429)'
+        type: string
+      honored_run_request:
+        description: |-
+          HonoredRunRequest tells the server this attempt was the one an operator asked
+          for, which is what clears the pending flag. The bot must not set it for an
+          ordinary interval post: clearing unconditionally would discard a request that
+          arrived after the bot last fetched its plan, so the post would never happen.
+        example: false
+        type: boolean
+      model_used:
+        example: gemini-2.5-flash
+        type: string
+      post_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      status:
+        example: success
+        type: string
+    type: object
   dto.ResendVerificationRequest:
     properties:
       email:
@@ -515,6 +710,33 @@ definitions:
         example: moderator
         type: string
     type: object
+  dto.RunResponse:
+    properties:
+      bot_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      created_at:
+        example: "2026-07-27T10:28:00Z"
+        type: string
+      error:
+        example: 'gemini: all models exhausted (429)'
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      model_used:
+        example: gemini-2.5-flash
+        type: string
+      post_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      post_preview:
+        example: Sáng nay cà phê ở góc phố quen…
+        type: string
+      status:
+        example: success
+        type: string
+    type: object
   dto.SearchResponse:
     properties:
       hashtags:
@@ -534,6 +756,27 @@ definitions:
           $ref: '#/definitions/dto.UserResult'
         type: array
     type: object
+  dto.SetTopicEnabledRequest:
+    properties:
+      enabled:
+        example: false
+        type: boolean
+    type: object
+  dto.TopicResponse:
+    properties:
+      content:
+        example: quán cà phê mới phát hiện ở góc phố quen
+        type: string
+      created_at:
+        example: "2026-07-27T08:00:00Z"
+        type: string
+      enabled:
+        example: true
+        type: boolean
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
   dto.TrendingHashtagListResponse:
     properties:
       data:
@@ -551,6 +794,36 @@ definitions:
   dto.UnreadCountResponse:
     properties:
       unread_count:
+        type: integer
+    type: object
+  dto.UpdateBotRequest:
+    properties:
+      display_name:
+        example: Sky Vũ
+        type: string
+      enabled:
+        example: false
+        type: boolean
+      style:
+        example: giọng trầm lắng, tản văn
+        type: string
+    type: object
+  dto.UpdateConfigRequest:
+    properties:
+      accounts:
+        example: 5
+        type: integer
+      models:
+        example:
+        - gemini-2.5-flash
+        items:
+          type: string
+        type: array
+      paused:
+        example: true
+        type: boolean
+      post_interval_seconds:
+        example: 120
         type: integer
     type: object
   dto.UpdatePostRequest:
@@ -851,6 +1124,521 @@ info:
   title: DarkVoid API
   version: "1.0"
 paths:
+  /admin/bots:
+    get:
+      description: Returns every content-bot persona with a summary of its recent
+        activity. The error text behind last_error_at is in the activity log, not
+        here.
+      operationId: adminListBots
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ListBotsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List bot personas
+      tags:
+      - admin
+      - bot
+    post:
+      consumes:
+      - application/json
+      description: Creates a persona. The bot registers the account on its next tick,
+        so the username must satisfy the user-service rule.
+      operationId: adminCreateBot
+      parameters:
+      - description: Persona
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateBotRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.BotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "409":
+          description: Username already taken by another persona
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Add a bot persona
+      tags:
+      - admin
+      - bot
+  /admin/bots/{id}:
+    delete:
+      description: Removes the persona and its activity log. The user account it posted
+        as is left alone, since its posts remain.
+      operationId: adminDeleteBot
+      parameters:
+      - description: Persona UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a bot persona
+      tags:
+      - admin
+      - bot
+    patch:
+      consumes:
+      - application/json
+      description: Partial update — an omitted field keeps its stored value. The username
+        cannot be changed, since it is the registered account the persona posts as.
+      operationId: adminUpdateBot
+      parameters:
+      - description: Persona UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateBotRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.BotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a bot persona
+      tags:
+      - admin
+      - bot
+  /admin/bots/{id}/run-now:
+    post:
+      description: Records a request for an immediate post. It takes effect when the
+        bot next fetches its plan, so a 200 means the request was recorded — not that
+        a post was made.
+      operationId: adminRequestBotRun
+      parameters:
+      - description: Persona UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.BotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Ask a persona to post now
+      tags:
+      - admin
+      - bot
+  /admin/bots/config:
+    get:
+      description: Returns the runtime configuration the bot reads on every tick.
+      operationId: adminGetBotConfig
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ConfigResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get bot configuration
+      tags:
+      - admin
+      - bot
+    put:
+      consumes:
+      - application/json
+      description: Partial update — an omitted field keeps its stored value, and an
+        empty models array counts as omitted. Takes effect on the bot's next tick,
+        without a restart.
+      operationId: adminUpdateBotConfig
+      parameters:
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ConfigResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update bot configuration
+      tags:
+      - admin
+      - bot
+  /admin/bots/pause:
+    post:
+      description: Global kill switch. Each persona's enabled flag is left alone,
+        so resuming restores exactly the previous selection.
+      operationId: adminPauseBot
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ConfigResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Pause the bot
+      tags:
+      - admin
+      - bot
+  /admin/bots/resume:
+    post:
+      description: Clears the global pause. The personas that were enabled before
+        resume posting.
+      operationId: adminResumeBot
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ConfigResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Resume the bot
+      tags:
+      - admin
+      - bot
+  /admin/bots/runs:
+    get:
+      description: Returns reported post attempts, newest first. Before this log existed
+        the record lived only in the bot host's journal.
+      operationId: adminListBotRuns
+      parameters:
+      - description: Max items per page (default 20)
+        in: query
+        name: limit
+        type: integer
+      - description: Number of items to skip
+        in: query
+        name: offset
+        type: integer
+      - description: Limit to one persona (omit for all)
+        in: query
+        name: bot_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ListRunsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Read the bot activity log
+      tags:
+      - admin
+      - bot
+  /admin/bots/topics:
+    get:
+      description: Returns the whole subject pool, retired entries included, so they
+        can be restored.
+      operationId: adminListBotTopics
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ListTopicsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List bot topics
+      tags:
+      - admin
+      - bot
+    post:
+      consumes:
+      - application/json
+      description: Adds a subject to the pool. Duplicates are rejected, because a
+        repeated subject would skew the random draw toward it.
+      operationId: adminCreateBotTopic
+      parameters:
+      - description: Topic
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateTopicRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.TopicResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "409":
+          description: Topic already in the pool
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Add a bot topic
+      tags:
+      - admin
+      - bot
+  /admin/bots/topics/{id}:
+    delete:
+      description: Removes a subject outright. Prefer retiring it unless it should
+        disappear entirely.
+      operationId: adminDeleteBotTopic
+      parameters:
+      - description: Topic UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a bot topic
+      tags:
+      - admin
+      - bot
+    patch:
+      consumes:
+      - application/json
+      description: Keeps a subject out of the draw without deleting the row the activity
+        log refers to.
+      operationId: adminSetBotTopicEnabled
+      parameters:
+      - description: Topic UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Desired state
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SetTopicEnabledRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TopicResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Retire or restore a bot topic
+      tags:
+      - admin
+      - bot
   /admin/notifications/broadcast:
     post:
       consumes:
@@ -1622,6 +2410,128 @@ paths:
       summary: Verify email address
       tags:
       - auth
+  /bot/{id}/identity:
+    post:
+      consumes:
+      - application/json
+      description: Reported by the bot once it has registered or logged the persona's
+        account in, so the admin view can show which user it posts as. Requires the
+        bot role.
+      operationId: botLinkIdentity
+      parameters:
+      - description: Persona UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Account
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/dto.LinkIdentityRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Link a persona to its user account
+      tags:
+      - admin
+      - bot
+  /bot/plan:
+    get:
+      description: Polled by the bot process on every tick. Personas are already filtered
+        to the enabled ones and capped at the configured account count, so the bot
+        applies no selection rules of its own. Requires the bot role — an admin token
+        gets 403 here.
+      operationId: botGetPlan
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.PlanResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get the bot's desired state
+      tags:
+      - admin
+      - bot
+  /bot/runs:
+    post:
+      consumes:
+      - application/json
+      description: A success must carry post_id and no error; a failure must carry
+        error and no post_id. Set honored_run_request only for the attempt that answered
+        an operator's run-now, since that is what clears the pending flag. Requires
+        the bot role.
+      operationId: botReportRun
+      parameters:
+      - description: Attempt
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ReportRunRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "404":
+          description: Unknown persona
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Report a post attempt
+      tags:
+      - admin
+      - bot
   /discover:
     get:
       description: Get a cursor-paginated discovery feed of public posts. No authentication

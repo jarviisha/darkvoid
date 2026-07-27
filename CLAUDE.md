@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DarkVoid is a Go 1.26 social-network backend organized as a set of in-process **bounded contexts** (User, Storage, Post, Feed, Notification, Search, Admin). A single HTTP binary (`cmd/api`) wires everything together; a separate `cmd/seed` handles seed data. Swagger spec serves two filtered UIs from one `docs/swagger.json`: `/swagger/app/` (public API) and `/swagger/admin/` (admin tag, auth-protected).
+DarkVoid is a Go 1.26 social-network backend organized as a set of in-process **bounded contexts** (User, Storage, Post, Feed, Notification, Search, Admin, Bot). A single HTTP binary (`cmd/api`) wires everything together; a separate `cmd/seed` handles seed data. Swagger spec serves two filtered UIs from one `docs/swagger.json`: `/swagger/app/` (public API) and `/swagger/admin/` (admin tag, auth-protected).
 
 ## Common Commands
 
@@ -52,6 +52,10 @@ Because contexts can't depend on each other at construction time, cross-context 
 ### Routing Groups
 
 `app.registerRoutes` splits `/api/v1` into two sibling groups: **Group A** has no request timeout (SSE notifications must keep a plain `http.Flusher`-compatible ResponseWriter), **Group B** applies `RequestTimeout` to all REST endpoints. chi captures the middleware stack at group-creation time, so this split is load-bearing — don't collapse them.
+
+The same property makes route *nesting* load-bearing for authorization. `BotContext.registerAdminRoutes` is called from inside `AdminContext.RegisterRoutes`' `/admin` group so `/admin/bots/*` inherits its `auth.Required` + `RequireRole(admin)`. Declaring `/admin/bots` as a sibling of `/admin` is not equivalent: chi accepts it and resolves the paths correctly, but the subrouter inherits none of the parent group's middleware, leaving that surface unauthenticated. Both behaviours are pinned in `internal/app/bot_routes_test.go` — when adding a route group under an existing guarded prefix, nest it.
+
+`/api/v1/bot` is a separate group guarded by `RequireRole(bot)` instead: an admin token is rejected there and a bot token is rejected on `/admin`.
 
 ### Code Generation
 
