@@ -20,7 +20,7 @@ INSERT INTO usr.user_roles (
     assigned_by
 ) VALUES (
     $1, $2, $3
-)
+) ON CONFLICT (user_id, role_id) DO NOTHING
 `
 
 type AssignRoleToUserParams struct {

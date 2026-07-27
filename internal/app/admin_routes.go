@@ -9,7 +9,7 @@ import (
 func (ctx *AdminContext) RegisterRoutes(r chi.Router, auth appMiddleware.AuthMiddleware) {
 	r.Route("/admin", func(r chi.Router) {
 		r.Use(auth.Required)
-		r.Use(appMiddleware.RequireRole(ctx.adminService, "admin"))
+		r.Use(appMiddleware.RequireRole(ctx.adminService, adminRoleName))
 		r.Get("/stats", ctx.adminHandler.GetStats)
 		r.Get("/users", ctx.adminHandler.ListUsers)
 		r.Get("/users/{id}", ctx.adminHandler.GetUser)

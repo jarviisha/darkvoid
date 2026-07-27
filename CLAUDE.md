@@ -83,7 +83,7 @@ All config is loaded from `.env` via `pkg/config`. Update `.env.example` wheneve
 
 - `REDIS_ENABLED` — when false, feed cache becomes no-op (feature still works).
 - `CODOHUE_ENABLED` — when false, feed uses local scoring only; CF recommender is off.
-- `ROOT_EMAIL` + `ROOT_PASSWORD` — auto-bootstraps a root user on first boot if no users exist (`bootstrapRootUser` in `app.go`). No-op otherwise.
+- `ROOT_EMAIL` + `ROOT_PASSWORD` — auto-bootstraps a root user on first boot if `ROOT_USERNAME` is not taken, then grants it the `admin` role on **every** boot so the admin API/Swagger stays reachable (`bootstrapRootUser` in `app.go` → `AdminContext.GrantAdminRole`). No-op when either var is empty.
 - `STORAGE_PROVIDER` — `local` (default, serves `/static/*` from `STORAGE_LOCAL_DIR`) or `s3` (S3/MinIO/GCS).
 - `MAILER_PROVIDER` — `nop` (logs only) or `smtp`.
 

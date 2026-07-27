@@ -237,7 +237,7 @@ func TestBootstrapRootUser_CreatesWhenEmpty(t *testing.T) {
 	}
 	svc := newUserService(repo)
 
-	ok, err := svc.BootstrapRootUser(context.Background(), "root@example.com", "RootPass123", "root", "Root User")
+	root, ok, err := svc.BootstrapRootUser(context.Background(), "root@example.com", "RootPass123", "root", "Root User")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -247,23 +247,57 @@ func TestBootstrapRootUser_CreatesWhenEmpty(t *testing.T) {
 	if !created {
 		t.Error("expected CreateUser to be called")
 	}
+	if root == nil {
+		t.Fatal("expected the created root user to be returned")
+	}
 }
 
-func TestBootstrapRootUser_SkipsWhenUsersExist(t *testing.T) {
+func TestBootstrapRootUser_ReturnsExistingUser(t *testing.T) {
+	id := uuid.New()
 	repo := &mockUserRepo{
 		existsUsername: func(_ context.Context, _ string) (bool, error) {
 			return true, nil
 		},
+		getUserByUsername: func(_ context.Context, _ string) (*entity.User, error) {
+			return activeUser(id), nil
+		},
+		createUser: func(_ context.Context, _ *entity.User) (*entity.User, error) {
+			t.Error("CreateUser must not be called when the root user exists")
+			return nil, fmt.Errorf("unexpected call")
+		},
 	}
 	svc := newUserService(repo)
 
-	ok, err := svc.BootstrapRootUser(context.Background(), "root@example.com", "RootPass123", "root", "Root User")
+	root, ok, err := svc.BootstrapRootUser(context.Background(), "root@example.com", "RootPass123", "root", "Root User")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ok {
 		t.Error("expected bootstrap to return false (skip) when users exist")
 	}
+	if root == nil || root.ID != id {
+		t.Fatalf("expected existing root user %v to be returned, got %+v", id, root)
+	}
+}
+
+func TestBootstrapRootUser_ExistingLookupError(t *testing.T) {
+	repo := &mockUserRepo{
+		existsUsername: func(_ context.Context, _ string) (bool, error) {
+			return true, nil
+		},
+		getUserByUsername: func(_ context.Context, _ string) (*entity.User, error) {
+			return nil, fmt.Errorf("db down")
+		},
+	}
+
+	root, ok, err := newUserService(repo).BootstrapRootUser(context.Background(), "root@example.com", "RootPass123", "root", "Root")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if ok || root != nil {
+		t.Error("expected no user and ok=false on error")
+	}
+	assertServiceErrorCode(t, err, "INTERNAL_ERROR")
 }
 
 func TestBootstrapRootUser_ExistsUsernameError(t *testing.T) {
@@ -272,7 +306,7 @@ func TestBootstrapRootUser_ExistsUsernameError(t *testing.T) {
 			return false, fmt.Errorf("db down")
 		},
 	}
-	ok, err := newUserService(repo).BootstrapRootUser(context.Background(), "root@example.com", "RootPass123", "root", "Root")
+	_, ok, err := newUserService(repo).BootstrapRootUser(context.Background(), "root@example.com", "RootPass123", "root", "Root")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -288,7 +322,7 @@ func TestBootstrapRootUser_CreateError(t *testing.T) {
 			return nil, fmt.Errorf("insert failed")
 		},
 	}
-	ok, err := newUserService(repo).BootstrapRootUser(context.Background(), "root@example.com", "RootPass123", "root", "Root")
+	_, ok, err := newUserService(repo).BootstrapRootUser(context.Background(), "root@example.com", "RootPass123", "root", "Root")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

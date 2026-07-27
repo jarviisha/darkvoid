@@ -240,8 +240,9 @@ func (app *Application) setupJWT() error {
 	return nil
 }
 
-// bootstrapRootUser creates the initial root user from env vars if no users exist yet.
-// Skipped when ROOT_EMAIL or ROOT_PASSWORD is not set.
+// bootstrapRootUser creates the initial root user from env vars if it does not
+// exist yet, and makes sure it holds the admin role so the admin API is usable
+// out of the box. Skipped when ROOT_EMAIL or ROOT_PASSWORD is not set.
 func (app *Application) bootstrapRootUser(ctx context.Context) error {
 	cfg := app.cfg.Root
 	if cfg.Email == "" || cfg.Password == "" {
@@ -249,7 +250,7 @@ func (app *Application) bootstrapRootUser(ctx context.Context) error {
 		return nil
 	}
 
-	created, err := app.User.userService.BootstrapRootUser(
+	rootUser, created, err := app.User.userService.BootstrapRootUser(
 		ctx,
 		cfg.Email,
 		cfg.Password,
@@ -265,6 +266,14 @@ func (app *Application) bootstrapRootUser(ctx context.Context) error {
 			"username", cfg.Username,
 		)
 	}
+
+	// Reconcile on every boot: an operator may have revoked the role, or the
+	// root user may predate this grant.
+	if err := app.Admin.GrantAdminRole(ctx, rootUser.ID); err != nil {
+		return fmt.Errorf("failed to grant admin role to root user: %w", err)
+	}
+	app.log.Info("root user holds admin role", "user_id", rootUser.ID, "username", rootUser.Username)
+
 	return nil
 }
 
@@ -301,7 +310,7 @@ func (app *Application) registerRoutes() {
 
 	router.Group(func(r chi.Router) {
 		r.Use(auth.Required)
-		r.Use(middleware.RequireRole(app.Admin.Ports().RoleChecker, "admin"))
+		r.Use(middleware.RequireRole(app.Admin.Ports().RoleChecker, adminRoleName))
 		r.Get("/swagger/admin/*", httpSwagger.Handler(
 			httpSwagger.URL("/swagger/admin/doc.json"),
 			httpSwagger.InstanceName("admin"),

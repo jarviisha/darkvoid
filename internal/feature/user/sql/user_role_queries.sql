@@ -7,7 +7,7 @@ INSERT INTO usr.user_roles (
     assigned_by
 ) VALUES (
     $1, $2, $3
-);
+) ON CONFLICT (user_id, role_id) DO NOTHING;
 
 -- name: RemoveRoleFromUser :exec
 DELETE FROM usr.user_roles

@@ -248,19 +248,28 @@ func (s *UserService) AdminResetPassword(ctx context.Context, userID uuid.UUID, 
 	return nil
 }
 
-func (s *UserService) BootstrapRootUser(ctx context.Context, email, password, username, displayName string) (bool, error) {
+// BootstrapRootUser ensures the root account exists and returns it, along with
+// whether this call is the one that created it. When the account is already
+// present it is fetched instead of recreated, so callers can still reconcile
+// state that lives outside the user context (e.g. the admin role grant).
+func (s *UserService) BootstrapRootUser(ctx context.Context, email, password, username, displayName string) (*entity.User, bool, error) {
 	existsRootUser, err := s.userRepo.ExistsUsername(ctx, username)
 	if err != nil {
-		return false, errors.NewInternalError(err)
+		return nil, false, errors.NewInternalError(err)
 	}
 	if existsRootUser {
-		logger.Info(ctx, "bootstrap skipped: users already exist", "username", username)
-		return false, nil
+		existing, lookupErr := s.userRepo.GetUserByUsername(ctx, username)
+		if lookupErr != nil {
+			logger.LogError(ctx, lookupErr, "bootstrap: failed to load existing root user", "username", username)
+			return nil, false, errors.NewInternalError(lookupErr)
+		}
+		logger.Info(ctx, "bootstrap: root user already exists", "user_id", existing.ID, "username", username)
+		return existing, false, nil
 	}
 
 	hashedPassword, err := hashPassword(password)
 	if err != nil {
-		return false, errors.NewInternalError(err)
+		return nil, false, errors.NewInternalError(err)
 	}
 
 	created, err := s.userRepo.CreateUser(ctx, &entity.User{
@@ -272,11 +281,11 @@ func (s *UserService) BootstrapRootUser(ctx context.Context, email, password, us
 	})
 	if err != nil {
 		logger.LogError(ctx, err, "bootstrap: failed to create root user")
-		return false, errors.NewInternalError(err)
+		return nil, false, errors.NewInternalError(err)
 	}
 
 	logger.Info(ctx, "bootstrap: root user created", "user_id", created.ID, "username", created.Username)
-	return true, nil
+	return created, true, nil
 }
 
 // --- Social profile management ---
