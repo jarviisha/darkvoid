@@ -1,6 +1,10 @@
 package entity
 
-import "testing"
+import (
+	"slices"
+	"strings"
+	"testing"
+)
 
 func TestParseRole_KnownRoles(t *testing.T) {
 	for _, want := range AllRoles {
@@ -33,5 +37,13 @@ func TestAllRoles_MatchesKnownDescriptions(t *testing.T) {
 		if r.Description() == "" {
 			t.Errorf("role %q has no description", r)
 		}
+	}
+}
+
+// GET /admin/roles serves AllRoles in slice order, so the documented "ordered by
+// name" guarantee is what keeps that response stable as roles are added.
+func TestAllRoles_SortedByName(t *testing.T) {
+	if !slices.IsSortedFunc(AllRoles, func(a, b Role) int { return strings.Compare(a.String(), b.String()) }) {
+		t.Errorf("AllRoles = %v, want ordered by name", AllRoles)
 	}
 }
