@@ -49,7 +49,9 @@ func (r *BotRepository) GetBotByUsername(ctx context.Context, username string) (
 	return rowToBot(row), nil
 }
 
-// ListEnabledBots returns at most limit enabled personas, ordered by username.
+// ListEnabledBots returns at most limit enabled personas, those with a pending run
+// request first and the rest by username. The ordering is what guarantees an
+// operator's run-now reaches the plan even for a persona that sorts past the cap.
 func (r *BotRepository) ListEnabledBots(ctx context.Context, limit int32) ([]*entity.Bot, error) {
 	rows, err := r.queries.ListEnabledBots(ctx, limit)
 	if err != nil {

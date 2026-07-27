@@ -87,7 +87,7 @@ run: ## Run the application
 dev: ## Run in development mode with hot reload (requires air)
 	air
 
-bot: ## Run the Gemini content bot against a running API (usage: make bot BOT_ARGS="--interval=1m")
+bot: ## Run the Gemini content bot against a running API (usage: make bot BOT_ARGS="--max-posts=1")
 	$(GO) run ./cmd/bot $(BOT_ARGS)
 
 ctl: ## Run the operator CLI (usage: make ctl CTL_ARGS="user list")

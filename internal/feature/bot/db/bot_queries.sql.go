@@ -300,11 +300,19 @@ func (q *Queries) ListBots(ctx context.Context) ([]BotBot, error) {
 }
 
 const listEnabledBots = `-- name: ListEnabledBots :many
-SELECT id, username, display_name, style, enabled, user_id, run_requested_at, created_at, updated_at FROM bot.bots WHERE enabled ORDER BY username LIMIT $1
+SELECT id, username, display_name, style, enabled, user_id, run_requested_at, created_at, updated_at FROM bot.bots
+WHERE enabled
+ORDER BY (run_requested_at IS NULL), username
+LIMIT $1
 `
 
-// Serves GET /bot/plan. The limit is bot.config.accounts; ordering by username
+// Serves GET /bot/plan. The limit is bot.config.accounts, and ordering by username
 // keeps the selection stable so a config change is the only thing that moves it.
+//
+// Personas with a pending run request sort first, which is load-bearing rather than
+// cosmetic: an operator can ask any persona to post now, but the plan only carries
+// `accounts` of them. Without this, a request for a persona sorting past the cap
+// would sit in the table forever and run-now would silently do nothing.
 func (q *Queries) ListEnabledBots(ctx context.Context, limit int32) ([]BotBot, error) {
 	rows, err := q.db.Query(ctx, listEnabledBots, limit)
 	if err != nil {

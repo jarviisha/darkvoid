@@ -35,8 +35,13 @@ type Querier interface {
 	ListBotRunStats(ctx context.Context) ([]ListBotRunStatsRow, error)
 	// ─── Personas ────────────────────────────────────────────────────────────────
 	ListBots(ctx context.Context) ([]BotBot, error)
-	// Serves GET /bot/plan. The limit is bot.config.accounts; ordering by username
+	// Serves GET /bot/plan. The limit is bot.config.accounts, and ordering by username
 	// keeps the selection stable so a config change is the only thing that moves it.
+	//
+	// Personas with a pending run request sort first, which is load-bearing rather than
+	// cosmetic: an operator can ask any persona to post now, but the plan only carries
+	// `accounts` of them. Without this, a request for a persona sorting past the cap
+	// would sit in the table forever and run-now would silently do nothing.
 	ListEnabledBots(ctx context.Context, limit int32) ([]BotBot, error)
 	ListEnabledTopics(ctx context.Context) ([]BotTopic, error)
 	// A NULL bot_id means "every bot", so one query serves both the global log and a

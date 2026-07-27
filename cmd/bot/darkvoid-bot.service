@@ -26,12 +26,18 @@ Wants=network-online.target
 Type=simple
 
 # Secrets live in a root-only env file, never on the command line (arguments
-# are world-readable via /proc). Required keys: GEMINI_API_KEY and
-# BOT_PASSWORD (bot accounts are registered with it on first run).
+# are world-readable via /proc). Required keys:
+#   GEMINI_API_KEY        AI Studio key
+#   BOT_RUNNER_PASSWORD   the account holding the 'bot' role
+#   BOT_PASSWORD          shared by the persona accounts, registered on first run
 EnvironmentFile=/etc/darkvoid-bot.env
 Environment=BOT_API_BASE_URL=http://127.0.0.1:8080/api/v1
+Environment=BOT_RUNNER_USERNAME=bot_runner
 
-ExecStart=/usr/local/bin/darkvoid-bot --interval=2m --accounts=3
+# No --interval or --accounts: post interval, persona count, model chain, personas,
+# and topics come from GET /bot/plan and are edited in the admin panel, so changing
+# behaviour no longer means editing this unit and reloading systemd.
+ExecStart=/usr/local/bin/darkvoid-bot
 
 Restart=on-failure
 RestartSec=15s

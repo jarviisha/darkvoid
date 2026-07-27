@@ -9,10 +9,18 @@ SELECT * FROM bot.bots WHERE id = $1;
 -- name: GetBotByUsername :one
 SELECT * FROM bot.bots WHERE username = $1;
 
--- Serves GET /bot/plan. The limit is bot.config.accounts; ordering by username
+-- Serves GET /bot/plan. The limit is bot.config.accounts, and ordering by username
 -- keeps the selection stable so a config change is the only thing that moves it.
+--
+-- Personas with a pending run request sort first, which is load-bearing rather than
+-- cosmetic: an operator can ask any persona to post now, but the plan only carries
+-- `accounts` of them. Without this, a request for a persona sorting past the cap
+-- would sit in the table forever and run-now would silently do nothing.
 -- name: ListEnabledBots :many
-SELECT * FROM bot.bots WHERE enabled ORDER BY username LIMIT $1;
+SELECT * FROM bot.bots
+WHERE enabled
+ORDER BY (run_requested_at IS NULL), username
+LIMIT $1;
 
 -- COALESCE over nullable args makes this a partial update: an omitted field keeps
 -- its stored value rather than being cleared.

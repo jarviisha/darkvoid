@@ -13,6 +13,9 @@ type botStore interface {
 	ListBots(ctx context.Context) ([]*entity.Bot, error)
 	GetBot(ctx context.Context, id uuid.UUID) (*entity.Bot, error)
 	GetBotByUsername(ctx context.Context, username string) (*entity.Bot, error)
+	// ListEnabledBots returns at most limit enabled personas, those with a pending
+	// run request first — the plan carries only `accounts` personas, so a request for
+	// one sorting past the cap would otherwise never be seen.
 	ListEnabledBots(ctx context.Context, limit int32) ([]*entity.Bot, error)
 	CreateBot(ctx context.Context, username, displayName, style string) (*entity.Bot, error)
 	UpdateBot(ctx context.Context, id uuid.UUID, displayName, style *string, enabled *bool) (*entity.Bot, error)

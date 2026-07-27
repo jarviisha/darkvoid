@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,19 +67,32 @@ func (f *fakeStore) GetBotByUsername(_ context.Context, username string) (*entit
 	return nil, errors.ErrNotFound
 }
 
+// ListEnabledBots mirrors the query's ordering — pending run requests first, then by
+// username — because that ordering is what makes run-now reach the plan for a
+// persona sorting past the cap.
 func (f *fakeStore) ListEnabledBots(_ context.Context, limit int32) ([]*entity.Bot, error) {
 	f.gotEnabledLimit = limit
-	out := make([]*entity.Bot, 0, len(f.bots))
+
+	enabled := make([]*entity.Bot, 0, len(f.bots))
 	for _, b := range f.bots {
-		if !b.Enabled {
-			continue
+		if b.Enabled {
+			enabled = append(enabled, b)
 		}
-		if len(out) == int(limit) {
-			break
-		}
-		out = append(out, b)
 	}
-	return out, nil
+	slices.SortStableFunc(enabled, func(a, b *entity.Bot) int {
+		if a.RunRequested() != b.RunRequested() {
+			if a.RunRequested() {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.Username, b.Username)
+	})
+
+	if int(limit) < len(enabled) {
+		enabled = enabled[:limit]
+	}
+	return enabled, nil
 }
 
 func (f *fakeStore) CreateBot(_ context.Context, username, displayName, style string) (*entity.Bot, error) {
@@ -353,6 +368,35 @@ func TestGetPlan_SurfacesPendingRunRequest(t *testing.T) {
 	}
 	if plan.Bots[1].RunRequested {
 		t.Error("bot_b has no request pending")
+	}
+}
+
+// An operator can request a run for any persona, but the plan only carries
+// `accounts` of them. A persona sorting past the cap has to make it in anyway, or its
+// pending request sits in the table forever and run-now silently does nothing.
+func TestGetPlan_IncludesAPendingRequestBeyondTheAccountCap(t *testing.T) {
+	store := newTestStore()
+	store.config.Accounts = 3
+	store.topics = []*entity.Topic{topic("cà phê", true)}
+
+	requested := time.Now()
+	last := bot("bot_sky", true) // sorts fifth, outside a cap of three
+	last.RunRequestedAt = &requested
+	store.bots = []*entity.Bot{
+		bot("bot_codek", true), bot("bot_dulich", true), bot("bot_hafood", true),
+		bot("bot_mien", true), last,
+	}
+
+	plan, err := NewBotService(store).GetPlan(context.Background())
+	if err != nil {
+		t.Fatalf("GetPlan() error = %v", err)
+	}
+
+	if len(plan.Bots) != 3 {
+		t.Fatalf("plan has %d personas, want the cap of 3", len(plan.Bots))
+	}
+	if plan.Bots[0].Username != "bot_sky" || !plan.Bots[0].RunRequested {
+		t.Errorf("plan leads with %+v, want bot_sky carrying its pending request", plan.Bots[0])
 	}
 }
 
