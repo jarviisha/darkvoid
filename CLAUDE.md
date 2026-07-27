@@ -16,6 +16,8 @@ Always prefer the `Makefile` — it loads `.env` automatically and scopes migrat
 - `make lint` — `golangci-lint run` (config in `.golangci.yml`)
 - `make generate` — runs both `sqlc generate` and `swag` (fmt + init). Equivalent to `make sqlc-generate && make swagger-generate`.
 - `make docker-up` / `make docker-down` / `make docker-logs` — full stack (Postgres + Redis + app) via `docker-compose.yml`
+- `make bot` — run the content bot against a running API; `make docker-up-bot` / `docker-down-bot` / `docker-logs-bot` for the containerised form (opt-in `bot` compose profile, so a plain `docker compose up` never starts posting)
+- `make ctl CTL_ARGS="user roles"` — operator CLI; `user grant-role -username u -role r` is how the bot runner gets the `bot` role
 - `make install-tools` — installs `sqlc`, `swag`, `golangci-lint`, `air`, `migrate`
 
 ### Migrations
@@ -90,6 +92,18 @@ All config is loaded from `.env` via `pkg/config`. Update `.env.example` wheneve
 - `ROOT_EMAIL` + `ROOT_PASSWORD` — auto-bootstraps a root user on first boot if `ROOT_USERNAME` is not taken, then grants it the `admin` role on **every** boot so the admin API/Swagger stays reachable (`bootstrapRootUser` in `app.go` → `AdminContext.GrantAdminRole`). No-op when either var is empty.
 - `STORAGE_PROVIDER` — `local` (default, serves `/static/*` from `STORAGE_LOCAL_DIR`) or `s3` (S3/MinIO/GCS).
 - `MAILER_PROVIDER` — `nop` (logs only) or `smtp`.
+- `BOT_*` / `GEMINI_API_KEY` — read only by `cmd/bot`, never by the API. They cover credentials and an address and nothing else: interval, persona count, model chain, personas, and topics live in the `bot` schema and are edited through `/admin/bots`, so the bot re-reads them on every tick. `BOT_ACCOUNTS`, `BOT_POST_INTERVAL`, and `GEMINI_MODELS` are no longer read.
+
+### Bot control plane
+
+`cmd/bot` stays an external HTTP client — it dogfoods the public API rather than running in-process. It polls `GET /bot/plan` for its desired state and reports each attempt to `POST /bot/runs`, which is the only reason its activity is visible outside the bot host's journal.
+
+Two accounts, deliberately: the **runner** holds the `bot` role and is the only one allowed on `/bot/*`; the **personas** hold no role and only publish their own posts. The bot registers a persona on first use but never the runner — an auto-created runner would lack the role, and the 403 on every plan fetch would read as a server fault. Grant it with `make ctl CTL_ARGS="user grant-role -username bot_runner -role bot"`.
+
+Two gotchas worth knowing before changing this area:
+
+- `ListEnabledBots` sorts pending run requests ahead of username order. The plan carries only `accounts` personas, so without it a run-now for a persona sorting past the cap sets a flag nothing ever reads.
+- `ReportRun` clears that flag only when the bot sets `honored_run_request`. Clearing on every report drops a request that arrived after the bot's last plan fetch.
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,

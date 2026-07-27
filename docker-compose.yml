@@ -273,6 +273,34 @@ services:
       postgres:
         condition: service_healthy
 
+  # Content bot — opt-in, so a plain `docker compose up` never starts posting.
+  #   make docker-up-bot        (or: docker compose --profile bot up -d bot)
+  #   make docker-logs-bot
+  #
+  # BOT_API_BASE_URL must name the app service, not localhost: inside a container
+  # localhost is the container itself, so the default would make the bot dial
+  # nothing. Everything else it needs — interval, personas, topics, model chain —
+  # comes from /bot/plan, so this service needs no configuration beyond credentials.
+  #
+  # GEMINI_API_KEY and BOT_RUNNER_PASSWORD are read from .env rather than declared
+  # required here: `${VAR:?}` is interpolated for the whole file before profiles are
+  # filtered, so it would break every compose command for people not running the bot.
+  # The bot reports both missing variables itself on startup.
+  bot:
+    build: .
+    profiles: [bot]
+    restart: unless-stopped
+    entrypoint: ["/app/bot"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BOT_API_BASE_URL: http://app:8080/api/v1
+      BOT_RUNNER_USERNAME: ${BOT_RUNNER_USERNAME:-bot_runner}
+    depends_on:
+      app:
+        condition: service_healthy
+
   # ---------------------------------------------------------------------------
   # Codohue profile — start with: make docker-up-codohue
   # ---------------------------------------------------------------------------

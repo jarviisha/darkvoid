@@ -9,9 +9,15 @@
 //	darkvoidctl user reset-password -username root   # prompts for the password
 //	darkvoidctl user list [-q alice] [-limit 50] [-active-only]
 //	darkvoidctl user create -username bob -email bob@x.com -display-name Bob
-//	darkvoidctl user promote -username alice      # grant the admin role
-//	darkvoidctl user demote  -username alice      # revoke the admin role
+//	darkvoidctl user roles                                  # the assignable roles
+//	darkvoidctl user grant-role  -username alice -role admin
+//	darkvoidctl user revoke-role -username alice -role admin
 //	darkvoidctl user deactivate -username spammer
+//
+// grant-role/revoke-role replace the earlier admin-only promote/demote pair, which
+// could not reach the bot role that the content bot's runner account needs. An
+// unknown role name is rejected before it reaches the database, where it would fail
+// the CHECK constraint as an opaque error.
 //
 // Passwords are never accepted as flags (argv is world-readable via /proc and
 // persists in shell history). reset-password and create prompt interactively

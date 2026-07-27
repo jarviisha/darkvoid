@@ -1,16 +1,27 @@
 # systemd unit template for running the DarkVoid content bot on a VPS.
-# Mirrors codohue's geminipump deployment: the bot is not part of the compose
-# stack and is not published as an image — copy the static binary and this
-# unit to the host, then enable it.
+#
+# One of two ways to run it — pick one, not both. The other is the `bot` service in
+# docker-compose.prod.yml (opt-in behind `--profile bot`), which ships in the same
+# image as the app. This unit is worth the extra step when you want either of:
+#
+#   - secrets kept out of the stack's .env, in a root-only /etc/darkvoid-bot.env
+#   - the bot left running when the app image is replaced
 #
 #   CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o tmp/darkvoid-bot ./cmd/bot
 #   scp tmp/darkvoid-bot                VPS:/tmp/ && ssh VPS 'sudo install -m 755 /tmp/darkvoid-bot /usr/local/bin/'
 #   scp cmd/bot/darkvoid-bot.service    VPS:/tmp/ && ssh VPS 'sudo install -m 644 /tmp/darkvoid-bot.service /etc/systemd/system/'
 #   ssh VPS 'sudo install -m 600 /dev/stdin /etc/darkvoid-bot.env' <<'EOF'
 #   GEMINI_API_KEY=your-ai-studio-api-key
+#   BOT_RUNNER_PASSWORD=the-runner-account-password
 #   BOT_PASSWORD=a-strong-generated-password
 #   EOF
 #   ssh VPS 'sudo systemctl daemon-reload && sudo systemctl enable --now darkvoid-bot'
+#
+# The runner account must exist and hold the 'bot' role before the first start:
+#   docker compose -f docker-compose.prod.yml --profile tools run --rm ctl \
+#     user create -username bot_runner -email bot_runner@bot.local
+#   docker compose -f docker-compose.prod.yml --profile tools run --rm ctl \
+#     user grant-role -username bot_runner -role bot
 #
 # Logs: journalctl -u darkvoid-bot -f
 #
