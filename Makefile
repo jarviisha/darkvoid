@@ -6,7 +6,7 @@ SHELL := /bin/bash
 	build run dev bot ctl clean \
 	test test-v test-cover test-cover-html test-feature lint deps \
 	docker-up docker-up-app docker-up-codohue docker-seed docker-seed-reset docker-down docker-down-app docker-logs docker-logs-app \
-	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-down-notification migrate-create migrate-status migrate-force \
+	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-up-bot migrate-down-notification migrate-create migrate-status migrate-force \
 	db-reset install-tools
 
 # Load .env if it exists.
@@ -21,8 +21,11 @@ APP_BIN := $(BIN_DIR)/api
 COVERAGE_FILE := coverage.out
 MIGRATE := $(shell $(GO) env GOPATH)/bin/migrate
 
-MIGRATION_MODULES := user post notification
-SQLC_DB_DIRS := internal/feature/user/db internal/feature/post/db internal/feature/notification/db
+# migrate-up walks MIGRATION_MODULES forward and migrate-down walks the reversed
+# list, so the two must stay mirror images — adding a module means editing both.
+MIGRATION_MODULES          := user post notification bot
+MIGRATION_MODULES_REVERSED := bot notification post user
+SQLC_DB_DIRS := internal/feature/user/db internal/feature/post/db internal/feature/notification/db internal/feature/bot/db
 
 define require_var
 	@if [ -z "$($1)" ]; then \
@@ -147,13 +150,13 @@ docker-logs: ## View Docker container logs
 docker-logs-app: ## View app-only Docker container logs
 	$(DOCKER_COMPOSE) logs -f app-external
 
-migrate-up: ## Run all pending migrations (user, post, notification)
+migrate-up: ## Run all pending migrations (user, post, notification, bot)
 	$(call require_var,DATABASE_URL,make migrate-up DATABASE_URL=postgres://...)
 	$(call run_migrations,$(MIGRATION_MODULES),Running,up)
 
-migrate-down: ## Roll back the last migration for all modules (notification, post, user)
+migrate-down: ## Roll back the last migration for all modules (bot, notification, post, user)
 	$(call require_var,DATABASE_URL,make migrate-down DATABASE_URL=postgres://...)
-	$(call run_migrations,notification post user,Rolling back,down 1)
+	$(call run_migrations,$(MIGRATION_MODULES_REVERSED),Rolling back,down 1)
 
 migrate-up-user: ## Run pending migrations for user module only
 	$(call require_var,DATABASE_URL,make migrate-up-user DATABASE_URL=postgres://...)
@@ -166,6 +169,10 @@ migrate-up-post: ## Run pending migrations for post module only
 migrate-up-notification: ## Run pending migrations for notification module only
 	$(call require_var,DATABASE_URL,make migrate-up-notification DATABASE_URL=postgres://...)
 	$(call migrate_cmd,notification,up)
+
+migrate-up-bot: ## Run pending migrations for bot module only
+	$(call require_var,DATABASE_URL,make migrate-up-bot DATABASE_URL=postgres://...)
+	$(call migrate_cmd,bot,up)
 
 migrate-down-notification: ## Roll back the last migration for notification module
 	$(call require_var,DATABASE_URL,make migrate-down-notification DATABASE_URL=postgres://...)

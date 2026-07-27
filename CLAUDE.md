@@ -22,10 +22,10 @@ Always prefer the `Makefile` — it loads `.env` automatically and scopes migrat
 
 Migrations are **split per module** — each module uses its own `schema_migrations_<module>` table. `DATABASE_URL` must be set (via `.env` or on the command line).
 
-- `make migrate-up` — runs user → post → notification in order
-- `make migrate-up-user` / `make migrate-up-post` / `make migrate-up-notification`
-- `make migrate-down` — rolls back **one** step per module (reverse order)
-- `make migrate-create module=post name=add_xxx` — creates a new migration pair (module must be one of `user`, `post`, `notification`)
+- `make migrate-up` — runs user → post → notification → bot in order (`MIGRATION_MODULES`)
+- `make migrate-up-user` / `make migrate-up-post` / `make migrate-up-notification` / `make migrate-up-bot`
+- `make migrate-down` — rolls back **one** step per module, in `MIGRATION_MODULES_REVERSED` order. Adding a module means editing both lists.
+- `make migrate-create module=post name=add_xxx` — creates a new migration pair (module must be one of `user`, `post`, `notification`, `bot`)
 - `make migrate-status` — shows current version for each module
 - `make migrate-force module=user version=N` — recover from dirty state
 - `make db-reset` — destroys docker volumes (prompts for confirmation)
@@ -55,7 +55,7 @@ Because contexts can't depend on each other at construction time, cross-context 
 
 ### Code Generation
 
-- **sqlc** (`sqlc.yaml`): three separate generators (`user`, `post`, `notification`), each emitting to `internal/feature/<module>/db/`. Post and notification include the user schema in their `schema:` list because they reference user tables. **Do not hand-edit files under `internal/feature/*/db/`** — regenerate via `make sqlc-generate`. Exception: some cursor queries in `internal/feature/post/db/post_queries.sql.go` are hand-patched additions; check the `sql/` source before regenerating, or the edits will be lost.
+- **sqlc** (`sqlc.yaml`): four separate generators (`user`, `post`, `notification`, `bot`), each emitting to `internal/feature/<module>/db/`. Post and notification include the user schema in their `schema:` list because they reference user tables; bot does not, because it holds foreign ids as plain UUIDs and never joins across schemas. **Do not hand-edit files under `internal/feature/*/db/`** — regenerate via `make sqlc-generate`. Exception: some cursor queries in `internal/feature/post/db/post_queries.sql.go` are hand-patched additions; check the `sql/` source before regenerating, or the edits will be lost.
 - **swag** (`swag init -g cmd/api/main.go`): comments on handlers drive `docs/swagger.json`. The two Swagger UIs are produced by `swaggerFilterHandler` at serve-time based on the `admin` / `auth` tags — not two separate generations.
 
 ### Logging

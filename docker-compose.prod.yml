@@ -103,6 +103,23 @@ services:
       migrate-post:
         condition: service_completed_successfully
 
+  migrate-bot:
+    image: migrate/migrate:4
+    restart: on-failure
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      [
+        "-path",
+        "/migrations/bot",
+        "-database",
+        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_bot",
+        "up",
+      ]
+    depends_on:
+      migrate-notification:
+        condition: service_completed_successfully
+
   app:
     image: ghcr.io/jarviisha/darkvoid:latest
     restart: unless-stopped
@@ -154,7 +171,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      migrate-notification:
+      migrate-bot:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
