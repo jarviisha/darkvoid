@@ -102,19 +102,16 @@ WHERE (sqlc.narg(bot_id)::uuid IS NULL OR bot_id = sqlc.narg(bot_id)::uuid);
 
 -- Per-persona summary for the status columns of GET /admin/bots. Aggregating in
 -- one pass avoids a query per bot in the list handler.
+-- The MAX casts are load-bearing: sqlc cannot infer the type of an aggregate with
+-- a FILTER clause and emits interface{} without them, pushing a runtime type
+-- assertion into the repository.
 -- name: ListBotRunStats :many
 SELECT bot_id,
-       MAX(created_at) FILTER (WHERE status = 'success')                    AS last_success_at,
-       MAX(created_at) FILTER (WHERE status = 'error')                      AS last_error_at,
+       (MAX(created_at) FILTER (WHERE status = 'success'))::timestamptz       AS last_success_at,
+       (MAX(created_at) FILTER (WHERE status = 'error'))::timestamptz         AS last_error_at,
        COUNT(*) FILTER (WHERE status = 'success'
-                          AND created_at >= NOW() - INTERVAL '24 hours')    AS successes_last_24h,
+                          AND created_at >= NOW() - INTERVAL '24 hours')      AS successes_last_24h,
        COUNT(*) FILTER (WHERE status = 'error'
-                          AND created_at >= NOW() - INTERVAL '24 hours')    AS errors_last_24h
+                          AND created_at >= NOW() - INTERVAL '24 hours')      AS errors_last_24h
 FROM bot.runs
 GROUP BY bot_id;
-
--- name: GetLastBotError :one
-SELECT * FROM bot.runs
-WHERE bot_id = $1 AND status = 'error'
-ORDER BY created_at DESC, id DESC
-LIMIT 1;

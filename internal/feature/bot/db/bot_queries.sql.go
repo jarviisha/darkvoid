@@ -196,28 +196,6 @@ func (q *Queries) GetBotConfig(ctx context.Context) (BotConfig, error) {
 	return i, err
 }
 
-const getLastBotError = `-- name: GetLastBotError :one
-SELECT id, bot_id, post_id, model_used, status, error, created_at FROM bot.runs
-WHERE bot_id = $1 AND status = 'error'
-ORDER BY created_at DESC, id DESC
-LIMIT 1
-`
-
-func (q *Queries) GetLastBotError(ctx context.Context, botID uuid.UUID) (BotRun, error) {
-	row := q.db.QueryRow(ctx, getLastBotError, botID)
-	var i BotRun
-	err := row.Scan(
-		&i.ID,
-		&i.BotID,
-		&i.PostID,
-		&i.ModelUsed,
-		&i.Status,
-		&i.Error,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const linkBotUser = `-- name: LinkBotUser :exec
 UPDATE bot.bots SET user_id = $2, updated_at = NOW() WHERE id = $1
 `
@@ -236,26 +214,29 @@ func (q *Queries) LinkBotUser(ctx context.Context, arg LinkBotUserParams) error 
 
 const listBotRunStats = `-- name: ListBotRunStats :many
 SELECT bot_id,
-       MAX(created_at) FILTER (WHERE status = 'success')                    AS last_success_at,
-       MAX(created_at) FILTER (WHERE status = 'error')                      AS last_error_at,
+       (MAX(created_at) FILTER (WHERE status = 'success'))::timestamptz       AS last_success_at,
+       (MAX(created_at) FILTER (WHERE status = 'error'))::timestamptz         AS last_error_at,
        COUNT(*) FILTER (WHERE status = 'success'
-                          AND created_at >= NOW() - INTERVAL '24 hours')    AS successes_last_24h,
+                          AND created_at >= NOW() - INTERVAL '24 hours')      AS successes_last_24h,
        COUNT(*) FILTER (WHERE status = 'error'
-                          AND created_at >= NOW() - INTERVAL '24 hours')    AS errors_last_24h
+                          AND created_at >= NOW() - INTERVAL '24 hours')      AS errors_last_24h
 FROM bot.runs
 GROUP BY bot_id
 `
 
 type ListBotRunStatsRow struct {
-	BotID            uuid.UUID   `json:"bot_id"`
-	LastSuccessAt    interface{} `json:"last_success_at"`
-	LastErrorAt      interface{} `json:"last_error_at"`
-	SuccessesLast24h int64       `json:"successes_last_24h"`
-	ErrorsLast24h    int64       `json:"errors_last_24h"`
+	BotID            uuid.UUID          `json:"bot_id"`
+	LastSuccessAt    pgtype.Timestamptz `json:"last_success_at"`
+	LastErrorAt      pgtype.Timestamptz `json:"last_error_at"`
+	SuccessesLast24h int64              `json:"successes_last_24h"`
+	ErrorsLast24h    int64              `json:"errors_last_24h"`
 }
 
 // Per-persona summary for the status columns of GET /admin/bots. Aggregating in
 // one pass avoids a query per bot in the list handler.
+// The MAX casts are load-bearing: sqlc cannot infer the type of an aggregate with
+// a FILTER clause and emits interface{} without them, pushing a runtime type
+// assertion into the repository.
 func (q *Queries) ListBotRunStats(ctx context.Context) ([]ListBotRunStatsRow, error) {
 	rows, err := q.db.Query(ctx, listBotRunStats)
 	if err != nil {

@@ -24,12 +24,14 @@ type Querier interface {
 	GetBotByUsername(ctx context.Context, username string) (BotBot, error)
 	// ─── Config ──────────────────────────────────────────────────────────────────
 	GetBotConfig(ctx context.Context) (BotConfig, error)
-	GetLastBotError(ctx context.Context, botID uuid.UUID) (BotRun, error)
 	// Called by the bot once it has registered or logged in the account, so the admin
 	// view can link a persona to the user it posts as.
 	LinkBotUser(ctx context.Context, arg LinkBotUserParams) error
 	// Per-persona summary for the status columns of GET /admin/bots. Aggregating in
 	// one pass avoids a query per bot in the list handler.
+	// The MAX casts are load-bearing: sqlc cannot infer the type of an aggregate with
+	// a FILTER clause and emits interface{} without them, pushing a runtime type
+	// assertion into the repository.
 	ListBotRunStats(ctx context.Context) ([]ListBotRunStatsRow, error)
 	// ─── Personas ────────────────────────────────────────────────────────────────
 	ListBots(ctx context.Context) ([]BotBot, error)
