@@ -1,0 +1,9 @@
+-- Assignments naming 'bot' cannot be represented once the role is gone, and
+-- leaving them would fail the narrowed CHECK below. The delete is not restorable:
+-- after a down/up cycle the runner account holds no role and gets 403 on every
+-- plan fetch until an operator re-runs
+--   make ctl CTL_ARGS="user grant-role -username bot_runner -role bot"
+DELETE FROM usr.user_roles WHERE role = 'bot';
+
+ALTER TABLE usr.user_roles DROP CONSTRAINT usr_user_roles_role_check;
+ALTER TABLE usr.user_roles ADD CONSTRAINT usr_user_roles_role_check CHECK (role IN ('admin', 'moderator'));

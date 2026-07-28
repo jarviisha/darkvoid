@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func geminiBody(t *testing.T, post generatedPost) []byte {
@@ -84,7 +85,7 @@ func TestSanitizeTags_CapsAndFilters(t *testing.T) {
 }
 
 func TestBuildPrompt_IncludesPersonaTopicAndRecent(t *testing.T) {
-	p := personas[0]
+	p := testPersona()
 	prompt := buildPrompt(p, "chuyện đi làm", []string{"bài cũ số 1"})
 
 	for _, want := range []string{p.displayName, p.style, "chuyện đi làm", "bài cũ số 1"} {
@@ -103,10 +104,13 @@ func TestGeneratePost_CallsEndpointWithKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := &geminiClient{baseURL: srv.URL, apiKey: "secret", models: []string{"gemini-2.5-flash"}, http: srv.Client()}
-	post, err := g.GeneratePost(context.Background(), personas[0], "chủ đề", nil)
+	g := &geminiClient{baseURL: srv.URL, apiKey: "secret", http: srv.Client()}
+	post, model, err := g.GeneratePost(context.Background(), []string{"gemini-2.5-flash"}, testPersona(), "chủ đề", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if model != "gemini-2.5-flash" {
+		t.Errorf("model = %q, want the one that answered", model)
 	}
 	if post.Content != "xin chào" {
 		t.Errorf("content = %q", post.Content)
@@ -125,8 +129,8 @@ func TestGeneratePost_AllModelsRateLimited(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := &geminiClient{baseURL: srv.URL, apiKey: "k", models: []string{"m1", "m2"}, http: srv.Client()}
-	if _, err := g.GeneratePost(context.Background(), personas[0], "chủ đề", nil); err == nil {
+	g := &geminiClient{baseURL: srv.URL, apiKey: "k", http: srv.Client()}
+	if _, _, err := g.GeneratePost(context.Background(), []string{"m1", "m2"}, testPersona(), "chủ đề", nil); err == nil {
 		t.Fatal("expected error when every model is 429")
 	}
 }
@@ -144,10 +148,13 @@ func TestGeneratePost_RotatesPast429(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := &geminiClient{baseURL: srv.URL, apiKey: "k", models: []string{"busy-model", "spare-model"}, http: srv.Client()}
-	post, err := g.GeneratePost(context.Background(), personas[0], "chủ đề", nil)
+	g := &geminiClient{baseURL: srv.URL, apiKey: "k", http: srv.Client()}
+	post, model, err := g.GeneratePost(context.Background(), []string{"busy-model", "spare-model"}, testPersona(), "chủ đề", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if model != "spare-model" {
+		t.Errorf("model = %q, want the fallback that actually answered", model)
 	}
 	if post.Content != "đã xoay vòng" {
 		t.Errorf("content = %q, want fallback model output", post.Content)
@@ -166,8 +173,8 @@ func TestGeneratePost_RealErrorDoesNotRotate(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := &geminiClient{baseURL: srv.URL, apiKey: "k", models: []string{"m1", "m2"}, http: srv.Client()}
-	if _, err := g.GeneratePost(context.Background(), personas[0], "chủ đề", nil); err == nil {
+	g := &geminiClient{baseURL: srv.URL, apiKey: "k", http: srv.Client()}
+	if _, _, err := g.GeneratePost(context.Background(), []string{"m1", "m2"}, testPersona(), "chủ đề", nil); err == nil {
 		t.Fatal("expected error for 400 response")
 	}
 	if calls != 1 {
@@ -194,5 +201,23 @@ func TestRemember_KeepsLastN(t *testing.T) {
 	}
 	if got := len(r.recent["bot_sky"]); got != recentMemory {
 		t.Errorf("recent len = %d, want %d", got, recentMemory)
+	}
+}
+
+// Generated posts and API error bodies are routinely non-ASCII, so a byte-based cut
+// would leave a broken rune in the middle of a log line.
+func TestTruncate_IsRuneAware(t *testing.T) {
+	const s = "Sáng nay cà phê ở góc phố quen, nắng vừa đủ"
+
+	if got := truncate(s, 100); got != s {
+		t.Errorf("truncate() = %q, want the input unchanged", got)
+	}
+
+	got := truncate(s, 12)
+	if want := "Sáng nay cà " + "..."; got != want {
+		t.Errorf("truncate() = %q, want %q", got, want)
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("truncate() produced invalid UTF-8: %q", got)
 	}
 }

@@ -21,15 +21,11 @@ var tagRegex = regexp.MustCompile(`^[a-z0-9_]{1,50}$`)
 
 // geminiClient calls the AI Studio generateContent endpoint.
 //
-// models is a priority-ordered fallback list: each GeneratePost tries them
-// from the top and rotates to the next when one is rate-limited (429) or
-// unavailable (404/503). Starting from the top every call means the preferred
-// model is used again automatically once its per-day quota resets — no restart
-// needed.
+// The model fallback chain is passed per call rather than held here, because it
+// comes from the plan and an operator can change it between ticks.
 type geminiClient struct {
 	baseURL string
 	apiKey  string
-	models  []string
 	http    *http.Client
 }
 
@@ -78,8 +74,19 @@ type generateContentResponse struct {
 	} `json:"candidates"`
 }
 
-// GeneratePost asks Gemini for one post in the persona's voice.
-func (g *geminiClient) GeneratePost(ctx context.Context, p persona, topic string, recent []string) (*generatedPost, error) {
+// GeneratePost asks Gemini for one post in the persona's voice and reports which
+// model answered, so quota rotation shows up in the activity log rather than having
+// to be inferred.
+//
+// models is a priority-ordered fallback list: each call tries them from the top and
+// rotates to the next when one is rate-limited (429) or unavailable (404/503).
+// Starting from the top every call means the preferred model is used again
+// automatically once its per-day quota resets — no restart needed.
+func (g *geminiClient) GeneratePost(ctx context.Context, models []string, p persona, topic string, recent []string) (*generatedPost, string, error) {
+	if len(models) == 0 {
+		return nil, "", fmt.Errorf("no gemini models configured in the plan")
+	}
+
 	reqBody := generateContentRequest{
 		Contents: []geminiContent{{
 			Role:  "user",
@@ -94,11 +101,11 @@ func (g *geminiClient) GeneratePost(ctx context.Context, p persona, topic string
 
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("marshal gemini request: %w", err)
+		return nil, "", fmt.Errorf("marshal gemini request: %w", err)
 	}
 
 	var lastErr error
-	for i, model := range g.models {
+	for i, model := range models {
 		body, status, err := g.generateOnce(ctx, model, payload)
 		if err != nil {
 			// Transport-level failure (network, timeout): not model-specific,
@@ -112,7 +119,11 @@ func (g *geminiClient) GeneratePost(ctx context.Context, p persona, topic string
 			if i > 0 {
 				logger.Info(ctx, "gemini model rotated", "model", model)
 			}
-			return parseGeneratedPost(body)
+			post, parseErr := parseGeneratedPost(body)
+			if parseErr != nil {
+				return nil, model, parseErr
+			}
+			return post, model, nil
 		case http.StatusTooManyRequests, http.StatusNotFound, http.StatusServiceUnavailable:
 			// Quota exhausted / model unavailable / overloaded: try the next.
 			lastErr = fmt.Errorf("gemini model %q status %d: %s", model, status, truncate(string(body), 200))
@@ -120,11 +131,11 @@ func (g *geminiClient) GeneratePost(ctx context.Context, p persona, topic string
 			continue
 		default:
 			// A real error (bad request, auth, 5xx) — rotating won't help.
-			return nil, fmt.Errorf("gemini model %q status %d: %s", model, status, truncate(string(body), 300))
+			return nil, model, fmt.Errorf("gemini model %q status %d: %s", model, status, truncate(string(body), 300))
 		}
 	}
 
-	return nil, fmt.Errorf("all gemini models exhausted: %w", lastErr)
+	return nil, "", fmt.Errorf("all gemini models exhausted: %w", lastErr)
 }
 
 // generateOnce performs a single generateContent call against one model and
@@ -198,9 +209,13 @@ func sanitizeTags(tags []string) []string {
 	return out
 }
 
+// truncate shortens s to at most n runes. Rune-aware because everything it is
+// applied to — generated Vietnamese posts, API error bodies — is routinely
+// non-ASCII, and a byte-based cut leaves a broken rune in the middle of a log line.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return string(runes[:n]) + "..."
 }

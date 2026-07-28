@@ -2,15 +2,19 @@
 //
 // Usage:
 //
-//	go run ./cmd/bot [--interval=30s] [--accounts=3] [--max-posts=0]
+//	go run ./cmd/bot [--max-posts=0]
 //
-// Flags (each overrides its BOT_* env default when set):
+// Flags:
 //
-//	--interval    delay between posts (default: BOT_POST_INTERVAL)
-//	--accounts    number of bot personas to use (default: BOT_ACCOUNTS)
-//	--max-posts   stop after N posts; 0 runs until interrupted
+//	--max-posts   stop after N successful posts; 0 runs until interrupted
 //
-// Requires GEMINI_API_KEY and a running DarkVoid API at BOT_API_BASE_URL.
+// There are no --interval or --accounts flags any more: post interval, account
+// count, model fallback chain, personas, and topics are served by GET /bot/plan and
+// changed through the admin API, so the bot re-reads them on every tick instead of
+// being restarted. The environment carries only credentials and an address.
+//
+// Requires GEMINI_API_KEY, BOT_RUNNER_PASSWORD, and a running DarkVoid API at
+// BOT_API_BASE_URL whose runner account holds the bot role.
 package main
 
 import (
@@ -32,9 +36,7 @@ import (
 const recentMemory = 5
 
 func main() {
-	interval := flag.Duration("interval", 0, "delay between posts (0 = use BOT_POST_INTERVAL)")
-	accounts := flag.Int("accounts", 0, "number of bot accounts (0 = use BOT_ACCOUNTS)")
-	maxPosts := flag.Int("max-posts", 0, "stop after N posts (0 = run forever)")
+	maxPosts := flag.Int("max-posts", 0, "stop after N successful posts (0 = run forever)")
 	flag.Parse()
 
 	cfg := loadConfig()
@@ -52,17 +54,10 @@ func main() {
 	// logger must ride along in the context for the package-level helpers.
 	ctx = logger.WithLogger(ctx, log)
 
-	if cfg.GeminiAPIKey == "" {
-		logger.Error(ctx, "GEMINI_API_KEY is required")
+	if missing := cfg.missing(); len(missing) > 0 {
+		logger.Error(ctx, "required configuration is missing", "variables", strings.Join(missing, ", "))
 		os.Exit(1)
 	}
-	if *interval > 0 {
-		cfg.Interval = *interval
-	}
-	if *accounts > 0 {
-		cfg.Accounts = *accounts
-	}
-	n := min(max(cfg.Accounts, 1), len(personas))
 
 	bot := &runner{
 		api: &apiClient{
@@ -73,87 +68,222 @@ func main() {
 		gemini: &geminiClient{
 			baseURL: cfg.GeminiBaseURL,
 			apiKey:  cfg.GeminiAPIKey,
-			models:  cfg.GeminiModels,
 			http:    &http.Client{Timeout: 60 * time.Second},
 		},
-		rng: rand.New(rand.NewSource(time.Now().UnixNano())), //nolint:gosec // content variety, not crypto
-	}
-	for _, p := range personas[:n] {
-		bot.accounts = append(bot.accounts, &botAccount{persona: p, password: cfg.Password})
+		personaPassword: cfg.Password,
+		rng:             rand.New(rand.NewSource(time.Now().UnixNano())), //nolint:gosec // content variety, not crypto
 	}
 
-	logger.Info(ctx, "bot starting",
-		"api", cfg.APIBaseURL,
-		"models", strings.Join(cfg.GeminiModels, ","),
-		"accounts", n,
-		"interval", cfg.Interval.String(),
-	)
-	bot.run(ctx, cfg.Interval, *maxPosts)
+	// Fail fast on a bad runner credential rather than logging one 403 per tick.
+	if err := bot.api.LoginRunner(ctx, cfg.RunnerUsername, cfg.RunnerPassword); err != nil {
+		logger.LogError(ctx, err, "runner login failed", "username", cfg.RunnerUsername)
+		os.Exit(1)
+	}
+
+	logger.Info(ctx, "bot starting", "api", cfg.APIBaseURL, "runner", cfg.RunnerUsername)
+	bot.run(ctx, *maxPosts)
 	logger.Info(ctx, "bot stopped")
 }
 
-// runner drives the generate→post loop across the bot accounts.
+// runner drives the fetch-plan → generate → post → report loop.
 type runner struct {
-	api      *apiClient
-	gemini   *geminiClient
-	accounts []*botAccount
-	rng      *rand.Rand
+	api    *apiClient
+	gemini *geminiClient
+	rng    *rand.Rand
+
+	// personaPassword is shared by every persona account.
+	personaPassword string
+
+	// accounts holds one session per persona, keyed by bot id and created on first
+	// sight. Building them from the plan rather than up front is what lets a persona
+	// added through the admin API start posting without a restart.
+	accounts map[string]*botAccount
 
 	// recent maps username → openings of its latest posts (repetition guard).
 	recent map[string][]string
+
+	// linked records the personas whose account has already been reported, so the
+	// identity call happens once rather than every post.
+	linked map[string]bool
 }
 
-// run posts once per interval until ctx is cancelled or maxPosts is reached
-// (0 = unlimited). Individual failures are logged and skipped — the loop
-// keeps going so a transient API/Gemini error doesn't kill the bot.
-func (r *runner) run(ctx context.Context, interval time.Duration, maxPosts int) {
-	r.recent = make(map[string][]string, len(r.accounts))
+// run fetches the plan and posts once per interval until ctx is cancelled or
+// maxPosts is reached (0 = unlimited).
+//
+// Everything that can go wrong here is logged and retried rather than fatal: a
+// transient API or Gemini failure must not end a long-running bot. The interval
+// itself comes from the plan, so a failed fetch falls back to planRetryInterval —
+// there is nothing else to read it from.
+func (r *runner) run(ctx context.Context, maxPosts int) {
+	r.accounts = make(map[string]*botAccount)
+	r.recent = make(map[string][]string)
+	r.linked = make(map[string]bool)
 
 	posted := 0
 	for {
-		if err := r.postOnce(ctx); err != nil {
+		wait := planRetryInterval
+
+		p, err := r.api.FetchPlan(ctx)
+		switch {
+		case err != nil:
 			if ctx.Err() != nil {
 				return
 			}
-			logger.Warn(ctx, "post attempt failed", "error", err)
-		} else {
-			posted++
-			if maxPosts > 0 && posted >= maxPosts {
-				return
+			logger.Warn(ctx, "plan fetch failed, retrying", "error", err, "retry_in", wait.String())
+
+		case p.Paused:
+			wait = p.interval()
+			logger.Info(ctx, "paused by the control plane, publishing nothing", "next_check", wait.String())
+
+		case len(p.Bots) == 0 || len(p.Topics) == 0:
+			wait = p.interval()
+			logger.Warn(ctx, "plan has nothing to post with",
+				"personas", len(p.Bots), "topics", len(p.Topics))
+
+		default:
+			wait = p.interval()
+			if err := r.postOnce(ctx, p); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				logger.Warn(ctx, "post attempt failed", "error", err)
+			} else {
+				posted++
+				if maxPosts > 0 && posted >= maxPosts {
+					return
+				}
 			}
 		}
 
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(r.jittered(interval)):
+		case <-time.After(r.jittered(wait)):
 		}
 	}
 }
 
-// postOnce picks a random persona, generates content, and publishes it.
-func (r *runner) postOnce(ctx context.Context) error {
-	acc := r.accounts[r.rng.Intn(len(r.accounts))]
-	topic := topics[r.rng.Intn(len(topics))]
+// postOnce picks a persona and topic from the plan, generates content, publishes
+// it, and reports the outcome either way — a failure an operator cannot see is the
+// problem this log exists to solve.
+func (r *runner) postOnce(ctx context.Context, p *plan) error {
+	pb := r.pick(p)
+	per := pb.persona()
+	topic := p.Topics[r.rng.Intn(len(p.Topics))]
+	acc := r.account(per)
 
-	post, err := r.gemini.GeneratePost(ctx, acc.persona, topic, r.recent[acc.persona.username])
+	post, model, err := r.gemini.GeneratePost(ctx, p.Models, per, topic, r.recent[per.username])
 	if err != nil {
+		r.report(ctx, per, failedRun(per, model, err))
 		return err
 	}
 
 	postID, err := r.api.CreatePost(ctx, acc, post.Content, post.Tags)
 	if err != nil {
+		r.report(ctx, per, failedRun(per, model, err))
 		return err
 	}
 
-	r.remember(acc.persona.username, post.Content)
+	r.linkIdentity(ctx, per, acc)
+	r.remember(per.username, post.Content)
+	r.report(ctx, per, runReport{
+		BotID:             per.id,
+		Status:            "success",
+		PostID:            &postID,
+		ModelUsed:         &model,
+		HonoredRunRequest: per.runRequested,
+	})
+
 	logger.Info(ctx, "post created",
-		"bot", acc.persona.username,
+		"bot", per.username,
 		"post_id", postID,
+		"model", model,
 		"tags", post.Tags,
+		"honored_run_request", per.runRequested,
 		"preview", truncate(post.Content, 80),
 	)
 	return nil
+}
+
+// pick chooses which persona posts next. A pending run-now wins over the random
+// draw, since an operator asked for it explicitly.
+func (r *runner) pick(p *plan) planBot {
+	for _, b := range p.Bots {
+		if b.RunRequested {
+			return b
+		}
+	}
+	return p.Bots[r.rng.Intn(len(p.Bots))]
+}
+
+// account returns the session for a persona, creating it on first sight. The stored
+// persona is refreshed each time so an edited display name or voice takes effect
+// without a restart.
+func (r *runner) account(per persona) *botAccount {
+	acc, ok := r.accounts[per.id]
+	if !ok {
+		acc = &botAccount{password: r.personaPassword}
+		r.accounts[per.id] = acc
+	}
+	acc.persona = per
+	return acc
+}
+
+// report sends the outcome to the activity log. It detaches from the caller's
+// context: a SIGTERM landing mid-attempt cancels the loop's context before this
+// runs, and without the detach every shutdown that interrupted a post logged a
+// spurious reporting failure and the aborted attempt never reached the server.
+//
+// Transient failures are retried (see the constants in config.go for why), then
+// logged and swallowed: the post itself already happened, and failing here would
+// make the bot treat a published post as an error.
+func (r *runner) report(ctx context.Context, per persona, report runReport) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reportTimeout)
+	defer cancel()
+
+	var err error
+	for attempt := 1; attempt <= reportAttempts; attempt++ {
+		if err = r.api.ReportRun(ctx, report); err == nil {
+			return
+		}
+		if attempt == reportAttempts || ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(reportRetryDelay):
+		}
+	}
+	logger.Warn(ctx, "failed to report the run", "bot", per.username, "error", err)
+}
+
+// failedRun builds an error report. ModelUsed is included when a model was actually
+// reached, so the log distinguishes "the model refused" from "we never got that far".
+func failedRun(per persona, model string, cause error) runReport {
+	reason := cause.Error()
+	report := runReport{
+		BotID:             per.id,
+		Status:            "error",
+		Error:             &reason,
+		HonoredRunRequest: per.runRequested,
+	}
+	if model != "" {
+		report.ModelUsed = &model
+	}
+	return report
+}
+
+// linkIdentity reports which user account a persona posts as, once per process.
+func (r *runner) linkIdentity(ctx context.Context, per persona, acc *botAccount) {
+	if r.linked[per.id] || acc.userID == "" {
+		return
+	}
+	if err := r.api.LinkIdentity(ctx, per.id, acc.userID); err != nil {
+		// Cosmetic for the admin view only — retried on the next post.
+		logger.Warn(ctx, "failed to link the persona account", "bot", per.username, "error", err)
+		return
+	}
+	r.linked[per.id] = true
 }
 
 // remember keeps the opening of the bot's latest posts for the prompt.

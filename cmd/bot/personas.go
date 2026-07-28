@@ -5,61 +5,18 @@ import (
 	"strings"
 )
 
-// persona describes one bot account and the writing voice Gemini should adopt.
-// Usernames must satisfy the user-service rule: [a-zA-Z0-9_-]{3,30}.
+// persona is one bot account and the writing voice Gemini should adopt, as handed
+// out by GET /bot/plan. It used to be a compile-time slice here; moving it into the
+// database is what lets an operator retire or re-voice a bot without a rebuild.
 type persona struct {
+	// id is the bot.bots row, echoed back when reporting a run.
+	id          string
 	username    string
 	displayName string
-	style       string // voice/tone instruction embedded in the Gemini prompt
-}
-
-// personas is the pool of bot accounts. BOT_ACCOUNTS selects the first N.
-// All accounts share BOT_PASSWORD and register with <username>@bot.local.
-var personas = []persona{
-	{
-		username:    "bot_sky",
-		displayName: "Sky Vũ",
-		style:       "giọng trẻ trung, hài hước, hay dùng emoji, thỉnh thoảng chêm tiếng Anh kiểu dân văn phòng",
-	},
-	{
-		username:    "bot_mien",
-		displayName: "Miên Đặng",
-		style:       "giọng trầm lắng, tản văn, viết về cảm xúc và quan sát đời thường, ít emoji",
-	},
-	{
-		username:    "bot_codek",
-		displayName: "Khoa Coder",
-		style:       "giọng dev backend, kể chuyện nghề lập trình, tự trào, thích chia sẻ bài học kỹ thuật",
-	},
-	{
-		username:    "bot_hafood",
-		displayName: "Hà Foodie",
-		style:       "giọng food blogger, mô tả món ăn sống động, hay rủ rê mọi người đi ăn",
-	},
-	{
-		username:    "bot_dulich",
-		displayName: "Phong Xê Dịch",
-		style:       "giọng travel blogger, kể trải nghiệm những nơi vừa đi qua, giàu hình ảnh",
-	},
-}
-
-// topics gives each generation a random subject so posts don't converge.
-var topics = []string{
-	"một bug khó chịu vừa gặp khi code và bài học rút ra",
-	"quán cà phê mới phát hiện ở góc phố quen",
-	"một món ăn đường phố Việt Nam đáng nhớ",
-	"chuyến đi cuối tuần đến một tỉnh miền núi phía Bắc",
-	"suy nghĩ về work-life balance của dân văn phòng",
-	"cuốn sách hoặc bộ phim vừa xem xong",
-	"thời tiết hôm nay và tâm trạng đi kèm",
-	"một thói quen nhỏ giúp ngày làm việc dễ thở hơn",
-	"kỷ niệm thời sinh viên chợt nhớ lại",
-	"trải nghiệm học một kỹ năng mới",
-	"chuyện dở khóc dở cười khi đi làm",
-	"một góc Sài Gòn hoặc Hà Nội lúc sáng sớm",
-	"cảm nghĩ về mạng xã hội và thói quen lướt điện thoại",
-	"bữa cơm nhà và món mẹ nấu",
-	"âm nhạc đang nghe dạo gần đây",
+	style       string
+	// runRequested means an operator asked this persona to post now, out of band
+	// from the interval.
+	runRequested bool
 }
 
 // buildPrompt assembles the Gemini prompt for one post.

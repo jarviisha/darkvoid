@@ -18,17 +18,23 @@ const (
 	// RoleModerator is reserved for content moderation. It can be assigned, but no
 	// route enforces it yet.
 	RoleModerator Role = "moderator"
+	// RoleBot grants access to the /api/v1/bot agent plane, which the content bot
+	// (cmd/bot) polls for its desired state and reports run results to. It grants
+	// no admin access — the bot posts as an ordinary user.
+	RoleBot Role = "bot"
 )
 
 // roleDescriptions is the authoritative set of known roles. Keep it in sync with
-// the CHECK constraint in migrations/user/000011_inline_role_names.up.sql.
+// the CHECK constraint, most recently narrowed in
+// migrations/user/000012_add_bot_role.up.sql.
 var roleDescriptions = map[Role]string{
 	RoleAdmin:     "Full access to the admin API",
 	RoleModerator: "Reserved for content moderation",
+	RoleBot:       "Allows a machine account to drive the content bot",
 }
 
 // AllRoles lists every role the system recognises, ordered by name.
-var AllRoles = []Role{RoleAdmin, RoleModerator}
+var AllRoles = []Role{RoleAdmin, RoleBot, RoleModerator}
 
 // ParseRole converts a raw string into a Role, reporting whether it names a role
 // the system recognises. Unknown names must be rejected before they reach the DB,

@@ -77,8 +77,9 @@ Usage:
   darkvoidctl user reset-password -username <u>
   darkvoidctl user create -username <u> -email <e> [-display-name <n>]
   darkvoidctl user list [-q <query>] [-limit <n>] [-active-only]
-  darkvoidctl user promote -username <u>       grant the admin role
-  darkvoidctl user demote  -username <u>       revoke the admin role
+  darkvoidctl user grant-role  -username <u> -role <r>
+  darkvoidctl user revoke-role -username <u> -role <r>
+  darkvoidctl user roles                      list the assignable roles
   darkvoidctl user deactivate -username <u>
 
 Passwords are never taken as flags: reset-password and create prompt
@@ -150,10 +151,12 @@ func runUser(args []string) {
 		err = cmdCreate(rest)
 	case "list":
 		err = cmdList(rest)
-	case "promote":
-		err = cmdSetAdmin(rest, true)
-	case "demote":
-		err = cmdSetAdmin(rest, false)
+	case "grant-role":
+		err = cmdSetRole(rest, true)
+	case "revoke-role":
+		err = cmdSetRole(rest, false)
+	case "roles":
+		err = cmdRoles()
 	case "deactivate":
 		err = cmdDeactivate(rest)
 	default:
@@ -294,16 +297,30 @@ func cmdList(args []string) error {
 	return nil
 }
 
-func cmdSetAdmin(args []string, grant bool) error {
-	name := "user demote"
+// cmdSetRole grants or revokes any role the application recognises. It replaces the
+// earlier admin-only promote/demote pair, which could not reach the bot role the
+// content bot's runner account needs.
+func cmdSetRole(args []string, grant bool) error {
+	name := "user revoke-role"
 	if grant {
-		name = "user promote"
+		name = "user grant-role"
 	}
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	username := fs.String("username", "", "username of the account (required)")
+	roleName := fs.String("role", "", "role to change: "+knownRoles()+" (required)")
 	_ = fs.Parse(args)
 	if *username == "" {
 		return fmt.Errorf("-username is required")
+	}
+	if *roleName == "" {
+		return fmt.Errorf("-role is required (one of %s)", knownRoles())
+	}
+
+	// Reject an unknown name here so it reads as a typo rather than surfacing as an
+	// opaque CHECK-constraint violation from the database.
+	role, ok := entity.ParseRole(*roleName)
+	if !ok {
+		return fmt.Errorf("unknown role %q (expected one of %s)", *roleName, knownRoles())
 	}
 
 	ctx := context.Background()
@@ -318,20 +335,44 @@ func cmdSetAdmin(args []string, grant bool) error {
 		return err
 	}
 
-	// Both operations are idempotent, so promoting an existing admin or demoting
-	// a plain user succeeds without a prior membership check.
+	// Both operations are idempotent, so re-granting a role the user already holds or
+	// revoking one they never had succeeds without a prior membership check.
 	if grant {
-		if err := d.roleRepo.AssignRole(ctx, u.ID, entity.RoleAdmin, nil); err != nil {
-			return fmt.Errorf("assign admin role: %w", err)
+		// AssignedBy is nil to mark the grant as made by the system rather than an admin.
+		if err := d.roleRepo.AssignRole(ctx, u.ID, role, nil); err != nil {
+			return fmt.Errorf("assign %s role: %w", role, err)
 		}
-		fmt.Printf("granted admin to %s (%s)\n", u.Username, u.ID)
+		fmt.Printf("granted %s to %s (%s)\n", role, u.Username, u.ID)
 		return nil
 	}
-	if err := d.roleRepo.RemoveRole(ctx, u.ID, entity.RoleAdmin); err != nil {
-		return fmt.Errorf("remove admin role: %w", err)
+	if err := d.roleRepo.RemoveRole(ctx, u.ID, role); err != nil {
+		return fmt.Errorf("remove %s role: %w", role, err)
 	}
-	fmt.Printf("revoked admin from %s (%s)\n", u.Username, u.ID)
+	fmt.Printf("revoked %s from %s (%s)\n", role, u.Username, u.ID)
 	return nil
+}
+
+// cmdRoles lists the assignable roles. The set is fixed at compile time, so this
+// never touches the database — it exists so an operator does not have to read
+// entity/role.go to find a valid -role value.
+func cmdRoles() error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	for _, r := range entity.AllRoles {
+		if _, err := fmt.Fprintf(w, "%s\t%s\n", r, r.Description()); err != nil {
+			return err
+		}
+	}
+	return w.Flush()
+}
+
+// knownRoles renders entity.AllRoles for flag help and error messages, so adding a
+// role never leaves the CLI documenting a stale set.
+func knownRoles() string {
+	names := make([]string, 0, len(entity.AllRoles))
+	for _, r := range entity.AllRoles {
+		names = append(names, r.String())
+	}
+	return strings.Join(names, ", ")
 }
 
 func cmdDeactivate(args []string) error {

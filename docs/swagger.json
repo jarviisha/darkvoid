@@ -17,6 +17,781 @@
     "host": "localhost:8080",
     "basePath": "/api/v1",
     "paths": {
+        "/admin/bots": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns every content-bot persona with a summary of its recent activity. The error text behind last_error_at is in the activity log, not here, and both timestamps cover only the log's retention window rather than all time.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "List bot personas",
+                "operationId": "adminListBots",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ListBotsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a persona. The bot registers the account on its next tick, so the username must satisfy the user-service rule.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Add a bot persona",
+                "operationId": "adminCreateBot",
+                "parameters": [
+                    {
+                        "description": "Persona",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateBotRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BotResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Username already taken by another persona",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/bots/config": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the runtime configuration the bot reads on every tick.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Get bot configuration",
+                "operationId": "adminGetBotConfig",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ConfigResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Partial update — an omitted field keeps its stored value, and an empty models array counts as omitted. Takes effect on the bot's next tick, without a restart.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Update bot configuration",
+                "operationId": "adminUpdateBotConfig",
+                "parameters": [
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ConfigResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/bots/pause": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Global kill switch. Each persona's enabled flag is left alone, so resuming restores exactly the previous selection.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Pause the bot",
+                "operationId": "adminPauseBot",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ConfigResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/bots/resume": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Clears the global pause. The personas that were enabled before the pause resume posting.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Resume the bot",
+                "operationId": "adminResumeBot",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ConfigResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/bots/runs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns reported post attempts, newest first. Before this log existed the record lived only in the bot host's journal.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Read the bot activity log",
+                "operationId": "adminListBotRuns",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Max items per page (default 20)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of items to skip",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Limit to one persona (omit for all)",
+                        "name": "bot_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ListRunsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/bots/topics": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the whole subject pool, retired entries included, so they can be restored.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "List bot topics",
+                "operationId": "adminListBotTopics",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ListTopicsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Adds a subject to the pool. Duplicates are rejected, because a repeated subject would skew the random draw toward it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Add a bot topic",
+                "operationId": "adminCreateBotTopic",
+                "parameters": [
+                    {
+                        "description": "Topic",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateTopicRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/dto.TopicResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Topic already in the pool",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/bots/topics/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes a subject outright. Prefer retiring it unless it should disappear entirely.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Delete a bot topic",
+                "operationId": "adminDeleteBotTopic",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Topic UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Keeps a subject out of the draw without deleting the row the activity log refers to.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Retire or restore a bot topic",
+                "operationId": "adminSetBotTopicEnabled",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Topic UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Desired state",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SetTopicEnabledRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.TopicResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/bots/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes the persona and its activity log. The user account it posted as is left alone, since its posts remain.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Delete a bot persona",
+                "operationId": "adminDeleteBot",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Persona UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Partial update — an omitted field keeps its stored value. The username cannot be changed, since it is the registered account the persona posts as.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Update a bot persona",
+                "operationId": "adminUpdateBot",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Persona UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateBotRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BotResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/bots/{id}/run-now": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Records a request for an immediate post. It takes effect when the bot next fetches its plan, so a 200 means the request was recorded — not that a post was made. A disabled persona is rejected, because the plan carries only enabled ones and the request could never fire.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Ask a persona to post now",
+                "operationId": "adminRequestBotRun",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Persona UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BotResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Persona is disabled",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/notifications/broadcast": {
             "post": {
                 "security": [
@@ -1169,6 +1944,182 @@
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/bot/plan": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Polled by the bot process on every tick. Personas are already filtered to the enabled ones and capped at the configured account count, so the bot applies no selection rules of its own. Requires the bot role — an admin token gets 403 here.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Get the bot's desired state",
+                "operationId": "botGetPlan",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.PlanResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/bot/runs": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A success must carry post_id and no error; a failure must carry error and no post_id. Set honored_run_request only for the attempt that answered an operator's run-now, since that is what clears the pending flag. Requires the bot role.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Report a post attempt",
+                "operationId": "botReportRun",
+                "parameters": [
+                    {
+                        "description": "Attempt",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.ReportRunRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Unknown persona",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/bot/{id}/identity": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reported by the bot once it has registered or logged the persona's account in, so the admin view can show which user it posts as. Requires the bot role.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "bot"
+                ],
+                "summary": "Link a persona to its user account",
+                "operationId": "botLinkIdentity",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Persona UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Account",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.LinkIdentityRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/errors.ErrorResponse"
                         }
@@ -3347,6 +4298,63 @@
                 }
             }
         },
+        "dto.BotResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-07-27T08:00:00Z"
+                },
+                "display_name": {
+                    "type": "string",
+                    "example": "Sky Vũ"
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "errors_last_24h": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "last_error_at": {
+                    "type": "string",
+                    "example": "2026-07-27T09:14:00Z"
+                },
+                "last_success_at": {
+                    "type": "string",
+                    "example": "2026-07-27T10:28:00Z"
+                },
+                "run_requested_at": {
+                    "type": "string",
+                    "example": "2026-07-27T10:30:00Z"
+                },
+                "style": {
+                    "type": "string",
+                    "example": "giọng trẻ trung, hài hước"
+                },
+                "successes_last_24h": {
+                    "type": "integer",
+                    "example": 41
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-07-27T10:30:00Z"
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "username": {
+                    "type": "string",
+                    "example": "bot_sky"
+                }
+            }
+        },
         "dto.ChangePasswordRequest": {
             "type": "object",
             "properties": {
@@ -3437,6 +4445,57 @@
                 }
             }
         },
+        "dto.ConfigResponse": {
+            "type": "object",
+            "properties": {
+                "accounts": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "gemini-2.5-flash"
+                    ]
+                },
+                "paused": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "post_interval_seconds": {
+                    "type": "integer",
+                    "example": 120
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-07-27T10:30:00Z"
+                },
+                "updated_by": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "dto.CreateBotRequest": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string",
+                    "example": "Sky Vũ"
+                },
+                "style": {
+                    "type": "string",
+                    "example": "giọng trẻ trung, hài hước, hay dùng emoji"
+                },
+                "username": {
+                    "type": "string",
+                    "example": "bot_sky"
+                }
+            }
+        },
         "dto.CreateCommentRequest": {
             "type": "object",
             "properties": {
@@ -3509,6 +4568,15 @@
                 }
             }
         },
+        "dto.CreateTopicRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "example": "một món ăn đường phố Việt Nam đáng nhớ"
+                }
+            }
+        },
         "dto.FollowListResponse": {
             "type": "object",
             "properties": {
@@ -3574,6 +4642,26 @@
                 }
             }
         },
+        "dto.LinkIdentityRequest": {
+            "type": "object",
+            "properties": {
+                "user_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "dto.ListBotsResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.BotResponse"
+                    }
+                }
+            }
+        },
         "dto.ListRolesResponse": {
             "type": "object",
             "properties": {
@@ -3581,6 +4669,43 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/dto.RoleResponse"
+                    }
+                }
+            }
+        },
+        "dto.ListRunsResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.RunResponse"
+                    }
+                },
+                "limit": {
+                    "description": "Max items per page",
+                    "type": "integer",
+                    "example": 20
+                },
+                "offset": {
+                    "description": "Number of items to skip",
+                    "type": "integer",
+                    "example": 0
+                },
+                "total": {
+                    "description": "Total number of records",
+                    "type": "integer",
+                    "example": 100
+                }
+            }
+        },
+        "dto.ListTopicsResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.TopicResponse"
                     }
                 }
             }
@@ -3707,6 +4832,70 @@
                 },
                 "type": {
                     "type": "string"
+                }
+            }
+        },
+        "dto.PlanBot": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string",
+                    "example": "Sky Vũ"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "run_requested": {
+                    "description": "RunRequested asks for an immediate post, out of band from the interval.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "style": {
+                    "type": "string",
+                    "example": "giọng trẻ trung, hài hước"
+                },
+                "username": {
+                    "type": "string",
+                    "example": "bot_sky"
+                }
+            }
+        },
+        "dto.PlanResponse": {
+            "type": "object",
+            "properties": {
+                "bots": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.PlanBot"
+                    }
+                },
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "gemini-2.5-flash"
+                    ]
+                },
+                "paused": {
+                    "description": "Paused tells the bot to keep polling but publish nothing.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "post_interval_seconds": {
+                    "type": "integer",
+                    "example": 120
+                },
+                "topics": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "quán cà phê mới phát hiện ở góc phố quen"
+                    ]
                 }
             }
         },
@@ -3917,6 +5106,36 @@
                 }
             }
         },
+        "dto.ReportRunRequest": {
+            "type": "object",
+            "properties": {
+                "bot_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "error": {
+                    "type": "string",
+                    "example": "gemini: all models exhausted (429)"
+                },
+                "honored_run_request": {
+                    "description": "HonoredRunRequest tells the server this attempt was the one an operator asked\nfor, which is what clears the pending flag. The bot must not set it for an\nordinary interval post: clearing unconditionally would discard a request that\narrived after the bot last fetched its plan, so the post would never happen.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "model_used": {
+                    "type": "string",
+                    "example": "gemini-2.5-flash"
+                },
+                "post_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "success"
+                }
+            }
+        },
         "dto.ResendVerificationRequest": {
             "type": "object",
             "properties": {
@@ -3952,6 +5171,43 @@
                 }
             }
         },
+        "dto.RunResponse": {
+            "type": "object",
+            "properties": {
+                "bot_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-07-27T10:28:00Z"
+                },
+                "error": {
+                    "type": "string",
+                    "example": "gemini: all models exhausted (429)"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "model_used": {
+                    "type": "string",
+                    "example": "gemini-2.5-flash"
+                },
+                "post_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "post_preview": {
+                    "type": "string",
+                    "example": "Sáng nay cà phê ở góc phố quen…"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "success"
+                }
+            }
+        },
         "dto.SearchResponse": {
             "type": "object",
             "properties": {
@@ -3978,6 +5234,36 @@
                     "items": {
                         "$ref": "#/definitions/dto.UserResult"
                     }
+                }
+            }
+        },
+        "dto.SetTopicEnabledRequest": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "example": false
+                }
+            }
+        },
+        "dto.TopicResponse": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "example": "quán cà phê mới phát hiện ở góc phố quen"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-07-27T08:00:00Z"
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
                 }
             }
         },
@@ -4008,6 +5294,49 @@
             "properties": {
                 "unread_count": {
                     "type": "integer"
+                }
+            }
+        },
+        "dto.UpdateBotRequest": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string",
+                    "example": "Sky Vũ"
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "style": {
+                    "type": "string",
+                    "example": "giọng trầm lắng, tản văn"
+                }
+            }
+        },
+        "dto.UpdateConfigRequest": {
+            "type": "object",
+            "properties": {
+                "accounts": {
+                    "type": "integer",
+                    "example": 5
+                },
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "gemini-2.5-flash"
+                    ]
+                },
+                "paused": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "post_interval_seconds": {
+                    "type": "integer",
+                    "example": 120
                 }
             }
         },

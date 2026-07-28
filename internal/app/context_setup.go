@@ -30,6 +30,8 @@ func (app *Application) setupContexts(ctx context.Context) error {
 	app.wireNotificationDependencies()
 	app.setupSearchContext(store)
 	app.setupAdminContext(store)
+	// After the post context: the bot activity log reads post previews through it.
+	app.setupBotContext()
 
 	return nil
 }

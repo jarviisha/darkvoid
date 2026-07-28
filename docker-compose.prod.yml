@@ -57,12 +57,18 @@ services:
     restart: on-failure
     volumes:
       - ./migrations:/migrations:ro
+    environment:
+      # Out of band rather than inside the -database URL: a credential in argv is
+      # visible to anyone who can run `docker inspect`, and a password inside a
+      # postgres:// string is what secret scanners match on — by shape, whatever
+      # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     command:
       [
         "-path",
         "/migrations/user",
         "-database",
-        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_user",
+        "postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_user",
         "up",
       ]
     depends_on:
@@ -74,12 +80,18 @@ services:
     restart: on-failure
     volumes:
       - ./migrations:/migrations:ro
+    environment:
+      # Out of band rather than inside the -database URL: a credential in argv is
+      # visible to anyone who can run `docker inspect`, and a password inside a
+      # postgres:// string is what secret scanners match on — by shape, whatever
+      # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     command:
       [
         "-path",
         "/migrations/post",
         "-database",
-        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_post",
+        "postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_post",
         "up",
       ]
     depends_on:
@@ -91,16 +103,45 @@ services:
     restart: on-failure
     volumes:
       - ./migrations:/migrations:ro
+    environment:
+      # Out of band rather than inside the -database URL: a credential in argv is
+      # visible to anyone who can run `docker inspect`, and a password inside a
+      # postgres:// string is what secret scanners match on — by shape, whatever
+      # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     command:
       [
         "-path",
         "/migrations/notification",
         "-database",
-        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_notification",
+        "postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_notification",
         "up",
       ]
     depends_on:
       migrate-post:
+        condition: service_completed_successfully
+
+  migrate-bot:
+    image: migrate/migrate:4
+    restart: on-failure
+    volumes:
+      - ./migrations:/migrations:ro
+    environment:
+      # Out of band rather than inside the -database URL: a credential in argv is
+      # visible to anyone who can run `docker inspect`, and a password inside a
+      # postgres:// string is what secret scanners match on — by shape, whatever
+      # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    command:
+      [
+        "-path",
+        "/migrations/bot",
+        "-database",
+        "postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_bot",
+        "up",
+      ]
+    depends_on:
+      migrate-notification:
         condition: service_completed_successfully
 
   app:
@@ -154,7 +195,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      migrate-notification:
+      migrate-bot:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -180,6 +221,34 @@ services:
       DB_SSLMODE: disable
     depends_on:
       postgres:
+        condition: service_healthy
+
+  # Content bot — opt-in, so a deploy never starts posting by accident:
+  #   docker compose -f docker-compose.prod.yml --profile bot up -d bot
+  #   docker compose -f docker-compose.prod.yml logs -f bot
+  #
+  # This is the only supported way to run it in production, so GEMINI_API_KEY,
+  # BOT_RUNNER_PASSWORD, and BOT_PASSWORD live in this stack's .env — keep that file
+  # readable only by the deploy user, since the app and the bot now share it.
+  #
+  # BOT_API_BASE_URL must name the app service: inside a container localhost is the
+  # container itself. Credentials come from .env and are not declared required here —
+  # `${VAR:?}` is interpolated for the whole file before profiles are filtered, so it
+  # would break every compose command for a deployment that does not run the bot. The
+  # bot reports the missing variables itself on startup.
+  bot:
+    image: ghcr.io/jarviisha/darkvoid:latest
+    profiles: [bot]
+    restart: unless-stopped
+    entrypoint: ["/app/bot"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BOT_API_BASE_URL: http://app:8080/api/v1
+      BOT_RUNNER_USERNAME: ${BOT_RUNNER_USERNAME:-bot_runner}
+    depends_on:
+      app:
         condition: service_healthy
 
 volumes:
