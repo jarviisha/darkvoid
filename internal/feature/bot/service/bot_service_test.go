@@ -957,17 +957,35 @@ func TestLinkIdentity_RecordsTheAccount(t *testing.T) {
 	}
 }
 
+// The id is otherwise taken on trust, so the two cases that are certainly mistakes
+// rather than claims have to be caught: an unparseable value, and the zero UUID,
+// which is an uninitialised variable that would render as a link to nothing.
 func TestLinkIdentity_RejectsBadUserID(t *testing.T) {
-	store := newTestStore()
-	b := bot("bot_a", true)
-	store.bots = []*entity.Bot{b}
+	for _, tt := range []struct {
+		name   string
+		userID string
+	}{
+		{"not a uuid", "nope"},
+		{"empty", ""},
+		{"zero uuid", uuid.Nil.String()},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestStore()
+			b := bot("bot_a", true)
+			store.bots = []*entity.Bot{b}
 
-	err := NewBotService(store).LinkIdentity(context.Background(), b.ID, &dto.LinkIdentityRequest{UserID: "nope"})
-	if err == nil {
-		t.Fatal("expected a rejection")
-	}
-	if got := statusOf(t, err); got != 400 {
-		t.Errorf("status = %d, want 400", got)
+			err := NewBotService(store).LinkIdentity(context.Background(), b.ID,
+				&dto.LinkIdentityRequest{UserID: tt.userID})
+			if err == nil {
+				t.Fatal("expected a rejection")
+			}
+			if got := statusOf(t, err); got != 400 {
+				t.Errorf("status = %d, want 400", got)
+			}
+			if len(store.gotLinked) != 0 {
+				t.Error("nothing should have been written")
+			}
+		})
 	}
 }
 

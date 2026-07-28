@@ -526,10 +526,19 @@ func (s *BotService) pruneOldRuns(ctx context.Context) {
 
 // LinkIdentity records which user account a persona posts as, reported by the bot
 // once it has registered or logged the account in.
+//
+// The id is taken on trust: the runner is a privileged machine account, and this
+// field is display-only — nothing authorises against it — so verifying the user
+// exists would mean giving the bot context a reader into the user context for a
+// label. The zero UUID is still rejected, because that is an uninitialised value
+// rather than a claim, and storing it would render as a link to nothing.
 func (s *BotService) LinkIdentity(ctx context.Context, botID uuid.UUID, req *dto.LinkIdentityRequest) error {
 	userID, err := uuid.Parse(req.UserID)
 	if err != nil {
 		return errors.NewValidationError("user_id", "must be a UUID")
+	}
+	if userID == uuid.Nil {
+		return errors.NewValidationError("user_id", "must not be the zero UUID")
 	}
 
 	if _, err = s.store.GetBot(ctx, botID); err != nil {

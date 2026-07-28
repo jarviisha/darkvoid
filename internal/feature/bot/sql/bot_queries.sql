@@ -69,6 +69,13 @@ UPDATE bot.bots SET run_requested_at = NULL, updated_at = NOW() WHERE id = $1;
 -- name: GetBotConfig :one
 SELECT * FROM bot.config WHERE id = 1;
 
+-- Every editable field is COALESCE'd so an omitted one keeps its stored value.
+--
+-- updated_by deliberately is not. It records who saved last, so it has to be
+-- overwritten on every write — wrapping it in COALESCE would make a caller that
+-- omits it silently leave the previous editor's name against someone else's change,
+-- which is worse than recording nobody. Every caller does supply it; the service is
+-- the only writer and always passes the acting admin.
 -- name: UpdateBotConfig :one
 UPDATE bot.config
 SET post_interval_seconds = COALESCE(sqlc.narg(post_interval_seconds), post_interval_seconds),

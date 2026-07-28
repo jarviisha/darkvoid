@@ -592,6 +592,13 @@ type UpdateBotConfigParams struct {
 	UpdatedBy           pgtype.UUID `json:"updated_by"`
 }
 
+// Every editable field is COALESCE'd so an omitted one keeps its stored value.
+//
+// updated_by deliberately is not. It records who saved last, so it has to be
+// overwritten on every write — wrapping it in COALESCE would make a caller that
+// omits it silently leave the previous editor's name against someone else's change,
+// which is worse than recording nobody. Every caller does supply it; the service is
+// the only writer and always passes the acting admin.
 func (q *Queries) UpdateBotConfig(ctx context.Context, arg UpdateBotConfigParams) (BotConfig, error) {
 	row := q.db.QueryRow(ctx, updateBotConfig,
 		arg.PostIntervalSeconds,

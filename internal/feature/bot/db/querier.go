@@ -80,6 +80,13 @@ type Querier interface {
 	// however long ago. Done in the same statement so there is no window where a
 	// disabled persona still looks like it has a run pending.
 	UpdateBot(ctx context.Context, arg UpdateBotParams) (BotBot, error)
+	// Every editable field is COALESCE'd so an omitted one keeps its stored value.
+	//
+	// updated_by deliberately is not. It records who saved last, so it has to be
+	// overwritten on every write — wrapping it in COALESCE would make a caller that
+	// omits it silently leave the previous editor's name against someone else's change,
+	// which is worse than recording nobody. Every caller does supply it; the service is
+	// the only writer and always passes the acting admin.
 	UpdateBotConfig(ctx context.Context, arg UpdateBotConfigParams) (BotConfig, error)
 }
 
