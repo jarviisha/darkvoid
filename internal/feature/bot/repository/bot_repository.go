@@ -10,6 +10,7 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/bot/db"
 	"github.com/jarviisha/darkvoid/internal/feature/bot/entity"
 	"github.com/jarviisha/darkvoid/internal/infrastructure/database"
+	apperrors "github.com/jarviisha/darkvoid/pkg/errors"
 )
 
 // BotRepository is the only thing that knows the bot schema. It maps the sqlc row
@@ -178,7 +179,16 @@ func (r *BotRepository) SetTopicEnabled(ctx context.Context, id uuid.UUID, enabl
 }
 
 func (r *BotRepository) DeleteTopic(ctx context.Context, id uuid.UUID) error {
-	return database.MapDBError(r.queries.DeleteTopic(ctx, id))
+	deleted, err := r.queries.DeleteTopic(ctx, id)
+	if err != nil {
+		return database.MapDBError(err)
+	}
+	// A zero-row delete means the id is unknown; surface it like the other topic
+	// writes do instead of reporting success for a deletion that did nothing.
+	if deleted == 0 {
+		return apperrors.ErrNotFound
+	}
+	return nil
 }
 
 // ─── Activity log ────────────────────────────────────────────────────────────

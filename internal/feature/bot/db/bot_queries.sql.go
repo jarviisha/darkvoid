@@ -124,13 +124,19 @@ func (q *Queries) DeleteBot(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-const deleteTopic = `-- name: DeleteTopic :exec
+const deleteTopic = `-- name: DeleteTopic :execrows
 DELETE FROM bot.topics WHERE id = $1
 `
 
-func (q *Queries) DeleteTopic(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteTopic, id)
-	return err
+// :execrows so the repository can report an unknown id as not-found instead of
+// swallowing a zero-row delete as success — DeleteBot and SetTopicEnabled both
+// answer 404 for the same situation.
+func (q *Queries) DeleteTopic(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTopic, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getBot = `-- name: GetBot :one
@@ -479,10 +485,16 @@ func (q *Queries) PruneRuns(ctx context.Context, createdAt pgtype.Timestamptz) (
 
 const requestBotRun = `-- name: RequestBotRun :one
 
-UPDATE bot.bots SET run_requested_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING id, username, display_name, style, enabled, user_id, run_requested_at, created_at, updated_at
+UPDATE bot.bots SET run_requested_at = NOW(), updated_at = NOW()
+WHERE id = $1 AND enabled
+RETURNING id, username, display_name, style, enabled, user_id, run_requested_at, created_at, updated_at
 `
 
 // ─── Run-now flag ────────────────────────────────────────────────────────────
+// The `AND enabled` predicate closes the race the service's pre-check leaves open:
+// a disable landing between the check and this write would otherwise record a
+// request that fires the moment the persona is re-enabled. No rows here means the
+// persona was deleted or disabled in flight; the service re-reads to tell which.
 func (q *Queries) RequestBotRun(ctx context.Context, id uuid.UUID) (BotBot, error) {
 	row := q.db.QueryRow(ctx, requestBotRun, id)
 	var i BotBot

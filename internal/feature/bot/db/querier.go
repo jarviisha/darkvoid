@@ -19,7 +19,10 @@ type Querier interface {
 	CreateRun(ctx context.Context, arg CreateRunParams) (BotRun, error)
 	CreateTopic(ctx context.Context, content string) (BotTopic, error)
 	DeleteBot(ctx context.Context, id uuid.UUID) error
-	DeleteTopic(ctx context.Context, id uuid.UUID) error
+	// :execrows so the repository can report an unknown id as not-found instead of
+	// swallowing a zero-row delete as success — DeleteBot and SetTopicEnabled both
+	// answer 404 for the same situation.
+	DeleteTopic(ctx context.Context, id uuid.UUID) (int64, error)
 	GetBot(ctx context.Context, id uuid.UUID) (BotBot, error)
 	GetBotByUsername(ctx context.Context, username string) (BotBot, error)
 	// ─── Config ──────────────────────────────────────────────────────────────────
@@ -69,6 +72,10 @@ type Querier interface {
 	// it costs well under a millisecond, which is cheaper than owning a cron.
 	PruneRuns(ctx context.Context, createdAt pgtype.Timestamptz) (int64, error)
 	// ─── Run-now flag ────────────────────────────────────────────────────────────
+	// The `AND enabled` predicate closes the race the service's pre-check leaves open:
+	// a disable landing between the check and this write would otherwise record a
+	// request that fires the moment the persona is re-enabled. No rows here means the
+	// persona was deleted or disabled in flight; the service re-reads to tell which.
 	RequestBotRun(ctx context.Context, id uuid.UUID) (BotBot, error)
 	SetTopicEnabled(ctx context.Context, arg SetTopicEnabledParams) (BotTopic, error)
 	// COALESCE over nullable args makes this a partial update: an omitted field keeps

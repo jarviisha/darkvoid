@@ -157,7 +157,9 @@ func (f *fakeStore) RequestBotRun(_ context.Context, id uuid.UUID) (*entity.Bot,
 		return nil, f.requestRunErr
 	}
 	for _, b := range f.bots {
-		if b.ID == id {
+		// Mirrors the write's `AND enabled` predicate: a disabled persona matches
+		// no rows, exactly like a deleted one.
+		if b.ID == id && b.Enabled {
 			now := time.Now()
 			b.RunRequestedAt = &now
 			return b, nil
@@ -238,7 +240,16 @@ func (f *fakeStore) SetTopicEnabled(_ context.Context, id uuid.UUID, enabled boo
 	return nil, errors.ErrNotFound
 }
 
-func (f *fakeStore) DeleteTopic(context.Context, uuid.UUID) error { return nil }
+func (f *fakeStore) DeleteTopic(_ context.Context, id uuid.UUID) error {
+	for i, tp := range f.topics {
+		if tp.ID == id {
+			f.topics = append(f.topics[:i], f.topics[i+1:]...)
+			return nil
+		}
+	}
+	// Mirrors the :execrows contract: a zero-row delete surfaces as not-found.
+	return errors.ErrNotFound
+}
 
 func (f *fakeStore) CreateRun(_ context.Context, run entity.NewRun) (*entity.Run, error) {
 	f.gotCreatedRun = &run
@@ -758,6 +769,8 @@ func TestCreateBot_ValidationError(t *testing.T) {
 		{"username too short", dto.CreateBotRequest{Username: "ab", DisplayName: "d", Style: "s"}},
 		{"username with a space", dto.CreateBotRequest{Username: "bot sky", DisplayName: "d", Style: "s"}},
 		{"no display name", dto.CreateBotRequest{Username: "bot_new", Style: "s"}},
+		{"display name past the column width", dto.CreateBotRequest{
+			Username: "bot_new", DisplayName: strings.Repeat("â", entity.MaxDisplayNameLen+1), Style: "s"}},
 		{"no style", dto.CreateBotRequest{Username: "bot_new", DisplayName: "d"}},
 	}
 
@@ -797,6 +810,25 @@ func TestUpdateBot_EmptyRequestRejected(t *testing.T) {
 	_, err := NewBotService(store).UpdateBot(context.Background(), b.ID, &dto.UpdateBotRequest{})
 	if err == nil {
 		t.Fatal("expected a rejection — an empty update would only touch updated_at")
+	}
+	if got := statusOf(t, err); got != 400 {
+		t.Errorf("status = %d, want 400", got)
+	}
+}
+
+// The column is VARCHAR(100); the service mirrors it so an oversized name is a 400
+// with a readable message, not a 22001 from the driver surfacing as a 500. The
+// bound counts runes because Postgres counts characters, not bytes.
+func TestUpdateBot_DisplayNamePastTheColumnWidthRejected(t *testing.T) {
+	store := newTestStore()
+	b := bot("bot_a", true)
+	store.bots = []*entity.Bot{b}
+
+	tooLong := strings.Repeat("â", entity.MaxDisplayNameLen+1)
+	_, err := NewBotService(store).UpdateBot(context.Background(), b.ID,
+		&dto.UpdateBotRequest{DisplayName: &tooLong})
+	if err == nil {
+		t.Fatal("expected a rejection")
 	}
 	if got := statusOf(t, err); got != 400 {
 		t.Errorf("status = %d, want 400", got)
@@ -1075,6 +1107,18 @@ func TestDeleteTopic_Success(t *testing.T) {
 	}
 }
 
+// DeleteBot and SetTopicEnabled both answer 404 for an unknown id; a delete that
+// removed nothing must not read as success for a double-click or a typo'd id.
+func TestDeleteTopic_UnknownIsNotFound(t *testing.T) {
+	err := NewBotService(newTestStore()).DeleteTopic(context.Background(), uuid.New())
+	if err == nil {
+		t.Fatal("expected a rejection")
+	}
+	if got := statusOf(t, err); got != 404 {
+		t.Errorf("status = %d, want 404", got)
+	}
+}
+
 // ─── Remaining persona and config paths ──────────────────────────────────────
 
 func TestDeleteBot_Success(t *testing.T) {
@@ -1118,6 +1162,30 @@ func TestRequestRun_DisabledPersonaIsRejected(t *testing.T) {
 	}
 	if disabled.RunRequested() {
 		t.Error("nothing should have been recorded for a persona that cannot act on it")
+	}
+}
+
+// A disable can land between the service's pre-check and the write; the UPDATE's
+// `AND enabled` predicate turns that into no rows. The answer must be the same 409
+// the pre-check gives, not a 404 for a persona that still exists — and nothing may
+// be recorded, or the request would fire the moment the persona is re-enabled.
+func TestRequestRun_DisableInFlightIsRejected(t *testing.T) {
+	store := newTestStore()
+	target := bot("bot_sky", true)
+	store.bots = []*entity.Bot{target}
+	// The pre-check sees an enabled persona; the write then matches no rows, as it
+	// would when the disable commits in between.
+	store.requestRunErr = errors.ErrNotFound
+
+	_, err := NewBotService(store).RequestRun(context.Background(), target.ID)
+	if err == nil {
+		t.Fatal("expected a rejection")
+	}
+	if got := statusOf(t, err); got != 409 {
+		t.Errorf("status = %d, want 409", got)
+	}
+	if target.RunRequested() {
+		t.Error("nothing should have been recorded for a request that cannot fire")
 	}
 }
 

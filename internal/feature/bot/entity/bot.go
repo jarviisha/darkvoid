@@ -4,6 +4,7 @@ import (
 	"math"
 	"regexp"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -191,3 +192,12 @@ var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,30}$`)
 
 // ValidUsername reports whether s can be registered as a bot account.
 func ValidUsername(s string) bool { return usernamePattern.MatchString(s) }
+
+// MaxDisplayNameLen mirrors the VARCHAR(100) column on bot.bots, enforced in the
+// service so an oversized name fails as a validation error rather than a string
+// truncation error from the driver.
+const MaxDisplayNameLen = 100
+
+// ValidDisplayName reports whether s fits the display_name column. Postgres
+// VARCHAR counts characters, not bytes, so this counts runes.
+func ValidDisplayName(s string) bool { return utf8.RuneCountInString(s) <= MaxDisplayNameLen }

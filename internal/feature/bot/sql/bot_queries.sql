@@ -58,8 +58,14 @@ UPDATE bot.bots SET user_id = $2, updated_at = NOW() WHERE id = $1;
 
 -- ─── Run-now flag ────────────────────────────────────────────────────────────
 
+-- The `AND enabled` predicate closes the race the service's pre-check leaves open:
+-- a disable landing between the check and this write would otherwise record a
+-- request that fires the moment the persona is re-enabled. No rows here means the
+-- persona was deleted or disabled in flight; the service re-reads to tell which.
 -- name: RequestBotRun :one
-UPDATE bot.bots SET run_requested_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *;
+UPDATE bot.bots SET run_requested_at = NOW(), updated_at = NOW()
+WHERE id = $1 AND enabled
+RETURNING *;
 
 -- name: ClearBotRunRequest :exec
 UPDATE bot.bots SET run_requested_at = NULL, updated_at = NOW() WHERE id = $1;
@@ -103,7 +109,10 @@ INSERT INTO bot.topics (content) VALUES ($1) RETURNING *;
 -- name: SetTopicEnabled :one
 UPDATE bot.topics SET enabled = $2 WHERE id = $1 RETURNING *;
 
--- name: DeleteTopic :exec
+-- :execrows so the repository can report an unknown id as not-found instead of
+-- swallowing a zero-row delete as success — DeleteBot and SetTopicEnabled both
+-- answer 404 for the same situation.
+-- name: DeleteTopic :execrows
 DELETE FROM bot.topics WHERE id = $1;
 
 -- ─── Activity log ────────────────────────────────────────────────────────────

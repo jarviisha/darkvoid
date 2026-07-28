@@ -85,6 +85,10 @@ func (s *BotService) CreateBot(ctx context.Context, req *dto.CreateBotRequest) (
 	if req.DisplayName == "" {
 		return nil, errors.NewValidationError("display_name", "is required")
 	}
+	if !entity.ValidDisplayName(req.DisplayName) {
+		return nil, errors.NewValidationError("display_name",
+			fmt.Sprintf("must be at most %d characters", entity.MaxDisplayNameLen))
+	}
 	if req.Style == "" {
 		return nil, errors.NewValidationError("style", "is required — it is the voice instruction sent to the model")
 	}
@@ -115,6 +119,10 @@ func (s *BotService) UpdateBot(ctx context.Context, id uuid.UUID, req *dto.Updat
 	}
 	if req.DisplayName != nil && *req.DisplayName == "" {
 		return nil, errors.NewValidationError("display_name", "cannot be empty")
+	}
+	if req.DisplayName != nil && !entity.ValidDisplayName(*req.DisplayName) {
+		return nil, errors.NewValidationError("display_name",
+			fmt.Sprintf("must be at most %d characters", entity.MaxDisplayNameLen))
 	}
 	if req.Style != nil && *req.Style == "" {
 		return nil, errors.NewValidationError("style", "cannot be empty")
@@ -174,13 +182,18 @@ func (s *BotService) RequestRun(ctx context.Context, id uuid.UUID) (*dto.BotResp
 			fmt.Sprintf("bot %q is disabled — enable it before asking for a run", target.Username))
 	}
 
-	// Between the check and the write an operator could disable the persona, leaving
-	// a flag that cannot fire. That is self-correcting: disabling clears the flag, so
-	// the next disable removes it.
+	// The write carries its own `AND enabled` predicate, so a disable landing between
+	// the check above and this write comes back as no rows instead of recording a
+	// request that would fire the moment someone re-enables the persona.
 	b, err := s.store.RequestBotRun(ctx, id)
 	if err != nil {
 		if errors.Is(err, errors.ErrNotFound) {
-			return nil, errors.NewNotFoundError("bot")
+			// Deleted or disabled in flight — re-read to answer with the right status.
+			if _, getErr := s.store.GetBot(ctx, id); errors.Is(getErr, errors.ErrNotFound) {
+				return nil, errors.NewNotFoundError("bot")
+			}
+			return nil, errors.NewConflictError(
+				fmt.Sprintf("bot %q is disabled — enable it before asking for a run", target.Username))
 		}
 		logger.LogError(ctx, err, "bot: failed to request a run", "bot_id", id)
 		return nil, err
@@ -319,6 +332,9 @@ func (s *BotService) SetTopicEnabled(ctx context.Context, id uuid.UUID, enabled 
 // subject should disappear entirely.
 func (s *BotService) DeleteTopic(ctx context.Context, id uuid.UUID) error {
 	if err := s.store.DeleteTopic(ctx, id); err != nil {
+		if errors.Is(err, errors.ErrNotFound) {
+			return errors.NewNotFoundError("topic")
+		}
 		logger.LogError(ctx, err, "bot: failed to delete topic", "topic_id", id)
 		return err
 	}
@@ -497,7 +513,9 @@ func (s *BotService) ReportRun(ctx context.Context, req *dto.ReportRunRequest) e
 	if req.HonoredRunRequest {
 		if err = s.store.ClearBotRunRequest(ctx, botID); err != nil {
 			// The run is already recorded, so failing here would make the bot retry a
-			// post it already made. Log and move on; the flag clears on the next report.
+			// post it already made. Log and move on. The cost is a duplicate, not a
+			// loss: the still-set flag reaches the bot's next plan and is honored once
+			// more, so a transient failure here means one extra post.
 			logger.LogError(ctx, err, "bot: failed to clear the run request", "bot_id", botID)
 		}
 	}
