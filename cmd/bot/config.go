@@ -46,7 +46,8 @@ type config struct {
 }
 
 // loadConfig reads bot configuration from the environment, loading a .env file
-// first when present (silently ignored otherwise, e.g. under systemd).
+// first when present (silently ignored otherwise, e.g. in the container, where
+// compose supplies the environment directly).
 //
 //	LOG_LEVEL            (default: "info")
 //	BOT_API_BASE_URL     (default: "http://localhost:8080/api/v1")

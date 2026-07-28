@@ -96,7 +96,7 @@ All config is loaded from `.env` via `pkg/config`. Update `.env.example` wheneve
 
 ### Bot control plane
 
-`cmd/bot` stays an external HTTP client — it dogfoods the public API rather than running in-process. It polls `GET /bot/plan` for its desired state and reports each attempt to `POST /bot/runs`, which is the only reason its activity is visible outside the bot host's journal.
+`cmd/bot` stays an external HTTP client — it dogfoods the public API rather than running in-process. It polls `GET /bot/plan` for its desired state and reports each attempt to `POST /bot/runs`, which is the only reason its activity is visible outside the bot process's own logs.
 
 Two accounts, deliberately: the **runner** holds the `bot` role and is the only one allowed on `/bot/*`; the **personas** hold no role and only publish their own posts. The bot registers a persona on first use but never the runner — an auto-created runner would lack the role, and the 403 on every plan fetch would read as a server fault. Grant it with `make ctl CTL_ARGS="user grant-role -username bot_runner -role bot"`.
 

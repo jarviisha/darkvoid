@@ -13,9 +13,9 @@
 // Not from here. The post interval, how many personas are active, the Gemini model
 // fallback chain, the personas themselves, and the topic pool are all served by
 // GET /bot/plan and edited through the admin API, so the bot re-reads them on every
-// tick and an operator changes behaviour without touching a unit file or restarting
-// anything. Each attempt is reported back to POST /bot/runs, which is the only
-// reason its activity is visible anywhere other than this host's journal.
+// tick and an operator changes behaviour without redeploying or restarting anything.
+// Each attempt is reported back to POST /bot/runs, which is the only reason its
+// activity is visible anywhere other than this process's own logs.
 //
 // The environment therefore carries only credentials and an address: BOT_API_BASE_URL,
 // BOT_PASSWORD (shared by the persona accounts), BOT_RUNNER_USERNAME/PASSWORD, and
