@@ -142,10 +142,10 @@ func newLoopRunner(t *testing.T, api *fakeAPI, gemini *httptest.Server) *runner 
 	r := &runner{
 		api:             &apiClient{baseURL: apiSrv.URL, http: apiSrv.Client(), now: time.Now},
 		gemini:          &geminiClient{baseURL: gemini.URL, apiKey: "k", http: gemini.Client()},
-		personaPassword: "Bot@12345",
+		personaPassword: fixturePassword,
 		rng:             rand.New(rand.NewSource(1)), //nolint:gosec // deterministic test rng
 	}
-	if err := r.api.LoginRunner(t.Context(), "runner", "Runner@12345"); err != nil {
+	if err := r.api.LoginRunner(t.Context(), "runner", "runner-pw-fixture"); err != nil {
 		t.Fatalf("runner login: %v", err)
 	}
 	return r
@@ -372,7 +372,7 @@ func TestRun_HonoredFlagTracksThePickedPersona(t *testing.T) {
 // on every post. The persona itself is refreshed so an edited voice takes effect
 // without a restart.
 func TestAccount_ReusesTheSessionAndRefreshesThePersona(t *testing.T) {
-	r := &runner{accounts: map[string]*botAccount{}, personaPassword: "Bot@12345"}
+	r := &runner{accounts: map[string]*botAccount{}, personaPassword: fixturePassword}
 
 	first := r.account(persona{id: "bot-1", username: "bot_sky", style: "giọng cũ"})
 	first.accessToken = "tok"

@@ -32,8 +32,10 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.RunnerUsername != "bot_runner" {
 		t.Errorf("RunnerUsername = %q, want default bot_runner", cfg.RunnerUsername)
 	}
-	if cfg.Password != "Bot@12345" {
-		t.Errorf("Password = %q, want default", cfg.Password)
+	// No default for the persona password on purpose: one would be a live credential
+	// published in this repository, letting anyone who reads it log in as a persona.
+	if cfg.Password != "" {
+		t.Errorf("Password = %q, want empty — a shipped default is a shipped credential", cfg.Password)
 	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel = %q, want info", cfg.LogLevel)
@@ -65,9 +67,9 @@ func TestLoadConfig_RuntimeSettingsAreNotReadFromTheEnvironment(t *testing.T) {
 func TestLoadConfig_EnvOverrides(t *testing.T) {
 	clearBotEnv(t)
 	t.Setenv("BOT_API_BASE_URL", "https://darkvoid-dev-api.jarviisha.com/api/v1")
-	t.Setenv("BOT_PASSWORD", "Persona@98765")
+	t.Setenv("BOT_PASSWORD", "persona-pw-fixture")
 	t.Setenv("BOT_RUNNER_USERNAME", "runner_prod")
-	t.Setenv("BOT_RUNNER_PASSWORD", "Runner@98765")
+	t.Setenv("BOT_RUNNER_PASSWORD", "runner-pw-fixture")
 	t.Setenv("GEMINI_API_KEY", "test-key")
 	t.Setenv("LOG_LEVEL", "debug")
 
@@ -76,10 +78,10 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 	if cfg.APIBaseURL != "https://darkvoid-dev-api.jarviisha.com/api/v1" {
 		t.Errorf("APIBaseURL = %q, want override", cfg.APIBaseURL)
 	}
-	if cfg.Password != "Persona@98765" {
+	if cfg.Password != "persona-pw-fixture" {
 		t.Errorf("Password = %q, want override", cfg.Password)
 	}
-	if cfg.RunnerUsername != "runner_prod" || cfg.RunnerPassword != "Runner@98765" {
+	if cfg.RunnerUsername != "runner_prod" || cfg.RunnerPassword != "runner-pw-fixture" {
 		t.Errorf("runner = %q/%q, want overrides", cfg.RunnerUsername, cfg.RunnerPassword)
 	}
 	if cfg.GeminiAPIKey != "test-key" {
@@ -99,23 +101,30 @@ func TestConfigMissing(t *testing.T) {
 		want []string
 	}{
 		{
-			name: "neither set",
+			name: "none set",
 			cfg:  config{},
-			want: []string{"GEMINI_API_KEY", "BOT_RUNNER_PASSWORD"},
+			want: []string{"GEMINI_API_KEY", "BOT_RUNNER_PASSWORD", "BOT_PASSWORD"},
 		},
 		{
 			name: "only the gemini key",
 			cfg:  config{GeminiAPIKey: "k"},
-			want: []string{"BOT_RUNNER_PASSWORD"},
+			want: []string{"BOT_RUNNER_PASSWORD", "BOT_PASSWORD"},
 		},
 		{
 			name: "only the runner password",
 			cfg:  config{RunnerPassword: "p"},
-			want: []string{"GEMINI_API_KEY"},
+			want: []string{"GEMINI_API_KEY", "BOT_PASSWORD"},
 		},
 		{
-			name: "both set",
+			// The persona password has no default, so forgetting it has to be reported
+			// rather than silently falling back to a credential shipped in the repo.
+			name: "only the persona password missing",
 			cfg:  config{GeminiAPIKey: "k", RunnerPassword: "p"},
+			want: []string{"BOT_PASSWORD"},
+		},
+		{
+			name: "all set",
+			cfg:  config{GeminiAPIKey: "k", RunnerPassword: "p", Password: "p"},
 			want: nil,
 		},
 	}

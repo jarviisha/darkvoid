@@ -207,7 +207,7 @@ func TestContract_RegisterRequest(t *testing.T) {
 		Username:    "bot_sky",
 		Email:       "bot_sky@bot.local",
 		DisplayName: "Sky Vũ",
-		Password:    "Bot@12345",
+		Password:    fixturePassword,
 	}
 
 	var server userdto.RegisterRequest

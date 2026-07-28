@@ -27,7 +27,10 @@ type config struct {
 	// e.g. "http://localhost:8080/api/v1".
 	APIBaseURL string
 	// Password is shared by all persona accounts, which are registered with it on
-	// first use (must satisfy the user password rules).
+	// first use (must satisfy the user password rules). Required, with no default:
+	// a default would be a live credential published in this repository, and any
+	// deployment that forgot to set it would let a reader of the source log in as
+	// its personas and post as them.
 	Password string
 	// RunnerUsername and RunnerPassword identify the account that holds the bot
 	// role. It is the only account allowed on /bot/*, and it is deliberately not
@@ -47,7 +50,7 @@ type config struct {
 //
 //	LOG_LEVEL            (default: "info")
 //	BOT_API_BASE_URL     (default: "http://localhost:8080/api/v1")
-//	BOT_PASSWORD         (default: "Bot@12345")
+//	BOT_PASSWORD         (default: "") — required
 //	BOT_RUNNER_USERNAME  (default: "bot_runner")
 //	BOT_RUNNER_PASSWORD  (default: "") — required
 //	GEMINI_API_KEY       (default: "") — required
@@ -58,7 +61,7 @@ func loadConfig() config {
 	return config{
 		LogLevel:       getEnv("LOG_LEVEL", "info"),
 		APIBaseURL:     getEnv("BOT_API_BASE_URL", "http://localhost:8080/api/v1"),
-		Password:       getEnv("BOT_PASSWORD", "Bot@12345"),
+		Password:       getEnv("BOT_PASSWORD", ""),
 		RunnerUsername: getEnv("BOT_RUNNER_USERNAME", "bot_runner"),
 		RunnerPassword: getEnv("BOT_RUNNER_PASSWORD", ""),
 		GeminiAPIKey:   getEnv("GEMINI_API_KEY", ""),
@@ -75,6 +78,9 @@ func (c config) missing() []string {
 	}
 	if c.RunnerPassword == "" {
 		out = append(out, "BOT_RUNNER_PASSWORD")
+	}
+	if c.Password == "" {
+		out = append(out, "BOT_PASSWORD")
 	}
 	return out
 }
