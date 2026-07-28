@@ -7,7 +7,15 @@
 # Override the deployment location / compose file per environment:
 #
 #   DARKVOID_DIR      deployment directory        (default: /opt/darkvoid-dev)
-#   DARKVOID_COMPOSE  compose file to use          (default: docker-compose.prod.yml)
+#   DARKVOID_COMPOSE  base compose file to use    (default: docker-compose.prod.yml)
+#
+# docker-compose.codohue.yml is a server-local override (not in this repo) that
+# attaches the app to the codohue stack's network and Redis. It is included here
+# whenever it exists, matching what the CD pipeline does, so every compose command
+# against this deployment describes the same stack. Running with only the base file
+# is not merely incomplete — it recreates the app detached from codohue, and the app
+# decides at boot whether codohue is reachable, so it then stays disabled for the
+# whole process with nothing but a startup warning to say so.
 #
 # Password input is never passed as a flag — reset-password/create prompt
 # interactively (echo off), or read DARKVOIDCTL_PASSWORD, which this wrapper
@@ -23,7 +31,12 @@ set -euo pipefail
 
 cd "${DARKVOID_DIR:-/opt/darkvoid-dev}"
 
-exec docker compose -f "${DARKVOID_COMPOSE:-docker-compose.prod.yml}" \
+compose_files=(-f "${DARKVOID_COMPOSE:-docker-compose.prod.yml}")
+if [ -f docker-compose.codohue.yml ]; then
+  compose_files+=(-f docker-compose.codohue.yml)
+fi
+
+exec docker compose "${compose_files[@]}" \
   --profile tools run --rm --no-deps \
   -e DARKVOIDCTL_PASSWORD \
   ctl "$@"
