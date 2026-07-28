@@ -1,8 +1,15 @@
 # Full stack: app + PostgreSQL + Redis
-# Usage: docker compose up -d
+# Usage: cp .env.example .env && docker compose up -d
 #
-# Works out of the box with development defaults.
-# Override any value by creating a .env file next to this file.
+# DB_PASSWORD is required — copy .env.example first. Everything else has a
+# development default you can override in that same .env.
+#
+# It is required rather than defaulted because the migrate services build a
+# postgres:// URL, and a literal password inside a connection string is what secret
+# scanners flag, correctly: a default credential in a public repository is a
+# credential in a public repository. Note that compose interpolates the whole file
+# up front, so a missing DB_PASSWORD fails every subcommand — `down` and `logs`
+# included, not just `up`.
 #
 # Optional profiles (activate with --profile or COMPOSE_PROFILES in .env):
 #   codohue  — CF recommender stack (qdrant + codohue-*): make docker-up-codohue
@@ -96,7 +103,7 @@ services:
         "-path",
         "/migrations/user",
         "-database",
-        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_user",
+        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_user",
         "up",
       ]
     depends_on:
@@ -113,7 +120,7 @@ services:
         "-path",
         "/migrations/post",
         "-database",
-        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_post",
+        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_post",
         "up",
       ]
     depends_on:
@@ -130,7 +137,7 @@ services:
         "-path",
         "/migrations/notification",
         "-database",
-        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_notification",
+        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_notification",
         "up",
       ]
     depends_on:
@@ -147,7 +154,7 @@ services:
         "-path",
         "/migrations/bot",
         "-database",
-        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_bot",
+        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_bot",
         "up",
       ]
     depends_on:
