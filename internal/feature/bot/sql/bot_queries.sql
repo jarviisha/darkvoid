@@ -24,12 +24,22 @@ LIMIT $1;
 
 -- COALESCE over nullable args makes this a partial update: an omitted field keeps
 -- its stored value rather than being cleared.
+--
+-- Disabling a persona also retires any pending run-now. The plan only carries
+-- enabled personas, so the request can no longer fire; leaving it set would make
+-- the persona post the instant someone re-enables it, answering a request made
+-- however long ago. Done in the same statement so there is no window where a
+-- disabled persona still looks like it has a run pending.
 -- name: UpdateBot :one
 UPDATE bot.bots
-SET display_name = COALESCE(sqlc.narg(display_name), display_name),
-    style         = COALESCE(sqlc.narg(style), style),
-    enabled       = COALESCE(sqlc.narg(enabled), enabled),
-    updated_at    = NOW()
+SET display_name     = COALESCE(sqlc.narg(display_name), display_name),
+    style            = COALESCE(sqlc.narg(style), style),
+    enabled          = COALESCE(sqlc.narg(enabled), enabled),
+    run_requested_at = CASE
+                           WHEN COALESCE(sqlc.narg(enabled), enabled) THEN run_requested_at
+                           ELSE NULL
+                       END,
+    updated_at       = NOW()
 WHERE id = sqlc.arg(id)
 RETURNING *;
 

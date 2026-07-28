@@ -739,7 +739,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Records a request for an immediate post. It takes effect when the bot next fetches its plan, so a 200 means the request was recorded — not that a post was made.",
+                "description": "Records a request for an immediate post. It takes effect when the bot next fetches its plan, so a 200 means the request was recorded — not that a post was made. A disabled persona is rejected, because the plan carries only enabled ones and the request could never fire.",
                 "produces": [
                     "application/json"
                 ],
@@ -785,6 +785,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Persona is disabled",
                         "schema": {
                             "$ref": "#/definitions/errors.ErrorResponse"
                         }

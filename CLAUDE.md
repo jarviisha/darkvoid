@@ -100,10 +100,13 @@ All config is loaded from `.env` via `pkg/config`. Update `.env.example` wheneve
 
 Two accounts, deliberately: the **runner** holds the `bot` role and is the only one allowed on `/bot/*`; the **personas** hold no role and only publish their own posts. The bot registers a persona on first use but never the runner — an auto-created runner would lack the role, and the 403 on every plan fetch would read as a server fault. Grant it with `make ctl CTL_ARGS="user grant-role -username bot_runner -role bot"`.
 
-Two gotchas worth knowing before changing this area:
+Run-now is the fiddly part — the plan is a filtered, capped view, so a request for a persona outside it silently never fires. Three rules keep that from happening, all of them load-bearing:
 
-- `ListEnabledBots` sorts pending run requests ahead of username order. The plan carries only `accounts` personas, so without it a run-now for a persona sorting past the cap sets a flag nothing ever reads.
-- `ReportRun` clears that flag only when the bot sets `honored_run_request`. Clearing on every report drops a request that arrived after the bot's last plan fetch.
+- `ListEnabledBots` sorts pending run requests ahead of username order, so a request for a persona sorting past the `accounts` cap still reaches the plan.
+- `RequestRun` rejects a disabled persona with 409 instead of recording a request the plan can never carry.
+- `UpdateBot` clears the flag when a persona is disabled, so re-enabling it later doesn't fire a request nobody remembers making.
+
+Separately, `ReportRun` clears the flag only when the bot sets `honored_run_request`. Clearing on every report drops a request that arrived after the bot's last plan fetch.
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,

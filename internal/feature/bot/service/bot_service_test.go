@@ -121,6 +121,11 @@ func (f *fakeStore) UpdateBot(_ context.Context, id uuid.UUID, displayName, styl
 		if enabled != nil {
 			b.Enabled = *enabled
 		}
+		// Mirrors the CASE in the query: disabling retires any pending run-now,
+		// which can no longer fire once the persona is out of the plan.
+		if !b.Enabled {
+			b.RunRequestedAt = nil
+		}
 		return b, nil
 	}
 	return nil, errors.ErrNotFound
@@ -972,6 +977,71 @@ func TestDeleteBot_UnknownIsNotFound(t *testing.T) {
 	}
 	if got := statusOf(t, err); got != 404 {
 		t.Errorf("status = %d, want 404", got)
+	}
+}
+
+// The plan carries only enabled personas, so a request for a disabled one could
+// never fire. Recording it and answering 200 would report a post as scheduled that
+// is never going to happen — the same silent no-op the pending-first ordering exists
+// to prevent for personas past the account cap.
+func TestRequestRun_DisabledPersonaIsRejected(t *testing.T) {
+	store := newTestStore()
+	disabled := bot("bot_sky", false)
+	store.bots = []*entity.Bot{disabled}
+
+	_, err := NewBotService(store).RequestRun(context.Background(), disabled.ID)
+	if err == nil {
+		t.Fatal("expected a rejection")
+	}
+	if got := statusOf(t, err); got != 409 {
+		t.Errorf("status = %d, want 409", got)
+	}
+	if disabled.RunRequested() {
+		t.Error("nothing should have been recorded for a persona that cannot act on it")
+	}
+}
+
+// Disabling has to retire a pending request, or re-enabling the persona weeks later
+// makes it post immediately for a request nobody remembers making.
+func TestUpdateBot_DisablingClearsAPendingRunRequest(t *testing.T) {
+	store := newTestStore()
+	requested := time.Now()
+	target := bot("bot_sky", true)
+	target.RunRequestedAt = &requested
+	store.bots = []*entity.Bot{target}
+
+	disabled := false
+	resp, err := NewBotService(store).UpdateBot(context.Background(), target.ID,
+		&dto.UpdateBotRequest{Enabled: &disabled})
+	if err != nil {
+		t.Fatalf("UpdateBot() error = %v", err)
+	}
+
+	if resp.Enabled {
+		t.Error("Enabled = true, want false")
+	}
+	if resp.RunRequestedAt != nil {
+		t.Errorf("run_requested_at = %v, want it retired alongside the persona", *resp.RunRequestedAt)
+	}
+}
+
+// Re-enabling must not resurrect anything, and an unrelated edit must leave a
+// genuine pending request alone.
+func TestUpdateBot_UnrelatedEditKeepsAPendingRunRequest(t *testing.T) {
+	store := newTestStore()
+	requested := time.Now()
+	target := bot("bot_sky", true)
+	target.RunRequestedAt = &requested
+	store.bots = []*entity.Bot{target}
+
+	style := "giọng mới"
+	resp, err := NewBotService(store).UpdateBot(context.Background(), target.ID,
+		&dto.UpdateBotRequest{Style: &style})
+	if err != nil {
+		t.Fatalf("UpdateBot() error = %v", err)
+	}
+	if resp.RunRequestedAt == nil {
+		t.Error("editing the voice should not discard a pending run request")
 	}
 }
 

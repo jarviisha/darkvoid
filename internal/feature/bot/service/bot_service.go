@@ -146,7 +146,29 @@ func (s *BotService) DeleteBot(ctx context.Context, id uuid.UUID) error {
 // RequestRun asks for an immediate post from one persona, out of band from the
 // interval. It takes effect when the bot next fetches its plan, so the operator is
 // told the request was recorded rather than that a post was made.
+//
+// A disabled persona is rejected rather than recorded. The plan carries only enabled
+// personas, so the request could never fire, and answering 200 would report a post
+// as scheduled that is never going to happen. Enabling it here instead would be
+// worse — an operator asking for one post does not expect the persona to resume its
+// normal cadence too.
 func (s *BotService) RequestRun(ctx context.Context, id uuid.UUID) (*dto.BotResponse, error) {
+	target, err := s.store.GetBot(ctx, id)
+	if err != nil {
+		if errors.Is(err, errors.ErrNotFound) {
+			return nil, errors.NewNotFoundError("bot")
+		}
+		logger.LogError(ctx, err, "bot: failed to load the persona for a run request", "bot_id", id)
+		return nil, err
+	}
+	if !target.Enabled {
+		return nil, errors.NewConflictError(
+			fmt.Sprintf("bot %q is disabled — enable it before asking for a run", target.Username))
+	}
+
+	// Between the check and the write an operator could disable the persona, leaving
+	// a flag that cannot fire. That is self-correcting: disabling clears the flag, so
+	// the next disable removes it.
 	b, err := s.store.RequestBotRun(ctx, id)
 	if err != nil {
 		if errors.Is(err, errors.ErrNotFound) {

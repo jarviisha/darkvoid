@@ -494,10 +494,14 @@ func (q *Queries) SetTopicEnabled(ctx context.Context, arg SetTopicEnabledParams
 
 const updateBot = `-- name: UpdateBot :one
 UPDATE bot.bots
-SET display_name = COALESCE($1, display_name),
-    style         = COALESCE($2, style),
-    enabled       = COALESCE($3, enabled),
-    updated_at    = NOW()
+SET display_name     = COALESCE($1, display_name),
+    style            = COALESCE($2, style),
+    enabled          = COALESCE($3, enabled),
+    run_requested_at = CASE
+                           WHEN COALESCE($3, enabled) THEN run_requested_at
+                           ELSE NULL
+                       END,
+    updated_at       = NOW()
 WHERE id = $4
 RETURNING id, username, display_name, style, enabled, user_id, run_requested_at, created_at, updated_at
 `
@@ -511,6 +515,12 @@ type UpdateBotParams struct {
 
 // COALESCE over nullable args makes this a partial update: an omitted field keeps
 // its stored value rather than being cleared.
+//
+// Disabling a persona also retires any pending run-now. The plan only carries
+// enabled personas, so the request can no longer fire; leaving it set would make
+// the persona post the instant someone re-enables it, answering a request made
+// however long ago. Done in the same statement so there is no window where a
+// disabled persona still looks like it has a run pending.
 func (q *Queries) UpdateBot(ctx context.Context, arg UpdateBotParams) (BotBot, error) {
 	row := q.db.QueryRow(ctx, updateBot,
 		arg.DisplayName,

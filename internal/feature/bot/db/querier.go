@@ -56,6 +56,12 @@ type Querier interface {
 	SetTopicEnabled(ctx context.Context, arg SetTopicEnabledParams) (BotTopic, error)
 	// COALESCE over nullable args makes this a partial update: an omitted field keeps
 	// its stored value rather than being cleared.
+	//
+	// Disabling a persona also retires any pending run-now. The plan only carries
+	// enabled personas, so the request can no longer fire; leaving it set would make
+	// the persona post the instant someone re-enables it, answering a request made
+	// however long ago. Done in the same statement so there is no window where a
+	// disabled persona still looks like it has a run pending.
 	UpdateBot(ctx context.Context, arg UpdateBotParams) (BotBot, error)
 	UpdateBotConfig(ctx context.Context, arg UpdateBotConfigParams) (BotConfig, error)
 }

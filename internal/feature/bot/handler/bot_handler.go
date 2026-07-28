@@ -146,7 +146,7 @@ func (h *BotHandler) DeleteBot(w http.ResponseWriter, r *http.Request) {
 // RequestRun godoc
 //
 //	@Summary		Ask a persona to post now
-//	@Description	Records a request for an immediate post. It takes effect when the bot next fetches its plan, so a 200 means the request was recorded — not that a post was made.
+//	@Description	Records a request for an immediate post. It takes effect when the bot next fetches its plan, so a 200 means the request was recorded — not that a post was made. A disabled persona is rejected, because the plan carries only enabled ones and the request could never fire.
 //	@Tags			admin,bot
 //	@Produce		json
 //	@Param			id	path		string	true	"Persona UUID"
@@ -155,6 +155,7 @@ func (h *BotHandler) DeleteBot(w http.ResponseWriter, r *http.Request) {
 //	@Failure		401	{object}	errors.ErrorResponse
 //	@Failure		403	{object}	errors.ErrorResponse
 //	@Failure		404	{object}	errors.ErrorResponse
+//	@Failure		409	{object}	errors.ErrorResponse	"Persona is disabled"
 //	@ID				adminRequestBotRun
 //	@Router			/admin/bots/{id}/run-now [post]
 //	@Security		BearerAuth
