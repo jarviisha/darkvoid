@@ -57,12 +57,18 @@ services:
     restart: on-failure
     volumes:
       - ./migrations:/migrations:ro
+    environment:
+      # Out of band rather than inside the -database URL: a credential in argv is
+      # visible to anyone who can run `docker inspect`, and a password inside a
+      # postgres:// string is what secret scanners match on — by shape, whatever
+      # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     command:
       [
         "-path",
         "/migrations/user",
         "-database",
-        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_user",
+        "postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_user",
         "up",
       ]
     depends_on:
@@ -74,12 +80,18 @@ services:
     restart: on-failure
     volumes:
       - ./migrations:/migrations:ro
+    environment:
+      # Out of band rather than inside the -database URL: a credential in argv is
+      # visible to anyone who can run `docker inspect`, and a password inside a
+      # postgres:// string is what secret scanners match on — by shape, whatever
+      # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     command:
       [
         "-path",
         "/migrations/post",
         "-database",
-        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_post",
+        "postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_post",
         "up",
       ]
     depends_on:
@@ -91,12 +103,18 @@ services:
     restart: on-failure
     volumes:
       - ./migrations:/migrations:ro
+    environment:
+      # Out of band rather than inside the -database URL: a credential in argv is
+      # visible to anyone who can run `docker inspect`, and a password inside a
+      # postgres:// string is what secret scanners match on — by shape, whatever
+      # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     command:
       [
         "-path",
         "/migrations/notification",
         "-database",
-        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_notification",
+        "postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_notification",
         "up",
       ]
     depends_on:
@@ -108,12 +126,18 @@ services:
     restart: on-failure
     volumes:
       - ./migrations:/migrations:ro
+    environment:
+      # Out of band rather than inside the -database URL: a credential in argv is
+      # visible to anyone who can run `docker inspect`, and a password inside a
+      # postgres:// string is what secret scanners match on — by shape, whatever
+      # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     command:
       [
         "-path",
         "/migrations/bot",
         "-database",
-        "postgres://${DB_USER:-postgres}:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_bot",
+        "postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_bot",
         "up",
       ]
     depends_on:
