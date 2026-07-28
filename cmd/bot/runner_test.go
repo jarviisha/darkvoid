@@ -23,6 +23,8 @@ type fakeAPI struct {
 	plan plan
 	// planErrors makes the first N plan fetches fail, to exercise the retry path.
 	planErrors int
+	// reportErrors makes the first N run reports fail, to exercise the report retry.
+	reportErrors int
 
 	planFetches int
 	registers   []string
@@ -81,6 +83,11 @@ func (f *fakeAPI) server(t *testing.T) *httptest.Server {
 			writeJSON(w, http.StatusOK, f.plan)
 
 		case r.URL.Path == "/bot/runs":
+			if f.reportErrors > 0 {
+				f.reportErrors--
+				http.Error(w, `{"error":"boom"}`, http.StatusInternalServerError)
+				return
+			}
 			var report runReport
 			_ = json.NewDecoder(r.Body).Decode(&report)
 			f.reports = append(f.reports, report)
@@ -310,6 +317,59 @@ func TestRun_RetriesAfterAPlanFetchFailure(t *testing.T) {
 // ─── Persona selection ───────────────────────────────────────────────────────
 
 // An operator asked for this one explicitly, so it beats the random draw.
+// TestPlanInterval only pins the seconds→Duration conversion; this pins that the
+// loop actually waits the plan's interval between posts. With the plan at 1s and a
+// 10s deadline, a regression that waited planRetryInterval (30s) instead would end
+// the run at the deadline having published a single post.
+func TestRun_WaitBetweenPostsComesFromThePlan(t *testing.T) {
+	api := newFakeAPI(testPlan(planBotFor("bot-1", "bot_sky", false)))
+	r := newLoopRunner(t, api, geminiServer(t, "Sáng nay trời đẹp quá.", http.StatusOK))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	r.run(ctx, 2)
+
+	if got := api.snapshot(); len(got.posts) != 2 {
+		t.Fatalf("published %d posts, want 2 — the wait between posts must come from the plan", len(got.posts))
+	}
+}
+
+// A dropped report costs a duplicate run-now post: the server clears its pending
+// flag only on the report, so losing one means the same request is honored again
+// next tick. A transient failure is therefore retried, not just logged.
+func TestReport_RetriesATransientFailure(t *testing.T) {
+	api := newFakeAPI(testPlan(planBotFor("bot-1", "bot_sky", false)))
+	api.reportErrors = 1
+	r := newLoopRunner(t, api, geminiServer(t, "Nội dung cà phê sáng.", http.StatusOK))
+
+	r.run(t.Context(), 1)
+
+	if got := api.snapshot(); len(got.reports) != 1 {
+		t.Fatalf("recorded %d reports, want 1 — the retry should have landed it", len(got.reports))
+	}
+}
+
+// A SIGTERM landing mid-attempt cancels the loop's context before the report goes
+// out. The report detaches from that context, or every shutdown that interrupted a
+// post would log a spurious failure and the aborted attempt would never reach the
+// server-side activity log.
+func TestReport_SurvivesACancelledLoopContext(t *testing.T) {
+	api := newFakeAPI(testPlan(planBotFor("bot-1", "bot_sky", false)))
+	r := newLoopRunner(t, api, geminiServer(t, "không dùng đến", http.StatusOK))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	reason := "cut short by shutdown"
+	r.report(ctx, persona{id: "bot-1", username: "bot_sky"}, runReport{
+		BotID: "bot-1", Status: "error", Error: &reason,
+	})
+
+	if got := api.snapshot(); len(got.reports) != 1 {
+		t.Fatalf("recorded %d reports, want 1 — the report must outlive the loop's context", len(got.reports))
+	}
+}
+
 func TestPick_PrefersAPendingRunRequest(t *testing.T) {
 	r := &runner{rng: rand.New(rand.NewSource(1))} //nolint:gosec // deterministic test rng
 	p := testPlan(

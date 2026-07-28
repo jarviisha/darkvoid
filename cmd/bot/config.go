@@ -12,6 +12,17 @@ import (
 // when the fetch itself fails there is nothing to read it from.
 const planRetryInterval = 30 * time.Second
 
+// Run reports are retried because a lost one costs more than a late one: for a
+// run-now attempt the server clears its pending flag only on the report, so a
+// dropped report means the same request is honored again next tick — a duplicate
+// post the operator asked for once. The timeout bounds how long a report can hold
+// up shutdown, since reporting detaches from the loop's context.
+const (
+	reportAttempts   = 3
+	reportRetryDelay = time.Second
+	reportTimeout    = 20 * time.Second
+)
+
 // config holds everything the content bot needs from its environment, which is now
 // only credentials and an address. Post interval, account count, model fallback
 // chain, personas, and topics all come from GET /bot/plan instead, so an operator

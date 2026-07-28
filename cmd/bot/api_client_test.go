@@ -75,6 +75,32 @@ func TestEnsureLogin_RegistersWhenLoginFails(t *testing.T) {
 	}
 }
 
+// A wrong BOT_PASSWORD for an existing persona used to surface as "register:
+// status 409: username already exists" — pointing the operator at registration
+// when the fault is the credential, repeated futilely every tick.
+func TestEnsureLogin_WrongPasswordNamesTheCredential(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth/login":
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
+		case "/auth/register":
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	acc := &botAccount{persona: testPersona(), password: fixturePassword}
+	err := newTestClient(srv).EnsureLogin(context.Background(), acc)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "BOT_PASSWORD") {
+		t.Errorf("error = %q, want it to point at the credential", err)
+	}
+}
+
 func TestEnsureLogin_SkipsWhenTokenValid(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected request %s", r.URL.Path)

@@ -274,6 +274,12 @@ func (c *apiClient) EnsureLogin(ctx context.Context, acc *botAccount) error {
 		if err != nil {
 			return err
 		}
+		if status == http.StatusConflict {
+			// The login 401'd but the username is taken: the account exists and the
+			// password is what's wrong. Reporting the register 409 here would point
+			// the operator at registration when the fault is the credential.
+			return fmt.Errorf("login %s: the account exists but the password was rejected — check BOT_PASSWORD", acc.name())
+		}
 		if status != http.StatusCreated && status != http.StatusOK {
 			return fmt.Errorf("register %s: status %d: %s", acc.name(), status, truncate(string(body), 200))
 		}

@@ -229,13 +229,32 @@ func (r *runner) account(per persona) *botAccount {
 	return acc
 }
 
-// report sends the outcome to the activity log. A reporting failure is logged and
-// swallowed: the post itself already happened, and failing here would make the bot
-// treat a published post as an error.
+// report sends the outcome to the activity log. It detaches from the caller's
+// context: a SIGTERM landing mid-attempt cancels the loop's context before this
+// runs, and without the detach every shutdown that interrupted a post logged a
+// spurious reporting failure and the aborted attempt never reached the server.
+//
+// Transient failures are retried (see the constants in config.go for why), then
+// logged and swallowed: the post itself already happened, and failing here would
+// make the bot treat a published post as an error.
 func (r *runner) report(ctx context.Context, per persona, report runReport) {
-	if err := r.api.ReportRun(ctx, report); err != nil {
-		logger.Warn(ctx, "failed to report the run", "bot", per.username, "error", err)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reportTimeout)
+	defer cancel()
+
+	var err error
+	for attempt := 1; attempt <= reportAttempts; attempt++ {
+		if err = r.api.ReportRun(ctx, report); err == nil {
+			return
+		}
+		if attempt == reportAttempts || ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(reportRetryDelay):
+		}
 	}
+	logger.Warn(ctx, "failed to report the run", "bot", per.username, "error", err)
 }
 
 // failedRun builds an error report. ModelUsed is included when a model was actually
