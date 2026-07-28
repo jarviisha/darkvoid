@@ -150,7 +150,17 @@ func (r NewRun) OutcomeConsistent() bool {
 	}
 }
 
-// RunStats summarises one persona's recent activity for the admin list. The error
+// RunRetention is how long the activity log keeps a run. It bounds both the table
+// and the cost of reading it: without a limit the log grows forever — at the default
+// 30s interval that is ~2,880 rows per persona per day — and the per-persona summary
+// on the admin list has to aggregate all of it on every page load.
+//
+// It is deliberately the only definition of the window. Both the prune and the stats
+// query take it as a parameter, so a summary can never describe a period the log no
+// longer covers.
+const RunRetention = 30 * 24 * time.Hour
+
+// RunStats summarises one persona's recent activity within RunRetention. The error
 // text is deliberately absent: fetching it per persona would be a query per row,
 // and the activity log already serves it.
 type RunStats struct {

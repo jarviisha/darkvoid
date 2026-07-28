@@ -27,10 +27,18 @@ type BotService struct {
 	// posts is optional — nil means the activity log omits post previews rather
 	// than failing, so the log works before the post feature is wired.
 	posts postReader
+	// now is swappable so the retention window is testable without waiting a month.
+	now func() time.Time
 }
 
 func NewBotService(store botStore) *BotService {
-	return &BotService{store: store}
+	return &BotService{store: store, now: time.Now}
+}
+
+// retentionCutoff is the oldest run the log keeps. Both the prune and the per-persona
+// summary derive from it, so the summary can never cover a period the log has dropped.
+func (s *BotService) retentionCutoff() time.Time {
+	return s.now().Add(-entity.RunRetention)
 }
 
 // WithPostReader attaches the post preview source. Called at wire-up time, because
@@ -50,7 +58,7 @@ func (s *BotService) ListBots(ctx context.Context) (*dto.ListBotsResponse, error
 		return nil, err
 	}
 
-	stats, err := s.store.ListRunStats(ctx)
+	stats, err := s.store.ListRunStats(ctx, s.retentionCutoff())
 	if err != nil {
 		logger.LogError(ctx, err, "bot: failed to load run stats")
 		return nil, err
@@ -491,8 +499,29 @@ func (s *BotService) ReportRun(ctx context.Context, req *dto.ReportRunRequest) e
 		}
 	}
 
+	s.pruneOldRuns(ctx)
+
 	logger.Info(ctx, "bot: run recorded", "bot_id", botID, "status", status)
 	return nil
+}
+
+// pruneOldRuns drops runs past the retention window. It rides along with each report
+// instead of a scheduler: in steady state there is nothing to delete and the indexed
+// probe costs a fraction of a millisecond, which is cheaper than owning a cron job
+// for a table only this method writes to.
+//
+// A failure is logged and swallowed. The run it accompanies is already recorded, and
+// housekeeping must not turn a published post into a reported error.
+func (s *BotService) pruneOldRuns(ctx context.Context) {
+	deleted, err := s.store.PruneRuns(ctx, s.retentionCutoff())
+	if err != nil {
+		logger.Warn(ctx, "bot: failed to prune the activity log", "error", err)
+		return
+	}
+	if deleted > 0 {
+		logger.Info(ctx, "bot: pruned expired runs",
+			"deleted", deleted, "retention", entity.RunRetention.String())
+	}
 }
 
 // LinkIdentity records which user account a persona posts as, reported by the bot

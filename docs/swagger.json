@@ -24,7 +24,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns every content-bot persona with a summary of its recent activity. The error text behind last_error_at is in the activity log, not here.",
+                "description": "Returns every content-bot persona with a summary of its recent activity. The error text behind last_error_at is in the activity log, not here, and both timestamps cover only the log's retention window rather than all time.",
                 "produces": [
                     "application/json"
                 ],

@@ -8,6 +8,10 @@ import "github.com/jarviisha/darkvoid/internal/pagination"
 // BotResponse is the admin view of one persona, including a summary of its recent
 // activity. The error text behind LastErrorAt lives in the activity log rather
 // than here, so listing personas stays at a fixed number of queries.
+//
+// LastSuccessAt and LastErrorAt are the most recent of each *within the activity
+// log's retention window*, not for all time. Runs past it are deleted, so a persona
+// whose last post predates the window reports no timestamp rather than a stale one.
 type BotResponse struct {
 	ID               string  `json:"id"                          example:"550e8400-e29b-41d4-a716-446655440000"`
 	Username         string  `json:"username"                    example:"bot_sky"`

@@ -218,14 +218,25 @@ func (r *BotRepository) CountRuns(ctx context.Context, botID *uuid.UUID) (int64,
 	return count, nil
 }
 
-// ListRunStats returns one summary row per persona that has any recorded runs.
-// Personas that have never run are absent, not zeroed.
-func (r *BotRepository) ListRunStats(ctx context.Context) ([]*entity.RunStats, error) {
-	rows, err := r.queries.ListBotRunStats(ctx)
+// ListRunStats returns one summary row per persona with runs inside the retention
+// window. Personas that have never run, or whose runs have all aged out, are absent
+// rather than zeroed.
+func (r *BotRepository) ListRunStats(ctx context.Context, since time.Time) ([]*entity.RunStats, error) {
+	rows, err := r.queries.ListBotRunStats(ctx, pgtype.Timestamptz{Time: since, Valid: true})
 	if err != nil {
 		return nil, database.MapDBError(err)
 	}
 	return mapRows(rows, rowToRunStats), nil
+}
+
+// PruneRuns drops runs older than the cutoff and reports how many went. Errors are
+// the caller's to decide on: pruning is maintenance, not part of recording a run.
+func (r *BotRepository) PruneRuns(ctx context.Context, before time.Time) (int64, error) {
+	deleted, err := r.queries.PruneRuns(ctx, pgtype.Timestamptz{Time: before, Valid: true})
+	if err != nil {
+		return 0, database.MapDBError(err)
+	}
+	return deleted, nil
 }
 
 // ─── Row mapping ─────────────────────────────────────────────────────────────

@@ -28,7 +28,7 @@ func NewBotHandler(botService botService) *BotHandler {
 // ListBots godoc
 //
 //	@Summary		List bot personas
-//	@Description	Returns every content-bot persona with a summary of its recent activity. The error text behind last_error_at is in the activity log, not here.
+//	@Description	Returns every content-bot persona with a summary of its recent activity. The error text behind last_error_at is in the activity log, not here, and both timestamps cover only the log's retention window rather than all time.
 //	@Tags			admin,bot
 //	@Produce		json
 //	@Success		200	{object}	dto.ListBotsResponse

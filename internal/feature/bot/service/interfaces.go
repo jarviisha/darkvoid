@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jarviisha/darkvoid/internal/feature/bot/entity"
@@ -36,7 +37,11 @@ type botStore interface {
 	CreateRun(ctx context.Context, run entity.NewRun) (*entity.Run, error)
 	ListRuns(ctx context.Context, botID *uuid.UUID, limit, offset int32) ([]*entity.Run, error)
 	CountRuns(ctx context.Context, botID *uuid.UUID) (int64, error)
-	ListRunStats(ctx context.Context) ([]*entity.RunStats, error)
+	// ListRunStats summarises runs recorded at or after since, which is always the
+	// retention cutoff — a summary must not describe a period the log no longer covers.
+	ListRunStats(ctx context.Context, since time.Time) ([]*entity.RunStats, error)
+	// PruneRuns drops runs older than before and reports how many went.
+	PruneRuns(ctx context.Context, before time.Time) (int64, error)
 }
 
 // postReader is the narrow interface the activity log needs from the post feature,

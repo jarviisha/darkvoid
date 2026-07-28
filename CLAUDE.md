@@ -108,6 +108,8 @@ Run-now is the fiddly part — the plan is a filtered, capped view, so a request
 
 Separately, `ReportRun` clears the flag only when the bot sets `honored_run_request`. Clearing on every report drops a request that arrived after the bot's last plan fetch.
 
+**Activity-log retention.** `entity.RunRetention` (30 days) is the single definition of the window, and both the prune and the per-persona summary on `GET /admin/bots` take it as a parameter — so the summary can never describe a period the log has dropped. `last_success_at` / `last_error_at` therefore mean "within the window", not "ever". Pruning rides along with each `ReportRun` rather than a scheduler: in steady state the indexed probe deletes nothing and costs ~0.1ms, cheaper than owning a cron for a table only that method writes to. Measured before changing anything — at 210k rows the unbounded aggregate took 45ms and grew linearly; a per-persona subquery rewrite looked faster and measured 250ms because the planner walks the whole `created_at` index for a persona with no rows. Bounding the data, not restructuring the query, was the fix.
+
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan

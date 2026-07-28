@@ -31,7 +31,10 @@ type fakeStore struct {
 	configErr     error
 	clearErr      error
 	requestRunErr error
+	pruneErr      error
 
+	gotStatsSince   time.Time
+	gotPruneBefore  *time.Time
 	gotEnabledLimit int32
 	gotConfigUpdate *entity.ConfigUpdate
 	gotCreatedRun   *entity.NewRun
@@ -249,7 +252,28 @@ func (f *fakeStore) CountRuns(context.Context, *uuid.UUID) (int64, error) {
 	return int64(len(f.runs)), nil
 }
 
-func (f *fakeStore) ListRunStats(context.Context) ([]*entity.RunStats, error) { return f.stats, nil }
+func (f *fakeStore) ListRunStats(_ context.Context, since time.Time) ([]*entity.RunStats, error) {
+	f.gotStatsSince = since
+	return f.stats, nil
+}
+
+func (f *fakeStore) PruneRuns(_ context.Context, before time.Time) (int64, error) {
+	f.gotPruneBefore = &before
+	if f.pruneErr != nil {
+		return 0, f.pruneErr
+	}
+	kept := f.runs[:0]
+	var deleted int64
+	for _, r := range f.runs {
+		if r.CreatedAt.Before(before) {
+			deleted++
+			continue
+		}
+		kept = append(kept, r)
+	}
+	f.runs = kept
+	return deleted, nil
+}
 
 // fakePostReader returns canned previews, or an error to prove the log degrades.
 type fakePostReader struct {
@@ -542,6 +566,75 @@ func TestReportRun_ClearFailureDoesNotFailTheReport(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("ReportRun() error = %v, want nil — the run was already recorded", err)
+	}
+}
+
+// ─── Retention ───────────────────────────────────────────────────────────────
+
+// withClock pins the service's clock so the retention window is testable without
+// waiting a month.
+func withClock(svc *BotService, at time.Time) *BotService {
+	svc.now = func() time.Time { return at }
+	return svc
+}
+
+// Without a bound the log grows for as long as the bot runs, and the per-persona
+// summary on the admin list has to aggregate all of it on every page load.
+func TestReportRun_PrunesPastTheRetentionWindow(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	store := newTestStore()
+	b := bot("bot_a", true)
+	store.bots = []*entity.Bot{b}
+	postID := uuid.New().String()
+
+	err := withClock(NewBotService(store), now).ReportRun(context.Background(), &dto.ReportRunRequest{
+		BotID: b.ID.String(), Status: "success", PostID: &postID,
+	})
+	if err != nil {
+		t.Fatalf("ReportRun() error = %v", err)
+	}
+
+	if store.gotPruneBefore == nil {
+		t.Fatal("recording a run should also prune the log")
+	}
+	if want := now.Add(-entity.RunRetention); !store.gotPruneBefore.Equal(want) {
+		t.Errorf("pruned before %v, want %v", store.gotPruneBefore, want)
+	}
+}
+
+// The run is already recorded by the time pruning happens, so housekeeping must not
+// turn a published post into a reported error.
+func TestReportRun_PruneFailureDoesNotFailTheReport(t *testing.T) {
+	store := newTestStore()
+	store.pruneErr = errors.ErrInternal
+	b := bot("bot_a", true)
+	store.bots = []*entity.Bot{b}
+	postID := uuid.New().String()
+
+	err := NewBotService(store).ReportRun(context.Background(), &dto.ReportRunRequest{
+		BotID: b.ID.String(), Status: "success", PostID: &postID,
+	})
+	if err != nil {
+		t.Errorf("ReportRun() error = %v, want nil — the run was already recorded", err)
+	}
+	if store.gotCreatedRun == nil {
+		t.Error("the run should still have been recorded")
+	}
+}
+
+// The summary must not describe a period the log no longer covers, so it reads from
+// the same cutoff the prune deletes at.
+func TestListBots_SummarisesOnlyTheRetainedWindow(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	store := newTestStore()
+	store.bots = []*entity.Bot{bot("bot_a", true)}
+
+	if _, err := withClock(NewBotService(store), now).ListBots(context.Background()); err != nil {
+		t.Fatalf("ListBots() error = %v", err)
+	}
+
+	if want := now.Add(-entity.RunRetention); !store.gotStatsSince.Equal(want) {
+		t.Errorf("stats read from %v, want the retention cutoff %v", store.gotStatsSince, want)
 	}
 }
 
