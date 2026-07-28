@@ -279,7 +279,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Clears the global pause. The personas that were enabled before resume posting.",
+                "description": "Clears the global pause. The personas that were enabled before the pause resume posting.",
                 "produces": [
                     "application/json"
                 ],

@@ -133,7 +133,7 @@ docker-up-app: ## Start only the app container and connect to external/local inf
 docker-up-codohue: ## Start Docker containers including Codohue CF recommender (requires CODOHUE_NAMESPACE_KEY)
 	$(DOCKER_COMPOSE) --profile codohue up -d
 
-docker-up-bot: ## Start the content bot container (needs GEMINI_API_KEY + BOT_RUNNER_PASSWORD in .env)
+docker-up-bot: ## Start the content bot container (needs GEMINI_API_KEY + BOT_RUNNER_PASSWORD + BOT_PASSWORD in .env)
 	$(DOCKER_COMPOSE) --profile bot up -d bot
 
 docker-down-bot: ## Stop the content bot container

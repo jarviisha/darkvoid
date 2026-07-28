@@ -227,15 +227,15 @@ services:
   #   docker compose -f docker-compose.prod.yml --profile bot up -d bot
   #   docker compose -f docker-compose.prod.yml logs -f bot
   #
-  # This is the only supported way to run it in production, so GEMINI_API_KEY and
-  # BOT_RUNNER_PASSWORD live in this stack's .env — keep that file readable only by
-  # the deploy user, since the app and the bot now share it.
+  # This is the only supported way to run it in production, so GEMINI_API_KEY,
+  # BOT_RUNNER_PASSWORD, and BOT_PASSWORD live in this stack's .env — keep that file
+  # readable only by the deploy user, since the app and the bot now share it.
   #
   # BOT_API_BASE_URL must name the app service: inside a container localhost is the
   # container itself. Credentials come from .env and are not declared required here —
   # `${VAR:?}` is interpolated for the whole file before profiles are filtered, so it
   # would break every compose command for a deployment that does not run the bot. The
-  # bot reports both missing variables itself on startup.
+  # bot reports the missing variables itself on startup.
   bot:
     image: ghcr.io/jarviisha/darkvoid:latest
     profiles: [bot]

@@ -1,4 +1,3 @@
-// Package dto
 package dto
 
 import "github.com/jarviisha/darkvoid/internal/pagination"

@@ -7,6 +7,7 @@
 # Optional profiles (activate with --profile or COMPOSE_PROFILES in .env):
 #   codohue  — CF recommender stack (qdrant + codohue-*): make docker-up-codohue
 #   tools    — seed runner: make docker-seed
+#   bot      — AI content bot: make docker-up-bot
 #   external — app-only mode (app-external service, infra outside this
 #              compose project): make docker-up-app
 #
@@ -306,10 +307,10 @@ services:
   # nothing. Everything else it needs — interval, personas, topics, model chain —
   # comes from /bot/plan, so this service needs no configuration beyond credentials.
   #
-  # GEMINI_API_KEY and BOT_RUNNER_PASSWORD are read from .env rather than declared
-  # required here: `${VAR:?}` is interpolated for the whole file before profiles are
-  # filtered, so it would break every compose command for people not running the bot.
-  # The bot reports both missing variables itself on startup.
+  # GEMINI_API_KEY, BOT_RUNNER_PASSWORD, and BOT_PASSWORD are read from .env rather
+  # than declared required here: `${VAR:?}` is interpolated for the whole file before
+  # profiles are filtered, so it would break every compose command for people not
+  # running the bot. The bot reports the missing variables itself on startup.
   bot:
     build: .
     profiles: [bot]

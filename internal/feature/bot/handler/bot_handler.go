@@ -252,7 +252,7 @@ func (h *BotHandler) Pause(w http.ResponseWriter, r *http.Request) {
 // Resume godoc
 //
 //	@Summary		Resume the bot
-//	@Description	Clears the global pause. The personas that were enabled before resume posting.
+//	@Description	Clears the global pause. The personas that were enabled before the pause resume posting.
 //	@Tags			admin,bot
 //	@Produce		json
 //	@Success		200	{object}	dto.ConfigResponse

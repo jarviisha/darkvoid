@@ -1426,7 +1426,7 @@ paths:
   /admin/bots/resume:
     post:
       description: Clears the global pause. The personas that were enabled before
-        resume posting.
+        the pause resume posting.
       operationId: adminResumeBot
       produces:
       - application/json
