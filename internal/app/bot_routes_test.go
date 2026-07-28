@@ -180,6 +180,65 @@ func TestBotAdminRoutes_SiblingRegistrationWouldBypassTheGuard(t *testing.T) {
 	}
 }
 
+// The guard tests above pin chi's semantics on replica routers; this one pins the
+// production call site. AdminContext.RegisterRoutes is exercised for real — a zero
+// AdminContext works because handler method values and the RequireRole checker are
+// captured at registration and only dereferenced on dispatch, which the denying
+// auth middleware never reaches. If bot.registerAdminRoutes ever moves out of the
+// r.Route("/admin", ...) closure — or registers as a sibling — the routes still
+// resolve, but no longer behind the group's middleware, and this fails.
+func TestAdminRegisterRoutes_PutsBotRoutesBehindTheGroupGuard(t *testing.T) {
+	var guardReached bool
+	auth := appMiddleware.AuthMiddleware{
+		Required: denyAll(&guardReached),
+		Optional: func(next http.Handler) http.Handler { return next },
+	}
+
+	router := chi.NewRouter()
+	(&AdminContext{}).RegisterRoutes(router, auth, newRouteTestBotContext())
+
+	for _, tt := range []struct{ method, target string }{
+		{http.MethodGet, "/admin/bots/"},
+		{http.MethodPost, "/admin/bots/"},
+		{http.MethodPut, "/admin/bots/config"},
+		{http.MethodPost, "/admin/bots/pause"},
+		{http.MethodGet, "/admin/bots/runs"},
+		{http.MethodDelete, "/admin/bots/topics/8f14e45f-ceea-467a-9c1e-000000000000"},
+		{http.MethodPost, "/admin/bots/8f14e45f-ceea-467a-9c1e-000000000000/run-now"},
+	} {
+		guardReached = false
+		w := httptest.NewRecorder()
+		req, err := http.NewRequestWithContext(t.Context(), tt.method, tt.target, nil)
+		if err != nil {
+			t.Fatalf("failed to build request: %v", err)
+		}
+		router.ServeHTTP(w, req)
+
+		if !guardReached {
+			t.Errorf("%s %s bypassed the admin guard in the production wiring", tt.method, tt.target)
+		}
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s %s status = %d, want 403 from the guard", tt.method, tt.target, w.Code)
+		}
+	}
+
+	// The guard checks alone would still pass if the bot routes vanished from the
+	// group entirely (any /admin/* request runs the group middleware before 404ing),
+	// so also pin that the production router actually carries the surface.
+	routes := walkRoutes(t, router)
+	for _, want := range []string{
+		"GET /admin/bots/",
+		"POST /admin/bots/",
+		"PUT /admin/bots/config",
+		"GET /admin/bots/runs",
+		"POST /admin/bots/{id}/run-now",
+	} {
+		if !slices.Contains(routes, want) {
+			t.Errorf("production wiring is missing %s", want)
+		}
+	}
+}
+
 // A static segment and /{id} sit at the same depth under /admin/bots, so this
 // checks chi resolves /admin/bots/config to the config handler rather than treating
 // "config" as a persona id.
