@@ -227,14 +227,17 @@ func (s *BotService) UpdateConfig(ctx context.Context, req *dto.UpdateConfigRequ
 		update.Accounts = &accounts
 	}
 
-	// An empty array reaches here indistinguishable from an omitted field, and an
-	// empty fallback chain would stall the bot, so only a non-empty list is applied.
-	for _, m := range req.Models {
-		if m == "" {
-			return nil, errors.NewValidationError("models", "cannot contain an empty model id")
+	// An empty list means "omitted": an empty fallback chain would stall the bot,
+	// and pgx encodes a non-nil empty slice as '{}' rather than NULL, so passing it
+	// through would defeat the COALESCE and trip the cardinality CHECK.
+	if len(req.Models) > 0 {
+		for _, m := range req.Models {
+			if m == "" {
+				return nil, errors.NewValidationError("models", "cannot contain an empty model id")
+			}
 		}
+		update.Models = req.Models
 	}
-	update.Models = req.Models
 
 	cfg, err := s.store.UpdateConfig(ctx, update)
 	if err != nil {

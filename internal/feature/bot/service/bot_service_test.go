@@ -192,7 +192,16 @@ func (f *fakeStore) UpdateConfig(_ context.Context, update entity.ConfigUpdate) 
 	if update.Accounts != nil {
 		f.config.Accounts = *update.Accounts
 	}
-	if len(update.Models) > 0 {
+	switch {
+	case update.Models == nil:
+		// pgx sends NULL for a nil slice, so COALESCE keeps the stored chain.
+	case len(update.Models) == 0:
+		// pgx encodes a non-nil empty slice as '{}', which COALESCE applies and
+		// CHECK (cardinality(models) > 0) rejects. The fake must fail here like
+		// the real store does, so the service guard is what keeps the empty-models
+		// test green — not the fake quietly re-implementing the guard.
+		return nil, errors.NewBadRequestError("violates check constraint on config.models")
+	default:
 		f.config.Models = update.Models
 	}
 	if update.Paused != nil {
