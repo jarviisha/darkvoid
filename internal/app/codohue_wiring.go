@@ -83,11 +83,11 @@ func (app *Application) wireCodohue(ctx context.Context, codohueClient *codohue.
 			"error", err,
 			"effect", "feed falls back to local scoring; new posts are not indexed until it recovers",
 		)
-		app.startCodohueMonitor(codohueClient)
-		return
+	} else {
+		app.log.Info("codohue service reachable", "base_url", app.cfg.Codohue.BaseURL)
 	}
 
-	app.log.Info("codohue service reachable", "base_url", app.cfg.Codohue.BaseURL)
+	app.startCodohueMonitor(codohueClient)
 }
 
 // probeCodohue pings Codohue and records the outcome as the reported state.
@@ -103,12 +103,17 @@ func (app *Application) probeCodohue(ctx context.Context, client *codohue.Client
 	return nil
 }
 
-// startCodohueMonitor re-probes a degraded Codohue until it answers, then stops.
+// startCodohueMonitor keeps the reported state true for as long as the process
+// runs, re-probing every codohueProbeInterval.
 //
-// It exists so a degraded state is not a single line in the boot log: while it
-// lasts, each probe re-states it at ERROR, and recovery is announced explicitly.
-// Recovery needs no rewiring — the client was wired all along, so its calls start
-// succeeding on their own.
+// It runs whether or not the startup probe succeeded, and does not stop on
+// recovery. Watching only a boot-time failure would leave /health asserting
+// "active" through an outage that began a minute after boot — a health endpoint
+// that lies is worse than one that says nothing.
+//
+// While degraded, every probe restates it at ERROR, so the condition cannot go
+// quiet the way a single startup warning did. Recovery needs no rewiring: the
+// client was wired all along, so its calls simply start succeeding again.
 func (app *Application) startCodohueMonitor(client *codohue.Client) {
 	go func() {
 		ticker := time.NewTicker(codohueProbeInterval)
@@ -119,17 +124,19 @@ func (app *Application) startCodohueMonitor(client *codohue.Client) {
 			case <-app.runCtx.Done():
 				return
 			case <-ticker.C:
-				if err := app.probeCodohue(app.runCtx, client); err != nil {
-					app.log.Error("codohue still unreachable",
+				previous, _ := app.codohue.get()
+				err := app.probeCodohue(app.runCtx, client)
+				switch {
+				case err != nil:
+					app.log.Error("codohue unreachable, serving degraded",
 						"base_url", app.cfg.Codohue.BaseURL,
 						"error", err,
 					)
-					continue
+				case previous == CodohueDegraded:
+					app.log.Info("codohue recovered, indexing and recommendations resume",
+						"base_url", app.cfg.Codohue.BaseURL,
+					)
 				}
-				app.log.Info("codohue recovered, indexing and recommendations resume",
-					"base_url", app.cfg.Codohue.BaseURL,
-				)
-				return
 			}
 		}
 	}()
