@@ -94,6 +94,19 @@ func (c *Client) Ping(ctx context.Context) error {
 	return err
 }
 
+// CircuitOpen reports whether the client is currently short-circuiting calls.
+//
+// This is the live availability signal: the breaker learns Codohue is down from
+// real traffic within a few requests, where a periodic health probe only finds
+// out on its next tick. Reporting health from the probe alone would leave
+// /health claiming "active" for most of a short outage.
+func (c *Client) CircuitOpen() bool {
+	if c == nil || c.breaker == nil {
+		return false
+	}
+	return c.breaker.isOpen()
+}
+
 // GetRecommendations returns ordered post IDs.
 func (c *Client) GetRecommendations(ctx context.Context, userID string, limit int, offset int) (*feed.RecommendationPage, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)

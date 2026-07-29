@@ -100,6 +100,45 @@ func TestHealthCheck_DegradedCodohueIsStillHealthy(t *testing.T) {
 	}
 }
 
+// The probe runs every two minutes; the breaker learns from real traffic within
+// a few requests. Without this, /health would report "active" through most of a
+// short outage — the exact blind spot a production test surfaced.
+func TestCodohueStatus_OpenCircuitOverridesAStaleActive(t *testing.T) {
+	s := newCodohueStatus()
+	s.set(CodohueActive, "")
+	open := true
+	s.circuitOpen = func() bool { return open }
+
+	state, reason := s.get()
+	if state != CodohueDegraded {
+		t.Errorf("state = %q, want %q — the last probe is stale, the circuit is not", state, CodohueDegraded)
+	}
+	if reason == "" {
+		t.Error("a degraded state must say why")
+	}
+
+	open = false
+	if state, _ = s.get(); state != CodohueActive {
+		t.Errorf("state = %q, want %q once the circuit closes again", state, CodohueActive)
+	}
+}
+
+// A degraded probe result must not be masked into "active" just because the
+// circuit happens to be closed — nothing has been through it yet to open it.
+func TestCodohueStatus_ClosedCircuitDoesNotMaskAFailedProbe(t *testing.T) {
+	s := newCodohueStatus()
+	s.set(CodohueDegraded, "dial tcp: connection refused")
+	s.circuitOpen = func() bool { return false }
+
+	state, reason := s.get()
+	if state != CodohueDegraded {
+		t.Errorf("state = %q, want the probe's verdict %q", state, CodohueDegraded)
+	}
+	if reason != "dial tcp: connection refused" {
+		t.Errorf("reason = %q, want the probe's reason preserved", reason)
+	}
+}
+
 func TestHealthCheck_ActiveCodohueOmitsTheReason(t *testing.T) {
 	status := newCodohueStatus()
 	status.set(CodohueActive, "")

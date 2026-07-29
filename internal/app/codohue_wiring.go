@@ -70,6 +70,10 @@ func (app *Application) wireCodohue(ctx context.Context, codohueClient *codohue.
 		return
 	}
 
+	// Attach the live signal before serving starts, so /health reflects an
+	// outage the moment real traffic finds it rather than on the next probe.
+	app.codohue.circuitOpen = codohueClient.CircuitOpen
+
 	app.Post.WireCodohue(codohueClient, app.cfg.Codohue.EmbeddingDim, app.cfg.Codohue.DenseSource)
 	app.log.Info("codohue client wired into post services",
 		"namespace", app.cfg.Codohue.Namespace,

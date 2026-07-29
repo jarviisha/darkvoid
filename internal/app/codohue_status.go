@@ -25,6 +25,10 @@ const (
 type codohueStatus struct {
 	state  atomic.Value // string
 	reason atomic.Value // string, empty unless degraded
+	// circuitOpen is the client's live availability signal, or nil when Codohue
+	// is off. Set once during wiring, before the server starts serving, so the
+	// goroutines that read it are all created after the write.
+	circuitOpen func() bool
 }
 
 func newCodohueStatus() *codohueStatus {
@@ -39,11 +43,19 @@ func (s *codohueStatus) set(state, reason string) {
 }
 
 // get returns the current state and the reason it is degraded, if any.
+//
+// The last probe is not the only input. The circuit breaker learns Codohue is
+// down from real traffic within a few requests, while the probe only finds out
+// on its next two-minute tick — so a probe-only answer would report "active"
+// through most of a short outage. An open circuit overrides a stale active.
 func (s *codohueStatus) get() (state, reason string) {
 	state, _ = s.state.Load().(string)
 	reason, _ = s.reason.Load().(string)
 	if state == "" {
 		state = CodohueOff
+	}
+	if state == CodohueActive && s.circuitOpen != nil && s.circuitOpen() {
+		return CodohueDegraded, "circuit open after consecutive failures"
 	}
 	return state, reason
 }

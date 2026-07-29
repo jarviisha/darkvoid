@@ -48,6 +48,12 @@ func newBreaker() *breaker {
 	return &breaker{now: time.Now}
 }
 
+// isOpen reports whether the circuit is currently open, without claiming a
+// trial the way allow() does. Read-only, for health reporting.
+func (b *breaker) isOpen() bool {
+	return b.openedAt.Load() != 0
+}
+
 // allow reports whether a request may go out.
 func (b *breaker) allow() bool {
 	opened := b.openedAt.Load()
