@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	postrepo "github.com/jarviisha/darkvoid/internal/feature/post/repository"
 	postsvc "github.com/jarviisha/darkvoid/internal/feature/post/service"
 	"github.com/jarviisha/darkvoid/pkg/codohue"
@@ -110,11 +111,12 @@ func cmdReindex(args []string) error {
 
 	// Newest first, the same cursor walk the discover feed uses, so it inherits
 	// that query's filters: public posts only, deleted ones excluded.
-	var (
-		cursorTime pgtype.Timestamptz
-		cursorID   uuid.UUID
-		sent, fail int
-	)
+	//
+	// The first page needs the same sentinel the feed uses, not zero values: the
+	// query compares (created_at, id) < ($1, $2) with no NULL branch, so a zero
+	// timestamp makes the predicate NULL and the walk returns nothing at all.
+	cursorTime, cursorID := feed.DefaultDiscoverPgParams()
+	var sent, fail int
 	for {
 		page, err := posts.GetDiscoverWithCursor(ctx, cursorTime, cursorID, reindexPageSize)
 		if err != nil {
