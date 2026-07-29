@@ -23,16 +23,18 @@ type Server struct {
 	router     *chi.Mux
 	cfg        *config.Config
 	log        *logger.Logger
-	pool       *pgxpool.Pool // Database pool for health checks
-	startTime  time.Time     // Server start time for uptime calculation
+	pool       *pgxpool.Pool  // Database pool for health checks
+	codohue    *codohueStatus // Recommender state reported by /health; nil when unset
+	startTime  time.Time      // Server start time for uptime calculation
 }
 
 // NewServer a new HTTP server
-func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool) *Server {
+func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, codohue *codohueStatus) *Server {
 	s := &Server{
 		cfg:       cfg,
 		log:       log,
 		pool:      pool,
+		codohue:   codohue,
 		startTime: time.Now(),
 	}
 
@@ -124,6 +126,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 type HealthCheckResponse struct {
 	Status   string `json:"status"`
 	Database string `json:"database"`
+	// Codohue is "off", "active", or "degraded". Degraded does not make the
+	// service unhealthy — the feed falls back to local scoring and the API is
+	// fully functional — but it has to be reported somewhere a monitor can see,
+	// which is the whole reason this field exists.
+	Codohue string `json:"codohue,omitempty"`
+	// CodohueReason carries why, and only while degraded.
+	CodohueReason string `json:"codohue_reason,omitempty"`
 }
 
 // healthCheckHandler handles health check requests
@@ -132,6 +141,9 @@ func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	response := HealthCheckResponse{
 		Status:   "healthy",
 		Database: "up",
+	}
+	if s.codohue != nil {
+		response.Codohue, response.CodohueReason = s.codohue.get()
 	}
 
 	// Check database connection

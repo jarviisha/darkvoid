@@ -88,7 +88,7 @@ Respect `.golangci.yml` — all production and test code must pass `make lint` b
 All config is loaded from `.env` via `pkg/config`. Update `.env.example` whenever a new variable is added. Keys of note:
 
 - `REDIS_ENABLED` — when false, feed cache becomes no-op (feature still works).
-- `CODOHUE_ENABLED` — when false, feed uses local scoring only; CF recommender is off.
+- `CODOHUE_ENABLED` — when false, feed uses local scoring only; CF recommender is off. When true, the client is wired whether or not Codohue answers at startup: an unreachable Codohue is already handled per call (the feed falls back to local scoring, ingest logs and moves on), so gating the wiring on a boot probe only meant a brief outage disabled the feature for the whole process. The probe now just classifies, `GET /health` reports `codohue: off|active|degraded`, and a background monitor re-probes every 2 minutes while degraded — nothing is rewired at runtime, so no service field is written once the server is serving.
 - `ROOT_EMAIL` + `ROOT_PASSWORD` — auto-bootstraps a root user on first boot if `ROOT_USERNAME` is not taken, then grants it the `admin` role on **every** boot so the admin API/Swagger stays reachable (`bootstrapRootUser` in `app.go` → `AdminContext.GrantAdminRole`). No-op when either var is empty.
 - `STORAGE_PROVIDER` — `local` (default, serves `/static/*` from `STORAGE_LOCAL_DIR`) or `s3` (S3/MinIO/GCS).
 - `MAILER_PROVIDER` — `nop` (logs only) or `smtp`.

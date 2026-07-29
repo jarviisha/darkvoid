@@ -15,13 +15,25 @@ func (app *Application) setupContexts(ctx context.Context) error {
 	app.setupPostContext(store)
 	if err := app.ensureCodohueNamespaceConfig(ctx); err != nil {
 		// Codohue is an auxiliary recommender: a provisioning failure must not
-		// take the API down. Disable it for this run — the feed falls back to
-		// local scoring, matching how wireCodohue degrades on ping failure.
-		app.log.Warn("codohue provisioning failed, disabling codohue for this run",
-			"base_url", app.cfg.Codohue.BaseURL,
-			"error", err,
-		)
-		app.cfg.Codohue.Enabled = false
+		// take the API down.
+		//
+		// Provisioning only creates the namespace and hands back its key. With a
+		// key already configured there is nothing left to wait for, so a failure
+		// here means Codohue was briefly unreachable, not that it is unusable —
+		// carry on wired and degraded, and let the monitor notice it recover.
+		// Without a key nothing can authenticate, and only then is it off.
+		if app.cfg.Codohue.NamespaceKey != "" {
+			app.log.Error("codohue provisioning failed, serving degraded with the configured namespace key",
+				"base_url", app.cfg.Codohue.BaseURL,
+				"error", err,
+			)
+		} else {
+			app.log.Error("codohue provisioning failed and no namespace key is configured, disabling codohue",
+				"base_url", app.cfg.Codohue.BaseURL,
+				"error", err,
+			)
+			app.cfg.Codohue.Enabled = false
+		}
 	}
 	codohueClient := app.setupFeedContext(store)
 	app.wireFeedDependencies()

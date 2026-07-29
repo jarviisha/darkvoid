@@ -38,6 +38,9 @@ type Application struct {
 	jwtService *jwt.Service
 	runCtx     context.Context
 	runCancel  context.CancelFunc
+	// codohue is the reported health of the recommender integration. Read by the
+	// health handler, written by startup and the degraded-state monitor.
+	codohue *codohueStatus
 
 	// Bounded Contexts
 	User         *UserContext
@@ -57,6 +60,7 @@ func New(ctx context.Context, cfg *config.Config) (app *Application, err error) 
 		cfg:       cfg,
 		runCtx:    runCtx,
 		runCancel: runCancel,
+		codohue:   newCodohueStatus(),
 	}
 	defer func() {
 		if err == nil {
@@ -282,7 +286,7 @@ func (app *Application) bootstrapRootUser(ctx context.Context) error {
 func (app *Application) setupServer() {
 	app.log.Info("initializing HTTP server")
 
-	app.server = NewServer(app.cfg, app.log, app.pool)
+	app.server = NewServer(app.cfg, app.log, app.pool, app.codohue)
 
 	// Register routes
 	app.registerRoutes()
