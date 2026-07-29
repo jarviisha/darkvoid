@@ -41,6 +41,10 @@ type Client struct {
 	ns        *sdk.Namespace
 	namespace string
 	producer  *redistream.Producer // nil when Redis is unavailable
+	// breaker short-circuits the HTTP surface while Codohue is down, so an
+	// outage costs one timeout rather than one per call. It does not cover
+	// PublishBehaviorEvent, which goes to Redis and fails independently.
+	breaker *breaker
 }
 
 // NewClient creates a Codohue client.
@@ -66,10 +70,17 @@ func NewClient(baseURL, nsKey, namespace string, redisClient *pkgredis.Client) *
 		ns:        httpClient.Namespace(namespace, nsKey),
 		namespace: namespace,
 		producer:  producer,
+		breaker:   newBreaker(),
 	}
 }
 
 // Ping checks whether the Codohue service is reachable via the official SDK.
+//
+// It deliberately bypasses the circuit breaker: this is the health probe, and a
+// probe answered from a cached "circuit is open" tells you nothing about whether
+// the service came back. It does report its outcome to the breaker, so a probe
+// that succeeds closes the circuit immediately instead of waiting for the next
+// cooldown to expire.
 func (c *Client) Ping(ctx context.Context) error {
 	if c == nil || c.http == nil {
 		return fmt.Errorf("codohue client is not configured")
@@ -78,7 +89,9 @@ func (c *Client) Ping(ctx context.Context) error {
 	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
-	return c.http.Ping(reqCtx)
+	err := c.http.Ping(reqCtx)
+	c.breaker.observe(err)
+	return err
 }
 
 // GetRecommendations returns ordered post IDs.
@@ -86,7 +99,9 @@ func (c *Client) GetRecommendations(ctx context.Context, userID string, limit in
 	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	resp, err := c.ns.Recommend(reqCtx, userID, sdk.WithLimit(limit), sdk.WithOffset(offset))
+	resp, err := guard(c, func() (*codohuetypes.Response, error) {
+		return c.ns.Recommend(reqCtx, userID, sdk.WithLimit(limit), sdk.WithOffset(offset))
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +129,9 @@ func (c *Client) Rank(ctx context.Context, subjectID string, candidates []string
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	resp, err := c.ns.Rank(reqCtx, subjectID, candidates)
+	resp, err := guard(c, func() (*codohuetypes.RankResponse, error) {
+		return c.ns.Rank(reqCtx, subjectID, candidates)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +148,9 @@ func (c *Client) GetTrending(ctx context.Context, limit int, offset int) (*feed.
 	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	resp, err := c.ns.Trending(reqCtx, sdk.WithLimit(limit), sdk.WithOffset(offset))
+	resp, err := guard(c, func() (*codohuetypes.TrendingResponse, error) {
+		return c.ns.Trending(reqCtx, sdk.WithLimit(limit), sdk.WithOffset(offset))
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +182,9 @@ func (c *Client) UpsertObjectEmbedding(ctx context.Context, objectID string, vec
 		opts = append(opts, sdk.WithObjectCreatedAt(createdAt.UTC()))
 	}
 
-	return c.ns.StoreObjectEmbedding(reqCtx, objectID, converted, opts...)
+	return guardErr(c, func() error {
+		return c.ns.StoreObjectEmbedding(reqCtx, objectID, converted, opts...)
+	})
 }
 
 // UpsertSubjectEmbedding pushes a dense embedding vector for a user (subject) to Codohue.
@@ -176,7 +197,9 @@ func (c *Client) UpsertSubjectEmbedding(ctx context.Context, subjectID string, v
 		converted[i] = float32(v)
 	}
 
-	return c.ns.StoreSubjectEmbedding(reqCtx, subjectID, converted)
+	return guardErr(c, func() error {
+		return c.ns.StoreSubjectEmbedding(reqCtx, subjectID, converted)
+	})
 }
 
 // IngestCatalogItem publishes post content to Codohue's catalog auto-embedding
@@ -186,10 +209,12 @@ func (c *Client) IngestCatalogItem(ctx context.Context, objectID, content, autho
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	return c.ns.IngestCatalog(reqCtx, codohuetypes.CatalogIngestRequest{
-		ObjectID:        objectID,
-		Content:         content,
-		AuthorSubjectID: authorSubjectID,
+	return guardErr(c, func() error {
+		return c.ns.IngestCatalog(reqCtx, codohuetypes.CatalogIngestRequest{
+			ObjectID:        objectID,
+			Content:         content,
+			AuthorSubjectID: authorSubjectID,
+		})
 	})
 }
 
@@ -198,7 +223,9 @@ func (c *Client) DeleteObject(ctx context.Context, objectID string) error {
 	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	return c.ns.DeleteObject(reqCtx, objectID)
+	return guardErr(c, func() error {
+		return c.ns.DeleteObject(reqCtx, objectID)
+	})
 }
 
 // PublishBehaviorEvent publishes a user behavior event to the codohue:events Redis Stream.
