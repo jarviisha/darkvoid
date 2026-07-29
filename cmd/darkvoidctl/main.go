@@ -61,6 +61,8 @@ func main() {
 	switch os.Args[1] {
 	case "user":
 		runUser(os.Args[2:])
+	case "codohue":
+		runCodohue(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -81,6 +83,13 @@ Usage:
   darkvoidctl user revoke-role -username <u> -role <r>
   darkvoidctl user roles                      list the assignable roles
   darkvoidctl user deactivate -username <u>
+
+  darkvoidctl codohue reindex [-since <dur>] [-limit <n>] [-dry-run]
+      Re-send existing posts to the Codohue index. Indexing happens once, at
+      post creation, and a failed ingest is dropped rather than retried — so
+      posts created while Codohue was unreachable are missing from
+      recommendations until this is run. Ingestion is an upsert, so re-sending
+      an already-indexed post is harmless.
 
 Passwords are never taken as flags: reset-password and create prompt
 interactively (echo off), or read `+passwordEnv+` / a piped stdin line.

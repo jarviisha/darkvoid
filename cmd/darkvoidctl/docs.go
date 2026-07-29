@@ -13,6 +13,14 @@
 //	darkvoidctl user grant-role  -username alice -role admin
 //	darkvoidctl user revoke-role -username alice -role admin
 //	darkvoidctl user deactivate -username spammer
+//	darkvoidctl codohue reindex [-since 24h] [-limit 500] [-dry-run]
+//
+// codohue reindex is the repair pass for the recommendation index. Posts are
+// indexed once, at creation, and a failed ingest is logged and dropped rather
+// than queued — so an outage leaves those posts absent from recommendations
+// permanently. It walks the public corpus newest first through the same cursor
+// query the discover feed uses, and shares post/service.IndexText with the live
+// path so a backfill cannot index posts under different text than new ones get.
 //
 // grant-role/revoke-role replace the earlier admin-only promote/demote pair, which
 // could not reach the bot role that the content bot's runner account needs. An

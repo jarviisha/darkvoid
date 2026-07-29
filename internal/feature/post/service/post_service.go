@@ -358,6 +358,20 @@ func (s *PostService) DeletePost(ctx context.Context, postID, userID uuid.UUID) 
 	return nil
 }
 
+// IndexText builds the text a post is indexed under: its content plus its
+// hashtags, which add vocabulary signal at no extra cost.
+//
+// Exported because the reindex command in cmd/darkvoidctl has to produce byte
+// identical text. A backfill that combined the two differently would quietly
+// index old posts under a different representation than new ones, which is the
+// kind of drift nothing would ever report.
+func IndexText(content string, tags []string) string {
+	if len(tags) == 0 {
+		return content
+	}
+	return content + " " + strings.Join(tags, " ")
+}
+
 // pushEmbeddingAsync ships the post to Codohue's dense index in a background
 // goroutine, using a detached context so it outlives the HTTP request.
 // Catalog mode (catalogIngester set): raw content is sent and embedded
@@ -365,11 +379,7 @@ func (s *PostService) DeletePost(ctx context.Context, postID, userID uuid.UUID) 
 // createdAt is forwarded so Codohue can apply object-freshness decay.
 // No-op when neither path is wired.
 func (s *PostService) pushEmbeddingAsync(postID, content string, tags []string, authorID string, createdAt time.Time) {
-	// Combine content and hashtags — tags add vocabulary signal with no extra cost.
-	text := content
-	if len(tags) > 0 {
-		text += " " + strings.Join(tags, " ")
-	}
+	text := IndexText(content, tags)
 
 	if s.catalogIngester != nil {
 		go func() {

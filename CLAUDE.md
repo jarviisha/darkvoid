@@ -17,7 +17,7 @@ Always prefer the `Makefile` — it loads `.env` automatically and scopes migrat
 - `make generate` — runs both `sqlc generate` and `swag` (fmt + init). Equivalent to `make sqlc-generate && make swagger-generate`.
 - `make docker-up` / `make docker-down` / `make docker-logs` — full stack (Postgres + Redis + app) via `docker-compose.yml`
 - `make bot` — run the content bot against a running API; `make docker-up-bot` / `docker-down-bot` / `docker-logs-bot` for the containerised form (opt-in `bot` compose profile, so a plain `docker compose up` never starts posting)
-- `make ctl CTL_ARGS="user roles"` — operator CLI; `user grant-role -username u -role r` is how the bot runner gets the `bot` role
+- `make ctl CTL_ARGS="user roles"` — operator CLI; `user grant-role -username u -role r` is how the bot runner gets the `bot` role, and `codohue reindex` re-sends existing posts to the recommendation index (posts are indexed once at creation with no retry queue, so an outage leaves them missing until this is run)
 - `make install-tools` — installs `sqlc`, `swag`, `golangci-lint`, `air`, `migrate`
 
 ### Migrations
