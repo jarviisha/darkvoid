@@ -1,5 +1,17 @@
 # Production: pull pre-built image from ghcr.io
-# Usage: docker compose -f docker-compose.prod.yml up -d
+#
+# Usage: dv up -d
+#
+# Deliberately not `docker compose -f docker-compose.prod.yml up -d`. A deployment
+# may carry server-local override files that this repo does not ship — the dev box
+# has docker-compose.codohue.yml, which attaches the app to the codohue stack's
+# network and Redis. Leaving one out does not fail loudly: it recreates the app
+# against a different stack, and the app decides at boot whether codohue is
+# reachable, so it then runs with indexing off behind a single startup warning.
+#
+# `dv` (scripts/dv, installed system-wide by CD) always passes the full file list.
+# COMPOSE_FILE in .env covers a bare `docker compose`, but an explicit -f overrides
+# it — which is what a copy-pasted command carries.
 #
 # Requires production secrets in .env or the shell.
 

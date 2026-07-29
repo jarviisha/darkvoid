@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# dv — docker compose for this deployment, with the correct file list every time.
+#
+# Use this instead of calling `docker compose -f docker-compose.prod.yml ...` by
+# hand. A deployment can carry server-local override files, and leaving one out
+# does not fail — it silently builds a different stack. On the dev box, omitting
+# docker-compose.codohue.yml recreates the app detached from the codohue network;
+# the app then decides at boot that codohue is unreachable and serves the whole
+# process with indexing off, announced by one startup warning and nothing else.
+#
+# COMPOSE_FILE in the deployment's .env covers a bare `docker compose`, but an
+# explicit -f overrides it, which is exactly what a copy-pasted command carries.
+# This wrapper is the version that cannot be half-specified.
+#
+# Installed system-wide by the CD pipeline (see .github/workflows/cd.yml).
+#
+#   DARKVOID_DIR      deployment directory      (default: /opt/darkvoid-dev)
+#   DARKVOID_COMPOSE  base compose file         (default: docker-compose.prod.yml)
+#
+# Examples:
+#
+#   dv up -d                  # the whole stack, correctly composed
+#   dv ps
+#   dv logs -f bot
+#   dv --profile bot up -d bot
+set -euo pipefail
+
+cd "${DARKVOID_DIR:-/opt/darkvoid-dev}"
+
+compose_files=(-f "${DARKVOID_COMPOSE:-docker-compose.prod.yml}")
+if [ -f docker-compose.codohue.yml ]; then
+  compose_files+=(-f docker-compose.codohue.yml)
+fi
+
+exec docker compose "${compose_files[@]}" "$@"
