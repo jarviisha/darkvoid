@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,13 +66,51 @@ func (m *mockEmailTokenRepo) DeleteByUserAndType(ctx context.Context, userID uui
 	return nil
 }
 
+// recordedSend is one call the service made to the delivery recorder.
+type recordedSend struct {
+	userID    uuid.UUID
+	messageID string
+	recipient string
+	kind      entity.EmailKind
+}
+
+type mockDeliveryRecorder struct {
+	mu      sync.Mutex
+	calls   []recordedSend
+	failure error
+}
+
+func (m *mockDeliveryRecorder) RecordSend(_ context.Context, userID uuid.UUID, providerMessageID, recipient string, kind entity.EmailKind) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, recordedSend{userID: userID, messageID: providerMessageID, recipient: recipient, kind: kind})
+	return m.failure
+}
+
+func (m *mockDeliveryRecorder) recorded() []recordedSend {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]recordedSend(nil), m.calls...)
+}
+
 func newAccountMailServiceForTest(t *testing.T, tokenRepo emailTokenRepo, userRepo userRepo, m mailer.Mailer) *AccountMailService {
+	t.Helper()
+	return newAccountMailServiceWithRecorder(t, tokenRepo, userRepo, m, &mockDeliveryRecorder{})
+}
+
+func newAccountMailServiceWithRecorder(
+	t *testing.T,
+	tokenRepo emailTokenRepo,
+	userRepo userRepo,
+	m mailer.Mailer,
+	recorder deliveryRecorder,
+) *AccountMailService {
 	t.Helper()
 	templates, err := mailer.LoadTemplates()
 	if err != nil {
 		t.Fatalf("failed to load templates: %v", err)
 	}
-	return NewAccountMailService(m, templates, tokenRepo, userRepo, "https://darkvoid.test")
+	return NewAccountMailService(m, templates, tokenRepo, userRepo, recorder, "https://darkvoid.test")
 }
 
 func validVerifyToken(userID uuid.UUID) *entity.EmailToken {
@@ -564,5 +603,98 @@ func TestResetPassword_Success(t *testing.T) {
 	}
 	if !updateCalled || !markUsedCalled {
 		t.Fatalf("expected update and mark used, got update=%v markUsed=%v", updateCalled, markUsedCalled)
+	}
+}
+
+func TestSendPasswordReset_SuppressedRecipientAnswersLikeASuccess(t *testing.T) {
+	userID := uuid.New()
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{
+		getUserByEmail: func(_ context.Context, _ string) (*entity.User, error) {
+			return &entity.User{ID: userID, Email: "gone@example.com", Username: "johndoe"}, nil
+		},
+	}, &mockMailer{
+		send: func(_ context.Context, _ *mailer.Message) error {
+			return mailer.ErrSuppressed
+		},
+	})
+
+	// A 500 for suppressed addresses only would reveal which addresses exist and
+	// have bounced — the endpoint is deliberately uniform.
+	if err := svc.SendPasswordReset(context.Background(), "gone@example.com"); err != nil {
+		t.Fatalf("expected nil error for a suppressed recipient, got %v", err)
+	}
+}
+
+func TestSendPasswordReset_RecordsTheDelivery(t *testing.T) {
+	userID := uuid.New()
+	recorder := &mockDeliveryRecorder{}
+	svc := newAccountMailServiceWithRecorder(t, &mockEmailTokenRepo{}, &mockUserRepo{
+		getUserByEmail: func(_ context.Context, _ string) (*entity.User, error) {
+			return &entity.User{ID: userID, Email: "john@example.com", Username: "johndoe"}, nil
+		},
+	}, &mockMailer{}, recorder)
+
+	if err := svc.SendPasswordReset(context.Background(), "john@example.com"); err != nil {
+		t.Fatalf("SendPasswordReset: unexpected error: %v", err)
+	}
+
+	recorded := recorder.recorded()
+	if len(recorded) != 1 {
+		t.Fatalf("recorded %d sends, want 1", len(recorded))
+	}
+	got := recorded[0]
+	if got.userID != userID || got.messageID != "mock-message-id" || got.recipient != "john@example.com" {
+		t.Errorf("recorded %+v, want the reset send keyed by its provider message id", got)
+	}
+	if got.kind != entity.EmailKindResetPassword {
+		t.Errorf("kind = %q, want %q", got.kind, entity.EmailKindResetPassword)
+	}
+}
+
+func TestSendPasswordReset_RecordingFailureDoesNotFailTheSend(t *testing.T) {
+	userID := uuid.New()
+	recorder := &mockDeliveryRecorder{failure: stderrors.New("insert failed")}
+	svc := newAccountMailServiceWithRecorder(t, &mockEmailTokenRepo{}, &mockUserRepo{
+		getUserByEmail: func(_ context.Context, _ string) (*entity.User, error) {
+			return &entity.User{ID: userID, Email: "john@example.com", Username: "johndoe"}, nil
+		},
+	}, &mockMailer{}, recorder)
+
+	// The mail has already left; reporting a failure would make the caller retry a
+	// send that worked.
+	if err := svc.SendPasswordReset(context.Background(), "john@example.com"); err != nil {
+		t.Fatalf("expected nil error when only bookkeeping failed, got %v", err)
+	}
+}
+
+func TestSendVerification_RecordsTheDelivery(t *testing.T) {
+	userID := uuid.New()
+	recorder := &mockDeliveryRecorder{}
+	svc := newAccountMailServiceWithRecorder(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{}, recorder)
+
+	svc.SendVerification(context.Background(), userID, "john@example.com", "johndoe")
+
+	recorded := recorder.recorded()
+	if len(recorded) != 1 || recorded[0].kind != entity.EmailKindVerifyEmail {
+		t.Fatalf("recorded = %+v, want one verify_email send", recorded)
+	}
+	if recorded[0].userID != userID {
+		t.Errorf("userID = %v, want %v", recorded[0].userID, userID)
+	}
+}
+
+func TestSendWelcome_RecordsTheDeliveryAgainstTheUser(t *testing.T) {
+	userID := uuid.New()
+	recorder := &mockDeliveryRecorder{}
+	svc := newAccountMailServiceWithRecorder(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{}, recorder)
+
+	svc.SendWelcome(context.Background(), userID, "john@example.com", "johndoe")
+
+	recorded := recorder.recorded()
+	if len(recorded) != 1 || recorded[0].kind != entity.EmailKindWelcome {
+		t.Fatalf("recorded = %+v, want one welcome send", recorded)
+	}
+	if recorded[0].userID != userID {
+		t.Errorf("userID = %v, want %v — the welcome flow now carries it so the log row can be attributed", recorded[0].userID, userID)
 	}
 }

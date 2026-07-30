@@ -126,6 +126,7 @@ func loadCodohueConfig() CodohueConfig {
 //	MAILER_USERNAME (default: "")
 //	MAILER_PASSWORD (default: "")
 //	RESEND_API_KEY  (default: "")
+//	RESEND_WEBHOOK_SECRET (default: "")
 //	MAILER_FROM     (default: "noreply@darkvoid.app")
 //	MAILER_BASE_URL (default: "http://localhost:3000")
 //
@@ -134,14 +135,15 @@ func loadCodohueConfig() CodohueConfig {
 // dashboard, and renaming it only makes that harder to match up.
 func loadMailerConfig() MailerConfig {
 	return MailerConfig{
-		Provider: getEnv("MAILER_PROVIDER", "nop"),
-		Host:     getEnv("MAILER_HOST", ""),
-		Port:     getEnvInt("MAILER_PORT", 587),
-		Username: getEnv("MAILER_USERNAME", ""),
-		Password: getEnv("MAILER_PASSWORD", ""),
-		APIKey:   getEnv("RESEND_API_KEY", ""),
-		From:     getEnv("MAILER_FROM", "noreply@darkvoid.app"),
-		BaseURL:  getEnv("MAILER_BASE_URL", "http://localhost:3000"),
+		Provider:      getEnv("MAILER_PROVIDER", "nop"),
+		Host:          getEnv("MAILER_HOST", ""),
+		Port:          getEnvInt("MAILER_PORT", 587),
+		Username:      getEnv("MAILER_USERNAME", ""),
+		Password:      getEnv("MAILER_PASSWORD", ""),
+		APIKey:        getEnv("RESEND_API_KEY", ""),
+		WebhookSecret: getEnv("RESEND_WEBHOOK_SECRET", ""),
+		From:          getEnv("MAILER_FROM", "noreply@darkvoid.app"),
+		BaseURL:       getEnv("MAILER_BASE_URL", "http://localhost:3000"),
 	}
 }
 

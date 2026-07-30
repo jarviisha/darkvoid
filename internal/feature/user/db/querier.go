@@ -15,6 +15,11 @@ type Querier interface {
 	// Admin Queries
 	AdminListUsers(ctx context.Context, arg AdminListUsersParams) ([]UsrUser, error)
 	AdminSetUserActive(ctx context.Context, arg AdminSetUserActiveParams) error
+	// ApplyEmailDeliveryEvent is guarded on last_event_at so a webhook that arrives
+	// late cannot overwrite a newer outcome — Resend retries and does not promise
+	// ordering, so 'delivered' can land after 'bounced'. Returning the row count is
+	// what lets the caller tell "no such send" from "stale event, ignored".
+	ApplyEmailDeliveryEvent(ctx context.Context, arg ApplyEmailDeliveryEventParams) (int64, error)
 	// User-Role Assignment Queries
 	//
 	// Role names are stored inline on usr.user_roles and constrained by a CHECK;
@@ -24,11 +29,13 @@ type Querier interface {
 	CountFollowers(ctx context.Context, followeeID uuid.UUID) (int64, error)
 	CountFollowing(ctx context.Context, followerID uuid.UUID) (int64, error)
 	CountSearchUsers(ctx context.Context, query *string) (int64, error)
+	CreateEmailDelivery(ctx context.Context, arg CreateEmailDeliveryParams) (UsrEmailDelivery, error)
 	CreateEmailToken(ctx context.Context, arg CreateEmailTokenParams) (UsrEmailToken, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (UsrRefreshToken, error)
 	// User Queries
 	CreateUser(ctx context.Context, arg CreateUserParams) (UsrUser, error)
 	DeactivateUser(ctx context.Context, arg DeactivateUserParams) error
+	DeleteEmailSuppression(ctx context.Context, email string) (int64, error)
 	DeleteEmailTokensByUserAndType(ctx context.Context, arg DeleteEmailTokensByUserAndTypeParams) error
 	DeleteExpiredEmailTokens(ctx context.Context) error
 	DeleteExpiredRefreshTokens(ctx context.Context) error
@@ -38,6 +45,7 @@ type Querier interface {
 	// Follow Queries
 	Follow(ctx context.Context, arg FollowParams) error
 	GetActiveRefreshTokensByUserID(ctx context.Context, userID uuid.UUID) ([]UsrRefreshToken, error)
+	GetEmailDeliveryByProviderMessageID(ctx context.Context, providerMessageID string) (UsrEmailDelivery, error)
 	GetEmailTokenByToken(ctx context.Context, token string) (UsrEmailToken, error)
 	GetFollowers(ctx context.Context, arg GetFollowersParams) ([]UsrFollow, error)
 	GetFollowing(ctx context.Context, arg GetFollowingParams) ([]UsrFollow, error)
@@ -50,14 +58,17 @@ type Querier interface {
 	GetUsersByIDs(ctx context.Context, dollar_1 []uuid.UUID) ([]UsrUser, error)
 	GetUsersByIDsAny(ctx context.Context, dollar_1 []uuid.UUID) ([]UsrUser, error)
 	GetUsersByUsernames(ctx context.Context, dollar_1 []string) ([]UsrUser, error)
+	IsEmailSuppressed(ctx context.Context, email string) (bool, error)
 	IsFollowing(ctx context.Context, arg IsFollowingParams) (bool, error)
 	ListAllActiveUserIDs(ctx context.Context) ([]uuid.UUID, error)
+	ListEmailSuppressions(ctx context.Context, limit int32) ([]UsrEmailSuppression, error)
 	MarkEmailTokenUsed(ctx context.Context, id uuid.UUID) error
 	RemoveRoleFromUser(ctx context.Context, arg RemoveRoleFromUserParams) error
 	RevokeAllUserRefreshTokens(ctx context.Context, userID uuid.UUID) error
 	RevokeRefreshToken(ctx context.Context, token string) error
 	SearchUsers(ctx context.Context, arg SearchUsersParams) ([]UsrUser, error)
 	SearchUsersByQuery(ctx context.Context, arg SearchUsersByQueryParams) ([]UsrUser, error)
+	SuppressEmail(ctx context.Context, arg SuppressEmailParams) error
 	Unfollow(ctx context.Context, arg UnfollowParams) error
 	UpdateUser(ctx context.Context, arg UpdateUserParams) (UsrUser, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error

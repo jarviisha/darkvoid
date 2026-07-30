@@ -17,7 +17,7 @@ Always prefer the `Makefile` — it loads `.env` automatically and scopes migrat
 - `make generate` — runs both `sqlc generate` and `swag` (fmt + init). Equivalent to `make sqlc-generate && make swagger-generate`.
 - `make docker-up` / `make docker-down` / `make docker-logs` — full stack (Postgres + Redis + app) via `docker-compose.yml`
 - `make bot` — run the content bot against a running API; `make docker-up-bot` / `docker-down-bot` / `docker-logs-bot` for the containerised form (opt-in `bot` compose profile, so a plain `docker compose up` never starts posting)
-- `make ctl CTL_ARGS="user roles"` — operator CLI; `user grant-role -username u -role r` is how the bot runner gets the `bot` role, and `codohue reindex` re-sends existing posts to the recommendation index (posts are indexed once at creation with no retry queue, so an outage leaves them missing until this is run)
+- `make ctl CTL_ARGS="user roles"` — operator CLI; `user grant-role -username u -role r` is how the bot runner gets the `bot` role, `mail suppressions` / `mail unsuppress -email x` manage the bounce suppression list (nothing in the API takes an address back off it), and `codohue reindex` re-sends existing posts to the recommendation index (posts are indexed once at creation with no retry queue, so an outage leaves them missing until this is run)
 - `make install-tools` — installs `sqlc`, `swag`, `golangci-lint`, `air`, `migrate`
 
 ### Migrations
@@ -66,7 +66,15 @@ The same property makes route *nesting* load-bearing for authorization. `BotCont
 
 ### Mail Delivery
 
-`mailer.Mailer.Send` returns the provider's message id alongside its error. Nothing persists it yet — the account-mail flows log it as `provider_message_id` — but it is the only handle a future delivery/bounce webhook could match a send against, which is why the signature carries it now rather than being widened later. SMTP has no server-assigned id, so it generates its own `Message-ID` header and returns that. Provider selection and the Resend specifics are under Configuration below.
+`mailer.Mailer.Send` returns the provider's message id alongside its error. SMTP has no server-assigned id, so it generates its own `Message-ID` header and returns that. Provider selection and the Resend specifics are under Configuration below.
+
+Every send is recorded in `usr.email_deliveries` keyed by that id — `AccountMailService.deliver` is the single choke point all three flows go through, so a flow added later cannot forget to record. A recording failure is logged and swallowed: the mail has already left, and reporting failure would only make the caller retry a send that worked.
+
+**Delivery reports.** `POST /api/v1/webhooks/resend` receives them. It sits outside every auth group — the caller is Resend, not a user, and the Svix signature (HMAC-SHA256 over `{svix-id}.{svix-timestamp}.{body}`) is the authentication, which is why the handler verifies the *raw* bytes before anything decodes them. With no `RESEND_WEBHOOK_SECRET` the route is not registered at all rather than served unverified: it writes to the suppression list, so an open endpoint would let anyone block any address. The 5-minute timestamp tolerance is what expires a replay — a captured request stays validly signed forever.
+
+Status codes are the retry contract: 401 for a bad signature, 400 for a signed-but-unparseable payload (it will fail every retry too), 500 only for our own faults so Svix retries, and 200 for an event type we do not model or one naming a send we never recorded — neither becomes acceptable on a retry. Idempotency needs no dedup table: `ApplyEmailDeliveryEvent` is guarded on `last_event_at` so a replayed or late event cannot overwrite a newer outcome, and suppression is an upsert.
+
+**Suppression.** `mailer.SuppressionGate` wraps the Mailer and drops recipients on the list; it is a decorator rather than a check at each call site for the same reason as above, and its checker is injected by `wireMailDependencies` after the user context exists. A checker error fails *open* — the list is a reputation guard, and blocking password resets on a database blip is the worse outcome. Only **permanent** bounces and complaints suppress: `Transient` covers a full mailbox or greylisting, and suppressing on that would lock a real user out of password resets over a problem that fixes itself. `SendPasswordReset` maps `ErrSuppressed` to a success response, since a 500 for suppressed addresses only would leak which addresses exist and have bounced. Nothing in the API un-suppresses — that is `make ctl CTL_ARGS="mail unsuppress -email x"`, alongside `mail suppressions` to see the list.
 
 ### Logging
 

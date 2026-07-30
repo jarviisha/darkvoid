@@ -117,8 +117,13 @@ type MailerConfig struct {
 	Username string
 	Password string
 	APIKey   string // Resend API key, from RESEND_API_KEY
-	From     string
-	BaseURL  string // application URL for building links in emails
+	// WebhookSecret is the Resend webhook signing secret ("whsec_..."). Empty
+	// leaves the webhook route unregistered — see MailerConfig usage in
+	// internal/app: an unverified endpoint that writes to the suppression list
+	// would let anyone block any address.
+	WebhookSecret string
+	From          string
+	BaseURL       string // application URL for building links in emails
 }
 
 // AppConfig holds application-level configuration

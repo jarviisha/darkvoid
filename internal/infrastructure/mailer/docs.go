@@ -9,4 +9,14 @@
 // resend-go — the API is a single POST, and owning the call keeps the timeout,
 // retry policy and logging consistent with the rest of the codebase. SMTP has no
 // server-assigned id, so it generates its own Message-ID header and returns that.
+//
+// Two pieces sit around the Mailer rather than inside one:
+//
+//   - SuppressionGate decorates any Mailer and drops recipients that have bounced
+//     or complained. A decorator, not a check per call site, so a flow added later
+//     cannot forget it. The suppression source is injected after construction —
+//     the mailer is built before the context that owns the table.
+//   - ResendWebhookVerifier and ParseResendWebhook handle inbound delivery
+//     reports: Svix HMAC verification plus payload normalisation into a
+//     WebhookEvent, so consumers never parse Resend's shape themselves.
 package mailer

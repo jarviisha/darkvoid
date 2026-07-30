@@ -4137,6 +4137,48 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/webhooks/resend": {
+            "post": {
+                "description": "Receives Resend delivery events (delivered, bounced, complained) and updates the email delivery log. Authenticated by the Svix signature headers, not by a bearer token. Only registered when RESEND_WEBHOOK_SECRET is configured.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Resend delivery webhook",
+                "operationId": "resendWebhook",
+                "responses": {
+                    "200": {
+                        "description": "Event accepted",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.MessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Signature verification failed",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Event could not be applied; the provider will retry",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {

@@ -61,6 +61,8 @@ func main() {
 	switch os.Args[1] {
 	case "user":
 		runUser(os.Args[2:])
+	case "mail":
+		runMail(os.Args[2:])
 	case "codohue":
 		runCodohue(os.Args[2:])
 	case "-h", "--help", "help":
@@ -84,6 +86,12 @@ Usage:
   darkvoidctl user roles                      list the assignable roles
   darkvoidctl user deactivate -username <u>
 
+  darkvoidctl mail suppressions [-limit <n>]   list addresses we stopped mailing
+  darkvoidctl mail unsuppress -email <e>
+      Take an address back off the suppression list. A permanent bounce or a spam
+      complaint puts it there and nothing else removes it, so a mailbox that was
+      broken once stays unmailable — password resets included — until this is run.
+
   darkvoidctl codohue reindex [-since <dur>] [-limit <n>] [-dry-run]
       Re-send existing posts to the Codohue index. Indexing happens once, at
       post creation, and a failed ingest is dropped rather than retried — so
@@ -100,10 +108,11 @@ Reads DB settings from the environment / .env (same as the API server).
 
 // deps bundles what the user subcommands need. openDeps wires them from config.
 type deps struct {
-	pool     *pgxpool.Pool
-	userRepo *repository.UserRepository
-	roleRepo *repository.RoleRepository
-	userSvc  *service.UserService
+	pool       *pgxpool.Pool
+	userRepo   *repository.UserRepository
+	roleRepo   *repository.RoleRepository
+	userSvc    *service.UserService
+	mailEvents *service.EmailEventService
 }
 
 func openDeps(ctx context.Context) (*deps, func(), error) {
@@ -138,7 +147,8 @@ func openDeps(ctx context.Context) (*deps, func(), error) {
 		userRepo: userRepo,
 		roleRepo: repository.NewRoleRepository(pool),
 		// Avatar/cover storage is nil: no CLI command touches it.
-		userSvc: service.NewUserService(userRepo, nil),
+		userSvc:    service.NewUserService(userRepo, nil),
+		mailEvents: service.NewEmailEventService(repository.NewEmailDeliveryRepository(pool)),
 	}
 	return d, func() { pool.Close() }, nil
 }

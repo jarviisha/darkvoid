@@ -112,6 +112,7 @@ func newValidToken(t *testing.T, userID uuid.UUID) (*entity.RefreshToken, *mockR
 
 type welcomeEmailCall struct {
 	ctxErr   error
+	userID   uuid.UUID
 	email    string
 	username string
 }
@@ -130,9 +131,9 @@ type mockEmailSender struct {
 	wg                *sync.WaitGroup
 }
 
-func (m *mockEmailSender) SendWelcome(ctx context.Context, email, username string) {
+func (m *mockEmailSender) SendWelcome(ctx context.Context, userID uuid.UUID, email, username string) {
 	m.mu.Lock()
-	m.welcomeCalls = append(m.welcomeCalls, welcomeEmailCall{ctxErr: ctx.Err(), email: email, username: username})
+	m.welcomeCalls = append(m.welcomeCalls, welcomeEmailCall{ctxErr: ctx.Err(), userID: userID, email: email, username: username})
 	m.mu.Unlock()
 	if m.wg != nil {
 		m.wg.Done()
