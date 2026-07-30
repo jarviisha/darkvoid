@@ -22,14 +22,49 @@ APP_BIN := $(BIN_DIR)/api
 COVERAGE_FILE := coverage.out
 MIGRATE := $(shell $(GO) env GOPATH)/bin/migrate
 
+# Connection settings for the migrate CLI.
+#
+# golang-migrate takes a single -database URL where the app takes discrete DB_*
+# fields, which is the only reason a DATABASE_URL ever existed here. It was a
+# second copy of the same connection details, hand-kept in sync: point it at the
+# wrong database and `make migrate-up` migrates that one and still exits 0, so
+# the app runs on an unmigrated schema with nothing reporting a problem.
+#
+# migrate's postgres driver is lib/pq, which reads any field missing from the URL
+# out of PG*. So DB_* stays the single source of truth, and three things follow:
+# the password leaves argv (it was visible to `ps` on every migrate run — the
+# same reason docker-compose passes PGPASSWORD out of band), a password holding
+# URL-reserved characters needs no encoding, and x-migrations-table becomes the
+# only query parameter, so the DSN no longer has to already contain a '?'.
+#
+# Assigned with := rather than ?= deliberately: a PGDATABASE left over in the
+# shell from a psql session must not silently redirect a migration.
+DB_HOST    ?= localhost
+DB_PORT    ?= 5432
+DB_USER    ?= postgres
+DB_NAME    ?= darkvoid
+DB_SSLMODE ?= disable
+
+export PGHOST     := $(DB_HOST)
+export PGPORT     := $(DB_PORT)
+export PGUSER     := $(DB_USER)
+export PGPASSWORD := $(DB_PASSWORD)
+export PGDATABASE := $(DB_NAME)
+export PGSSLMODE  := $(DB_SSLMODE)
+
 # migrate-up walks MIGRATION_MODULES forward and migrate-down walks the reversed
 # list, so the two must stay mirror images — adding a module means editing both.
 MIGRATION_MODULES          := user post notification bot
 MIGRATION_MODULES_REVERSED := bot notification post user
 SQLC_DB_DIRS := internal/feature/user/db internal/feature/post/db internal/feature/notification/db internal/feature/bot/db
 
+# Tests the variable through the recipe's environment ($${NAME}) rather than
+# expanding its value into the shell command ($(NAME)). Same result for the
+# plain arguments this guards, but DB_PASSWORD would otherwise be pasted
+# verbatim into a `[ -z "..." ]` that is visible in `ps` while it runs. Relies
+# on the blanket `export` above, which puts every variable in the environment.
 define require_var
-	@if [ -z "$($1)" ]; then \
+	@if [ -z "$${$(1)}" ]; then \
 		echo "Error: $(1) is required.$(if $2, Usage: $2)"; \
 		exit 1; \
 	fi
@@ -43,7 +78,7 @@ define require_module
 endef
 
 define migrate_cmd
-	$(MIGRATE) -path migrations/$(1) -database "$(DATABASE_URL)&x-migrations-table=schema_migrations_$(1)" $(2)
+	$(MIGRATE) -path migrations/$(1) -database "postgres:///?x-migrations-table=schema_migrations_$(1)" $(2)
 endef
 
 define run_migrations
@@ -161,31 +196,31 @@ docker-logs-app: ## View app-only Docker container logs
 	$(DOCKER_COMPOSE) logs -f app-external
 
 migrate-up: ## Run all pending migrations (user, post, notification, bot)
-	$(call require_var,DATABASE_URL,make migrate-up DATABASE_URL=postgres://...)
+	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up DB_PASSWORD=secret)
 	$(call run_migrations,$(MIGRATION_MODULES),Running,up)
 
 migrate-down: ## Roll back the last migration for all modules (bot, notification, post, user)
-	$(call require_var,DATABASE_URL,make migrate-down DATABASE_URL=postgres://...)
+	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-down DB_PASSWORD=secret)
 	$(call run_migrations,$(MIGRATION_MODULES_REVERSED),Rolling back,down 1)
 
 migrate-up-user: ## Run pending migrations for user module only
-	$(call require_var,DATABASE_URL,make migrate-up-user DATABASE_URL=postgres://...)
+	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up-user DB_PASSWORD=secret)
 	$(call migrate_cmd,user,up)
 
 migrate-up-post: ## Run pending migrations for post module only
-	$(call require_var,DATABASE_URL,make migrate-up-post DATABASE_URL=postgres://...)
+	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up-post DB_PASSWORD=secret)
 	$(call migrate_cmd,post,up)
 
 migrate-up-notification: ## Run pending migrations for notification module only
-	$(call require_var,DATABASE_URL,make migrate-up-notification DATABASE_URL=postgres://...)
+	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up-notification DB_PASSWORD=secret)
 	$(call migrate_cmd,notification,up)
 
 migrate-up-bot: ## Run pending migrations for bot module only
-	$(call require_var,DATABASE_URL,make migrate-up-bot DATABASE_URL=postgres://...)
+	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up-bot DB_PASSWORD=secret)
 	$(call migrate_cmd,bot,up)
 
 migrate-down-notification: ## Roll back the last migration for notification module
-	$(call require_var,DATABASE_URL,make migrate-down-notification DATABASE_URL=postgres://...)
+	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-down-notification DB_PASSWORD=secret)
 	$(call migrate_cmd,notification,down 1)
 
 migrate-create: ## Create a new migration (usage: make migrate-create module=post name=add_example_field)
@@ -196,7 +231,7 @@ migrate-create: ## Create a new migration (usage: make migrate-create module=pos
 	$(MIGRATE) create -ext sql -dir migrations/$(module) -seq $(name)
 
 migrate-status: ## Show current migration status for all modules
-	$(call require_var,DATABASE_URL,make migrate-status DATABASE_URL=postgres://...)
+	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-status DB_PASSWORD=secret)
 	@set -e; \
 	for module in $(MIGRATION_MODULES); do \
 		echo "=== $$module migration status ==="; \
@@ -206,7 +241,7 @@ migrate-status: ## Show current migration status for all modules
 migrate-force: ## Force migration to a specific version (usage: make migrate-force module=user version=1)
 	$(call require_var,module,make migrate-force module=user version=1)
 	$(call require_var,version,make migrate-force module=user version=1)
-	$(call require_var,DATABASE_URL,make migrate-force module=user version=1 DATABASE_URL=postgres://...)
+	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-force module=user version=1 DB_PASSWORD=secret)
 	$(call require_module,$(module))
 	@echo "WARNING: forcing $(module) migrations to version $(version)"
 	$(call migrate_cmd,$(module),force $(version))

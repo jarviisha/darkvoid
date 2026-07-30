@@ -22,7 +22,7 @@ Always prefer the `Makefile` — it loads `.env` automatically and scopes migrat
 
 ### Migrations
 
-Migrations are **split per module** — each module uses its own `schema_migrations_<module>` table. `DATABASE_URL` must be set (via `.env` or on the command line).
+Migrations are **split per module** — each module uses its own `schema_migrations_<module>` table. Connection comes from the same `DB_*` variables the app uses, so only `DB_PASSWORD` has no default and is what the targets check for. There is deliberately no `DATABASE_URL`: golang-migrate wants one URL where the app wants discrete fields, and holding a second copy of the connection details meant a stale one silently migrated the wrong database and still exited 0. The Makefile exports `DB_*` as `PG*` instead and passes `postgres:///?x-migrations-table=…`, letting lib/pq fill in the rest — which also keeps the password out of the migrate process's argv.
 
 - `make migrate-up` — runs user → post → notification → bot in order (`MIGRATION_MODULES`)
 - `make migrate-up-user` / `make migrate-up-post` / `make migrate-up-notification` / `make migrate-up-bot`
