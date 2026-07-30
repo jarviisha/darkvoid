@@ -19,8 +19,12 @@ go.work
 vendor/
 
 # Environment variables
+# .env.* is a blanket rule on purpose: it covers .env.local, .env.production and
+# ad-hoc copies like .env.bak.<date>, any of which holds live credentials that a
+# `git add -A` would otherwise stage. The template is the one exception.
 .env
-.env.local
+.env.*
+!.env.example
 
 # IDE
 .vscode/
