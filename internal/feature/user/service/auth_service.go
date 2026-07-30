@@ -17,7 +17,7 @@ const postRegisterEmailTimeout = 30 * time.Second
 
 // emailSender sends fire-and-forget emails after registration.
 type emailSender interface {
-	SendWelcome(ctx context.Context, email, username string)
+	SendWelcome(ctx context.Context, userID uuid.UUID, email, username string)
 	SendVerification(ctx context.Context, userID uuid.UUID, email, username string)
 }
 
@@ -93,7 +93,7 @@ func (s *AuthService) Register(ctx context.Context, req *dto.RegisterRequest) (*
 		go func() {
 			emailCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postRegisterEmailTimeout)
 			defer cancel()
-			s.emailSender.SendWelcome(emailCtx, req.Email, req.Username)
+			s.emailSender.SendWelcome(emailCtx, userID, req.Email, req.Username)
 		}()
 		go func() {
 			emailCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postRegisterEmailTimeout)

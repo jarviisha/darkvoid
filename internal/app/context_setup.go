@@ -5,12 +5,13 @@ import "context"
 func (app *Application) setupContexts(ctx context.Context) error {
 	app.log.Info("initializing bounded contexts")
 
-	store, templates, mailSvc, err := app.setupInfrastructure()
+	store, mail, err := app.setupInfrastructure()
 	if err != nil {
 		return err
 	}
 
-	app.setupUserContext(store, templates, mailSvc)
+	app.setupUserContext(store, mail)
+	app.wireMailDependencies(mail)
 	app.setupStorageContext(store)
 	app.setupPostContext(store)
 	if err := app.ensureCodohueNamespaceConfig(ctx); err != nil {

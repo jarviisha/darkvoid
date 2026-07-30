@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"time"
 
@@ -25,6 +26,12 @@ type emailTokenRepo interface {
 	DeleteByUserAndType(ctx context.Context, userID uuid.UUID, tokenType entity.EmailTokenType) error
 }
 
+// deliveryRecorder records an accepted send so a later provider delivery report
+// can be attributed back to a user.
+type deliveryRecorder interface {
+	RecordSend(ctx context.Context, userID uuid.UUID, providerMessageID, recipient string, kind entity.EmailKind) error
+}
+
 // AccountMailService orchestrates user-account email flows (welcome, verification,
 // password reset) and the associated one-shot email tokens. It is scoped to the
 // user bounded context — not a general-purpose mailer for other features.
@@ -33,6 +40,7 @@ type AccountMailService struct {
 	templates *mailer.Templates
 	tokenRepo emailTokenRepo
 	userRepo  userRepo
+	recorder  deliveryRecorder // may be nil in tests
 	baseURL   string
 }
 
@@ -42,6 +50,7 @@ func NewAccountMailService(
 	templates *mailer.Templates,
 	tokenRepo emailTokenRepo,
 	userRepo userRepo,
+	recorder deliveryRecorder,
 	baseURL string,
 ) *AccountMailService {
 	return &AccountMailService{
@@ -49,12 +58,58 @@ func NewAccountMailService(
 		templates: templates,
 		tokenRepo: tokenRepo,
 		userRepo:  userRepo,
+		recorder:  recorder,
 		baseURL:   baseURL,
 	}
 }
 
+// deliver sends one message and records it against the user.
+//
+// Every flow goes through here so that recording cannot be forgotten by the next
+// one added. A suppressed recipient comes back as mailer.ErrSuppressed — that is
+// the suppression list working, not a delivery fault, and each caller decides
+// what it means for its own response.
+func (s *AccountMailService) deliver(
+	ctx context.Context,
+	userID uuid.UUID,
+	email, subject, html, text string,
+	kind entity.EmailKind,
+) error {
+	messageID, err := s.mailer.Send(ctx, &mailer.Message{
+		To:      []string{email},
+		Subject: subject,
+		HTML:    html,
+		Text:    text,
+	})
+	if err != nil {
+		return err
+	}
+
+	if s.recorder != nil {
+		if err := s.recorder.RecordSend(ctx, userID, messageID, email, kind); err != nil {
+			// The mail has already left. Reporting a failure now would only make the
+			// caller retry a send that worked.
+			logger.LogError(ctx, err, "failed to record email delivery", "email", email, "kind", kind)
+		}
+	}
+
+	logger.Info(ctx, "email sent", "email", email, "kind", kind, "provider_message_id", messageID)
+	return nil
+}
+
+// logSendFailure keeps a suppressed recipient out of the error log. It is an
+// expected outcome, and logging it at error level trains people to ignore the
+// entries that are not.
+func logSendFailure(ctx context.Context, err error, kind entity.EmailKind, email string) {
+	if stderrors.Is(err, mailer.ErrSuppressed) {
+		logger.Warn(ctx, "email skipped, recipient is suppressed", "email", email, "kind", kind)
+		return
+	}
+	logger.LogError(ctx, err, "failed to send email", "email", email, "kind", kind)
+}
+
 // SendWelcome sends a welcome email to the user. Errors are logged, not propagated.
-func (s *AccountMailService) SendWelcome(ctx context.Context, email, username string) {
+func (s *AccountMailService) SendWelcome(ctx context.Context, userID uuid.UUID, email, username string) {
 	html, err := s.templates.RenderWelcome(mailer.WelcomeData{
 		Username: username,
 	})
@@ -63,13 +118,9 @@ func (s *AccountMailService) SendWelcome(ctx context.Context, email, username st
 		return
 	}
 
-	if err := s.mailer.Send(ctx, &mailer.Message{
-		To:      []string{email},
-		Subject: "Welcome to DarkVoid",
-		HTML:    html,
-		Text:    fmt.Sprintf("Hi %s, welcome to DarkVoid! Your account has been created successfully.", username),
-	}); err != nil {
-		logger.LogError(ctx, err, "failed to send welcome email", "email", email)
+	text := fmt.Sprintf("Hi %s, welcome to DarkVoid! Your account has been created successfully.", username)
+	if err := s.deliver(ctx, userID, email, "Welcome to DarkVoid", html, text, entity.EmailKindWelcome); err != nil {
+		logSendFailure(ctx, err, entity.EmailKindWelcome, email)
 	}
 }
 
@@ -104,13 +155,9 @@ func (s *AccountMailService) SendVerification(ctx context.Context, userID uuid.U
 		return
 	}
 
-	if err := s.mailer.Send(ctx, &mailer.Message{
-		To:      []string{email},
-		Subject: "Verify your email - DarkVoid",
-		HTML:    html,
-		Text:    fmt.Sprintf("Hi %s, please verify your email by visiting: %s", username, verifyURL),
-	}); err != nil {
-		logger.LogError(ctx, err, "failed to send verification email", "email", email)
+	text := fmt.Sprintf("Hi %s, please verify your email by visiting: %s", username, verifyURL)
+	if err := s.deliver(ctx, userID, email, "Verify your email - DarkVoid", html, text, entity.EmailKindVerifyEmail); err != nil {
+		logSendFailure(ctx, err, entity.EmailKindVerifyEmail, email)
 	}
 }
 
@@ -204,17 +251,18 @@ func (s *AccountMailService) SendPasswordReset(ctx context.Context, email string
 		return errors.NewInternalError(err)
 	}
 
-	if err := s.mailer.Send(ctx, &mailer.Message{
-		To:      []string{user.Email},
-		Subject: "Reset your password - DarkVoid",
-		HTML:    html,
-		Text:    fmt.Sprintf("Hi %s, reset your password by visiting: %s", user.Username, resetURL),
-	}); err != nil {
-		logger.LogError(ctx, err, "failed to send password reset email", "email", user.Email)
+	text := fmt.Sprintf("Hi %s, reset your password by visiting: %s", user.Username, resetURL)
+	if err := s.deliver(ctx, user.ID, user.Email, "Reset your password - DarkVoid", html, text, entity.EmailKindResetPassword); err != nil {
+		logSendFailure(ctx, err, entity.EmailKindResetPassword, user.Email)
+		if stderrors.Is(err, mailer.ErrSuppressed) {
+			// Answer exactly as for a successful send. This endpoint already refuses
+			// to reveal whether an address exists, and a 500 for suppressed
+			// addresses only would leak that distinction.
+			return nil
+		}
 		return errors.NewInternalError(err)
 	}
 
-	logger.Info(ctx, "password reset email sent", "email", user.Email)
 	return nil
 }
 

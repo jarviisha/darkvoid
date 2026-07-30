@@ -9,6 +9,7 @@ sql:
       - "internal/feature/user/sql/user_role_queries.sql"
       - "internal/feature/user/sql/follow_queries.sql"
       - "internal/feature/user/sql/email_token_queries.sql"
+      - "internal/feature/user/sql/email_delivery_queries.sql"
     schema: "migrations/user/*.up.sql"
     gen:
       go:

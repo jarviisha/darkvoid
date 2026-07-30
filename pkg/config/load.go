@@ -148,24 +148,32 @@ func loadCodohueEventsRedisConfig() RedisConfig {
 }
 
 // loadMailerConfig loads mailer configuration from environment variables.
-// Set MAILER_PROVIDER=smtp to enable real email delivery.
+// Set MAILER_PROVIDER=resend or smtp to enable real email delivery.
 //
 //	MAILER_PROVIDER (default: nop)
 //	MAILER_HOST     (default: "")
 //	MAILER_PORT     (default: 587)
 //	MAILER_USERNAME (default: "")
 //	MAILER_PASSWORD (default: "")
+//	RESEND_API_KEY  (default: "")
+//	RESEND_WEBHOOK_SECRET (default: "")
 //	MAILER_FROM     (default: "noreply@darkvoid.app")
 //	MAILER_BASE_URL (default: "http://localhost:3000")
+//
+// RESEND_API_KEY keeps the vendor's own name rather than a MAILER_ prefix, the
+// same way GEMINI_API_KEY does — it is pasted straight from the provider's
+// dashboard, and renaming it only makes that harder to match up.
 func loadMailerConfig() MailerConfig {
 	return MailerConfig{
-		Provider: getEnv("MAILER_PROVIDER", "nop"),
-		Host:     getEnv("MAILER_HOST", ""),
-		Port:     getEnvInt("MAILER_PORT", 587),
-		Username: getEnv("MAILER_USERNAME", ""),
-		Password: getEnv("MAILER_PASSWORD", ""),
-		From:     getEnv("MAILER_FROM", "noreply@darkvoid.app"),
-		BaseURL:  getEnv("MAILER_BASE_URL", "http://localhost:3000"),
+		Provider:      getEnv("MAILER_PROVIDER", "nop"),
+		Host:          getEnv("MAILER_HOST", ""),
+		Port:          getEnvInt("MAILER_PORT", 587),
+		Username:      getEnv("MAILER_USERNAME", ""),
+		Password:      getEnv("MAILER_PASSWORD", ""),
+		APIKey:        getEnv("RESEND_API_KEY", ""),
+		WebhookSecret: getEnv("RESEND_WEBHOOK_SECRET", ""),
+		From:          getEnv("MAILER_FROM", "noreply@darkvoid.app"),
+		BaseURL:       getEnv("MAILER_BASE_URL", "http://localhost:3000"),
 	}
 }
 

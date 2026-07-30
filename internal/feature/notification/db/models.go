@@ -22,6 +22,24 @@ type NotificationNotification struct {
 	Message     *string            `json:"message"`
 }
 
+type UsrEmailDelivery struct {
+	ID                uuid.UUID          `json:"id"`
+	UserID            uuid.UUID          `json:"user_id"`
+	ProviderMessageID string             `json:"provider_message_id"`
+	Recipient         string             `json:"recipient"`
+	Kind              string             `json:"kind"`
+	Status            string             `json:"status"`
+	LastEventAt       pgtype.Timestamptz `json:"last_event_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type UsrEmailSuppression struct {
+	Email     string             `json:"email"`
+	Reason    string             `json:"reason"`
+	Detail    *string            `json:"detail"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type UsrEmailToken struct {
 	ID        uuid.UUID        `json:"id"`
 	UserID    uuid.UUID        `json:"user_id"`

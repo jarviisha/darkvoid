@@ -7,6 +7,7 @@ import (
 	"net/smtp"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
 
@@ -31,7 +32,11 @@ func NewSMTPMailer(cfg Config) *SMTPMailer {
 }
 
 // Send sends an email via SMTP with PLAIN auth and TLS on port 587.
-func (m *SMTPMailer) Send(ctx context.Context, msg *Message) error {
+//
+// The returned id is a Message-ID this method generates itself: SMTP reports no
+// identifier back to the sender, so the header we put on the way out is the only
+// thing a later bounce can be matched against.
+func (m *SMTPMailer) Send(ctx context.Context, msg *Message) (string, error) {
 	addr := fmt.Sprintf("%s:%d", m.host, m.port)
 	auth := smtp.PlainAuth("", m.username, m.password, m.host)
 
@@ -39,15 +44,28 @@ func (m *SMTPMailer) Send(ctx context.Context, msg *Message) error {
 	// m.from may contain a display name like "DarkVoid <noreply@darkvoid.app>".
 	envelopeFrom := extractEmail(m.from)
 
-	body := buildMIME(m.from, msg)
+	messageID := newMessageID(envelopeFrom)
+	body := buildMIME(m.from, messageID, msg)
 
 	if err := smtp.SendMail(addr, auth, envelopeFrom, msg.To, []byte(body)); err != nil {
 		logger.Error(ctx, "failed to send email", "to", msg.To, "subject", msg.Subject, "error", err)
-		return fmt.Errorf("send email to %s: %w", strings.Join(msg.To, ","), err)
+		return "", fmt.Errorf("send email to %s: %w", strings.Join(msg.To, ","), err)
 	}
 
-	logger.Info(ctx, "email sent", "to", msg.To, "subject", msg.Subject)
-	return nil
+	logger.Info(ctx, "email sent", "to", msg.To, "subject", msg.Subject, "message_id", messageID)
+	return messageID, nil
+}
+
+// newMessageID builds an RFC 5322 Message-ID, angle brackets included, from the
+// envelope sender's domain. buildMIME previously emitted no Message-ID at all,
+// which some spam filters score against — and which left an SMTP send with no
+// identifier to correlate anything against.
+func newMessageID(envelopeFrom string) string {
+	domain := "darkvoid.local"
+	if at := strings.LastIndex(envelopeFrom, "@"); at >= 0 && at < len(envelopeFrom)-1 {
+		domain = envelopeFrom[at+1:]
+	}
+	return fmt.Sprintf("<%s@%s>", uuid.NewString(), domain)
 }
 
 // extractEmail parses a "Name <email>" string and returns just the email address.
@@ -61,13 +79,14 @@ func extractEmail(from string) string {
 }
 
 // buildMIME constructs a multipart MIME email with HTML and plain text parts.
-func buildMIME(from string, msg *Message) string {
+func buildMIME(from, messageID string, msg *Message) string {
 	boundary := "==DarkVoidBoundary=="
 	var b strings.Builder
 
 	b.WriteString("From: " + from + "\r\n")
 	b.WriteString("To: " + strings.Join(msg.To, ",") + "\r\n")
 	b.WriteString("Subject: " + msg.Subject + "\r\n")
+	b.WriteString("Message-ID: " + messageID + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n")
 	b.WriteString("\r\n")

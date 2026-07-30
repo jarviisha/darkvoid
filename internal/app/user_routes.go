@@ -18,6 +18,14 @@ func (ctx *UserContext) RegisterRoutes(r chi.Router, auth middleware.AuthMiddlew
 		r.Post("/reset-password", ctx.emailHandler.ResetPassword)
 	})
 
+	// Provider webhooks. Deliberately outside every auth group: the caller is
+	// Resend, not a user, and the Svix signature is the authentication. Registered
+	// only when a webhook secret is configured — an unverified endpoint that writes
+	// to the suppression list would let anyone block any address.
+	if ctx.emailWebhookHandler != nil {
+		r.Post("/webhooks/resend", ctx.emailWebhookHandler.HandleResend)
+	}
+
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Required)
 		r.Get("/auth/me", ctx.authHandler.GetMe)

@@ -11,50 +11,57 @@ import (
 // Set only the function fields exercised by the test under execution.
 // Unset fields return zero values and nil errors.
 type mockQuerier struct {
-	adminCountUsers                func(context.Context, db.AdminCountUsersParams) (int64, error)
-	adminListUsers                 func(context.Context, db.AdminListUsersParams) ([]db.UsrUser, error)
-	adminSetUserActive             func(context.Context, db.AdminSetUserActiveParams) error
-	assignRoleToUser               func(context.Context, db.AssignRoleToUserParams) error
-	checkUserHasAnyRole            func(context.Context, db.CheckUserHasAnyRoleParams) (bool, error)
-	countFollowers                 func(context.Context, uuid.UUID) (int64, error)
-	countFollowing                 func(context.Context, uuid.UUID) (int64, error)
-	countSearchUsers               func(context.Context, *string) (int64, error)
-	createEmailToken               func(context.Context, db.CreateEmailTokenParams) (db.UsrEmailToken, error)
-	createRefreshToken             func(context.Context, db.CreateRefreshTokenParams) (db.UsrRefreshToken, error)
-	createUser                     func(context.Context, db.CreateUserParams) (db.UsrUser, error)
-	deactivateUser                 func(context.Context, db.DeactivateUserParams) error
-	deleteEmailTokensByUserAndType func(context.Context, db.DeleteEmailTokensByUserAndTypeParams) error
-	deleteExpiredEmailTokens       func(context.Context) error
-	deleteExpiredRefreshTokens     func(context.Context) error
-	existsEmail                    func(context.Context, string) (bool, error)
-	existsEmailExcludingUser       func(context.Context, db.ExistsEmailExcludingUserParams) (bool, error)
-	existsUsername                 func(context.Context, string) (bool, error)
-	follow                         func(context.Context, db.FollowParams) error
-	getActiveRefreshTokensByUserID func(context.Context, uuid.UUID) ([]db.UsrRefreshToken, error)
-	getEmailTokenByToken           func(context.Context, string) (db.UsrEmailToken, error)
-	getFollowers                   func(context.Context, db.GetFollowersParams) ([]db.UsrFollow, error)
-	getFollowing                   func(context.Context, db.GetFollowingParams) ([]db.UsrFollow, error)
-	getRefreshTokenByToken         func(context.Context, string) (db.UsrRefreshToken, error)
-	getUserByEmail                 func(context.Context, string) (db.UsrUser, error)
-	getUserByID                    func(context.Context, uuid.UUID) (db.UsrUser, error)
-	getUserByIDAny                 func(context.Context, uuid.UUID) (db.UsrUser, error)
-	getUserByUsername              func(context.Context, string) (db.UsrUser, error)
-	getUserRoles                   func(context.Context, uuid.UUID) ([]db.GetUserRolesRow, error)
-	getUsersByIDs                  func(context.Context, []uuid.UUID) ([]db.UsrUser, error)
-	getUsersByIDsAny               func(context.Context, []uuid.UUID) ([]db.UsrUser, error)
-	getUsersByUsernames            func(context.Context, []string) ([]db.UsrUser, error)
-	isFollowing                    func(context.Context, db.IsFollowingParams) (bool, error)
-	listAllActiveUserIDs           func(context.Context) ([]uuid.UUID, error)
-	markEmailTokenUsed             func(context.Context, uuid.UUID) error
-	removeRoleFromUser             func(context.Context, db.RemoveRoleFromUserParams) error
-	revokeAllUserRefreshTokens     func(context.Context, uuid.UUID) error
-	revokeRefreshToken             func(context.Context, string) error
-	searchUsers                    func(context.Context, db.SearchUsersParams) ([]db.UsrUser, error)
-	searchUsersByQuery             func(context.Context, db.SearchUsersByQueryParams) ([]db.UsrUser, error)
-	unfollow                       func(context.Context, db.UnfollowParams) error
-	updateUser                     func(context.Context, db.UpdateUserParams) (db.UsrUser, error)
-	updateUserPassword             func(context.Context, db.UpdateUserPasswordParams) error
-	updateUserProfile              func(context.Context, db.UpdateUserProfileParams) (db.UsrUser, error)
+	adminCountUsers                     func(context.Context, db.AdminCountUsersParams) (int64, error)
+	applyEmailDeliveryEvent             func(context.Context, db.ApplyEmailDeliveryEventParams) (int64, error)
+	adminListUsers                      func(context.Context, db.AdminListUsersParams) ([]db.UsrUser, error)
+	adminSetUserActive                  func(context.Context, db.AdminSetUserActiveParams) error
+	assignRoleToUser                    func(context.Context, db.AssignRoleToUserParams) error
+	checkUserHasAnyRole                 func(context.Context, db.CheckUserHasAnyRoleParams) (bool, error)
+	countFollowers                      func(context.Context, uuid.UUID) (int64, error)
+	countFollowing                      func(context.Context, uuid.UUID) (int64, error)
+	countSearchUsers                    func(context.Context, *string) (int64, error)
+	createEmailDelivery                 func(context.Context, db.CreateEmailDeliveryParams) (db.UsrEmailDelivery, error)
+	createEmailToken                    func(context.Context, db.CreateEmailTokenParams) (db.UsrEmailToken, error)
+	createRefreshToken                  func(context.Context, db.CreateRefreshTokenParams) (db.UsrRefreshToken, error)
+	createUser                          func(context.Context, db.CreateUserParams) (db.UsrUser, error)
+	deactivateUser                      func(context.Context, db.DeactivateUserParams) error
+	deleteEmailSuppression              func(context.Context, string) (int64, error)
+	deleteEmailTokensByUserAndType      func(context.Context, db.DeleteEmailTokensByUserAndTypeParams) error
+	deleteExpiredEmailTokens            func(context.Context) error
+	deleteExpiredRefreshTokens          func(context.Context) error
+	existsEmail                         func(context.Context, string) (bool, error)
+	existsEmailExcludingUser            func(context.Context, db.ExistsEmailExcludingUserParams) (bool, error)
+	existsUsername                      func(context.Context, string) (bool, error)
+	follow                              func(context.Context, db.FollowParams) error
+	getActiveRefreshTokensByUserID      func(context.Context, uuid.UUID) ([]db.UsrRefreshToken, error)
+	getEmailDeliveryByProviderMessageID func(context.Context, string) (db.UsrEmailDelivery, error)
+	getEmailTokenByToken                func(context.Context, string) (db.UsrEmailToken, error)
+	getFollowers                        func(context.Context, db.GetFollowersParams) ([]db.UsrFollow, error)
+	getFollowing                        func(context.Context, db.GetFollowingParams) ([]db.UsrFollow, error)
+	getRefreshTokenByToken              func(context.Context, string) (db.UsrRefreshToken, error)
+	getUserByEmail                      func(context.Context, string) (db.UsrUser, error)
+	getUserByID                         func(context.Context, uuid.UUID) (db.UsrUser, error)
+	getUserByIDAny                      func(context.Context, uuid.UUID) (db.UsrUser, error)
+	getUserByUsername                   func(context.Context, string) (db.UsrUser, error)
+	getUserRoles                        func(context.Context, uuid.UUID) ([]db.GetUserRolesRow, error)
+	getUsersByIDs                       func(context.Context, []uuid.UUID) ([]db.UsrUser, error)
+	getUsersByIDsAny                    func(context.Context, []uuid.UUID) ([]db.UsrUser, error)
+	getUsersByUsernames                 func(context.Context, []string) ([]db.UsrUser, error)
+	isEmailSuppressed                   func(context.Context, string) (bool, error)
+	isFollowing                         func(context.Context, db.IsFollowingParams) (bool, error)
+	listAllActiveUserIDs                func(context.Context) ([]uuid.UUID, error)
+	listEmailSuppressions               func(context.Context, int32) ([]db.UsrEmailSuppression, error)
+	markEmailTokenUsed                  func(context.Context, uuid.UUID) error
+	removeRoleFromUser                  func(context.Context, db.RemoveRoleFromUserParams) error
+	revokeAllUserRefreshTokens          func(context.Context, uuid.UUID) error
+	revokeRefreshToken                  func(context.Context, string) error
+	searchUsers                         func(context.Context, db.SearchUsersParams) ([]db.UsrUser, error)
+	searchUsersByQuery                  func(context.Context, db.SearchUsersByQueryParams) ([]db.UsrUser, error)
+	suppressEmail                       func(context.Context, db.SuppressEmailParams) error
+	unfollow                            func(context.Context, db.UnfollowParams) error
+	updateUser                          func(context.Context, db.UpdateUserParams) (db.UsrUser, error)
+	updateUserPassword                  func(context.Context, db.UpdateUserPasswordParams) error
+	updateUserProfile                   func(context.Context, db.UpdateUserProfileParams) (db.UsrUser, error)
 }
 
 func (m *mockQuerier) AdminCountUsers(ctx context.Context, arg db.AdminCountUsersParams) (int64, error) {
@@ -62,6 +69,55 @@ func (m *mockQuerier) AdminCountUsers(ctx context.Context, arg db.AdminCountUser
 		return m.adminCountUsers(ctx, arg)
 	}
 	return 0, nil
+}
+
+func (m *mockQuerier) ApplyEmailDeliveryEvent(ctx context.Context, arg db.ApplyEmailDeliveryEventParams) (int64, error) {
+	if m.applyEmailDeliveryEvent != nil {
+		return m.applyEmailDeliveryEvent(ctx, arg)
+	}
+	return 0, nil
+}
+
+func (m *mockQuerier) CreateEmailDelivery(ctx context.Context, arg db.CreateEmailDeliveryParams) (db.UsrEmailDelivery, error) {
+	if m.createEmailDelivery != nil {
+		return m.createEmailDelivery(ctx, arg)
+	}
+	return db.UsrEmailDelivery{}, nil
+}
+
+func (m *mockQuerier) DeleteEmailSuppression(ctx context.Context, email string) (int64, error) {
+	if m.deleteEmailSuppression != nil {
+		return m.deleteEmailSuppression(ctx, email)
+	}
+	return 0, nil
+}
+
+func (m *mockQuerier) GetEmailDeliveryByProviderMessageID(ctx context.Context, providerMessageID string) (db.UsrEmailDelivery, error) {
+	if m.getEmailDeliveryByProviderMessageID != nil {
+		return m.getEmailDeliveryByProviderMessageID(ctx, providerMessageID)
+	}
+	return db.UsrEmailDelivery{}, nil
+}
+
+func (m *mockQuerier) IsEmailSuppressed(ctx context.Context, email string) (bool, error) {
+	if m.isEmailSuppressed != nil {
+		return m.isEmailSuppressed(ctx, email)
+	}
+	return false, nil
+}
+
+func (m *mockQuerier) ListEmailSuppressions(ctx context.Context, limit int32) ([]db.UsrEmailSuppression, error) {
+	if m.listEmailSuppressions != nil {
+		return m.listEmailSuppressions(ctx, limit)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) SuppressEmail(ctx context.Context, arg db.SuppressEmailParams) error {
+	if m.suppressEmail != nil {
+		return m.suppressEmail(ctx, arg)
+	}
+	return nil
 }
 
 func (m *mockQuerier) AdminListUsers(ctx context.Context, arg db.AdminListUsersParams) ([]db.UsrUser, error) {

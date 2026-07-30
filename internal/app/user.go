@@ -25,8 +25,9 @@ type UserContext struct {
 	authService         *service.AuthService
 	followService       *service.FollowService
 
-	// Services (account mail — welcome/verify/reset)
+	// Services (account mail — welcome/verify/reset, plus delivery reports)
 	accountMailService *service.AccountMailService
+	emailEventService  *service.EmailEventService
 
 	// Handlers
 	userHandler    *handler.UserHandler
@@ -34,6 +35,9 @@ type UserContext struct {
 	profileHandler *handler.ProfileHandler
 	followHandler  *handler.FollowHandler
 	emailHandler   *handler.EmailHandler
+	// emailWebhookHandler is nil when no webhook secret is configured, which
+	// leaves the route unregistered rather than open and unverified.
+	emailWebhookHandler *handler.EmailWebhookHandler
 }
 
 type UserPorts struct {
@@ -48,19 +52,21 @@ type UserPorts struct {
 
 // SetupUserContext initializes the User context with all required dependencies.
 // secureCookie controls the Secure flag on the refresh token cookie — set to false in development (HTTP).
-func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage.Storage, refreshTokenExpiry time.Duration, secureCookie bool, m mailer.Mailer, templates *mailer.Templates, mailerBaseURL string) *UserContext {
+func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage.Storage, refreshTokenExpiry time.Duration, secureCookie bool, mail *mailInfra) *UserContext {
 	// Repositories
 	userRepo := repository.NewUserRepository(pool)
 	refreshTokenRepo := repository.NewRefreshTokenRepository(pool)
 	followRepo := repository.NewFollowRepository(pool)
 	emailTokenRepo := repository.NewEmailTokenRepository(pool)
+	emailDeliveryRepo := repository.NewEmailDeliveryRepository(pool)
 
 	// Services
 	userService := service.NewUserService(userRepo, store)
 	refreshTokenService := service.NewRefreshTokenServiceWithExpiry(refreshTokenRepo, refreshTokenExpiry)
 	authService := service.NewAuthService(userRepo, userService, jwtService, refreshTokenService, store)
 	followService := service.NewFollowService(followRepo)
-	accountMailService := service.NewAccountMailService(m, templates, emailTokenRepo, userRepo, mailerBaseURL)
+	emailEventService := service.NewEmailEventService(emailDeliveryRepo)
+	accountMailService := service.NewAccountMailService(mail.mailer, mail.templates, emailTokenRepo, userRepo, emailEventService, mail.baseURL)
 
 	// Wire email sender into auth service for fire-and-forget after register
 	authService.WithEmailSender(accountMailService)
@@ -72,6 +78,13 @@ func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage
 	followHandler := handler.NewFollowHandler(followService, userService)
 	emailHandler := handler.NewEmailHandler(accountMailService)
 
+	// Without a verifier there is nothing to authenticate the webhook with, so the
+	// handler — and therefore the route — is left out entirely.
+	var emailWebhookHandler *handler.EmailWebhookHandler
+	if mail.verifier != nil {
+		emailWebhookHandler = handler.NewEmailWebhookHandler(mail.verifier, emailEventService)
+	}
+
 	return &UserContext{
 		userRepo:            userRepo,
 		refreshTokenRepo:    refreshTokenRepo,
@@ -81,12 +94,19 @@ func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage
 		authService:         authService,
 		followService:       followService,
 		accountMailService:  accountMailService,
+		emailEventService:   emailEventService,
 		userHandler:         userHandler,
 		authHandler:         authHandler,
 		profileHandler:      profileHandler,
 		followHandler:       followHandler,
 		emailHandler:        emailHandler,
+		emailWebhookHandler: emailWebhookHandler,
 	}
+}
+
+// SuppressionChecker exposes the suppression source for the mailer's gate.
+func (ctx *UserContext) SuppressionChecker() mailer.SuppressionChecker {
+	return ctx.emailEventService
 }
 
 func (ctx *UserContext) Ports() UserPorts {
