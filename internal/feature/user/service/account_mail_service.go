@@ -63,14 +63,18 @@ func (s *AccountMailService) SendWelcome(ctx context.Context, email, username st
 		return
 	}
 
-	if err := s.mailer.Send(ctx, &mailer.Message{
+	messageID, err := s.mailer.Send(ctx, &mailer.Message{
 		To:      []string{email},
 		Subject: "Welcome to DarkVoid",
 		HTML:    html,
 		Text:    fmt.Sprintf("Hi %s, welcome to DarkVoid! Your account has been created successfully.", username),
-	}); err != nil {
+	})
+	if err != nil {
 		logger.LogError(ctx, err, "failed to send welcome email", "email", email)
+		return
 	}
+
+	logger.Info(ctx, "welcome email sent", "email", email, "provider_message_id", messageID)
 }
 
 // SendVerification creates a verification token and sends a verification email.
@@ -104,14 +108,18 @@ func (s *AccountMailService) SendVerification(ctx context.Context, userID uuid.U
 		return
 	}
 
-	if err := s.mailer.Send(ctx, &mailer.Message{
+	messageID, err := s.mailer.Send(ctx, &mailer.Message{
 		To:      []string{email},
 		Subject: "Verify your email - DarkVoid",
 		HTML:    html,
 		Text:    fmt.Sprintf("Hi %s, please verify your email by visiting: %s", username, verifyURL),
-	}); err != nil {
+	})
+	if err != nil {
 		logger.LogError(ctx, err, "failed to send verification email", "email", email)
+		return
 	}
+
+	logger.Info(ctx, "verification email sent", "email", email, "provider_message_id", messageID)
 }
 
 // VerifyEmail validates a verification token and marks the associated user's email as verified.
@@ -204,17 +212,18 @@ func (s *AccountMailService) SendPasswordReset(ctx context.Context, email string
 		return errors.NewInternalError(err)
 	}
 
-	if err := s.mailer.Send(ctx, &mailer.Message{
+	messageID, err := s.mailer.Send(ctx, &mailer.Message{
 		To:      []string{user.Email},
 		Subject: "Reset your password - DarkVoid",
 		HTML:    html,
 		Text:    fmt.Sprintf("Hi %s, reset your password by visiting: %s", user.Username, resetURL),
-	}); err != nil {
+	})
+	if err != nil {
 		logger.LogError(ctx, err, "failed to send password reset email", "email", user.Email)
 		return errors.NewInternalError(err)
 	}
 
-	logger.Info(ctx, "password reset email sent", "email", user.Email)
+	logger.Info(ctx, "password reset email sent", "email", user.Email, "provider_message_id", messageID)
 	return nil
 }
 

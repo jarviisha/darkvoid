@@ -16,11 +16,11 @@ type mockMailer struct {
 	send func(ctx context.Context, msg *mailer.Message) error
 }
 
-func (m *mockMailer) Send(ctx context.Context, msg *mailer.Message) error {
+func (m *mockMailer) Send(ctx context.Context, msg *mailer.Message) (string, error) {
 	if m.send != nil {
-		return m.send(ctx, msg)
+		return "mock-message-id", m.send(ctx, msg)
 	}
-	return nil
+	return "mock-message-id", nil
 }
 
 type mockEmailTokenRepo struct {

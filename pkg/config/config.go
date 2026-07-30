@@ -104,14 +104,19 @@ type StorageConfig struct {
 }
 
 // MailerConfig holds email sending configuration.
-// Set MAILER_PROVIDER=smtp to enable real email delivery.
+// Set MAILER_PROVIDER=resend or smtp to enable real email delivery.
 // When set to "nop" (default), emails are logged but not sent.
+//
+// Host/Port/Username/Password are SMTP-only; APIKey is resend-only. Each
+// provider ignores the other's fields rather than the two sharing a field that
+// means different things.
 type MailerConfig struct {
-	Provider string // "smtp" or "nop"
+	Provider string // "resend", "smtp" or "nop"
 	Host     string
 	Port     int
 	Username string
 	Password string
+	APIKey   string // Resend API key, from RESEND_API_KEY
 	From     string
 	BaseURL  string // application URL for building links in emails
 }

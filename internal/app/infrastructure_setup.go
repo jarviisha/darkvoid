@@ -18,15 +18,19 @@ func (app *Application) setupInfrastructure() (storage.Storage, *mailer.Template
 	}
 	app.log.Info("storage initialized", "provider", app.cfg.Storage.Provider, "base_url", app.cfg.Storage.BaseURL)
 
-	m := mailer.New(mailer.Config{
+	m, err := mailer.New(mailer.Config{
 		Provider: app.cfg.Mailer.Provider,
 		Host:     app.cfg.Mailer.Host,
 		Port:     app.cfg.Mailer.Port,
 		Username: app.cfg.Mailer.Username,
 		Password: app.cfg.Mailer.Password,
+		APIKey:   app.cfg.Mailer.APIKey,
 		From:     app.cfg.Mailer.From,
 		BaseURL:  app.cfg.Mailer.BaseURL,
 	})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to initialize mailer: %w", err)
+	}
 	app.log.Info("mailer initialized", "provider", app.cfg.Mailer.Provider)
 
 	templates, err := mailer.LoadTemplates()
