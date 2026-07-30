@@ -1,0 +1,78 @@
+# Integration override — attaches the app to a Codohue stack that runs as its own
+# compose project, and points behavior-event publishing at that stack's Redis.
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.codohue.yml up -d
+#
+# Not needed when Codohue runs as a profile inside this stack (the local-dev
+# layout in docker-compose.yml). There one Redis serves both sides, one network
+# carries every service, and none of the pinning below applies.
+#
+# Why the app joins Codohue's network at all: recommendations and catalog ingest
+# go to Codohue over HTTP, and behavior events go to Codohue's Redis. Both need
+# name resolution inside that project's network.
+#
+# ---------------------------------------------------------------------------
+# Every hostname here is pinned, and that is load-bearing.
+#
+# A container on two compose networks sees BOTH projects' service names, so the
+# bare names `postgres` and `redis` each resolve to two different servers and
+# Docker's embedded DNS does not promise which one wins. Measured on the dev box:
+# from the app container, `redis` resolved to Codohue's instance, not ours.
+#
+# So our own datastores are addressed through aliases that exist on our network
+# only, and Codohue's Redis is addressed by container name. Using the bare
+# service name for either one is the failure that hides: the app boots, the
+# health check passes, and the feed cache or the event stream is quietly pointed
+# at the wrong server.
+# ---------------------------------------------------------------------------
+
+services:
+  # Aliases unique to this project's network, so the app can name our datastores
+  # without colliding with Codohue's identically-named services.
+  postgres:
+    networks:
+      default:
+        aliases:
+          - darkvoid-postgres
+
+  redis:
+    networks:
+      default:
+        aliases:
+          - darkvoid-redis
+
+  app:
+    networks:
+      - default
+      - codohue
+    environment:
+      DB_HOST: darkvoid-postgres
+
+      # Our own Redis, deliberately. It holds the feed cache, the timeline store,
+      # and the notification pub/sub — state that belongs to darkvoid and should
+      # not depend on a stack darkvoid does not own. Pointing this at Codohue's
+      # Redis also works and is what this deployment used to do, but it means an
+      # outage in an optional integration takes core features down with it.
+      REDIS_HOST: darkvoid-redis
+
+      # ...and the one thing that genuinely has to live on Codohue's Redis:
+      # Codohue's consumer reads codohue:events from its own instance, so events
+      # published anywhere else are never seen. Only the producer goes here.
+      CODOHUE_EVENTS_REDIS_HOST: ${CODOHUE_STACK:-codohue-dev}-redis-1
+
+  # ctl runs one-off operator commands and talks to Codohue directly, so it needs
+  # the same network — without it, `codohue reindex` fails on DNS before sending
+  # anything. It does not publish events, so it needs no events Redis.
+  ctl:
+    networks:
+      - default
+      - codohue
+    environment:
+      DB_HOST: darkvoid-postgres
+
+networks:
+  # Codohue's network, created by its own compose project. Joined by name rather
+  # than declared, so this file never tries to own it.
+  codohue:
+    external: true
+    name: ${CODOHUE_STACK:-codohue-dev}_default

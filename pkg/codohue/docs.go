@@ -10,4 +10,13 @@
 // "catalog" ships raw post content for server-side auto-embedding.
 // The feed integration expects paginated recommendation items with
 // object_id, score, rank, limit, offset, and total metadata.
+//
+// Behavior events are the exception to "runtime traffic goes over HTTP": they
+// are published to the codohue:events Redis Stream, which Codohue's consumer
+// reads from whichever Redis Codohue owns. The Redis client is therefore passed
+// in rather than derived from BaseURL, and it is not necessarily the same client
+// the rest of darkvoid caches with — see config.CodohueConfig.EventsRedis. Two
+// consequences: the circuit breaker does not cover PublishBehaviorEvent, which
+// fails independently over Redis, and a nil client disables event publishing
+// while leaving the HTTP surface fully working.
 package codohue

@@ -15,8 +15,31 @@ type Client struct {
 }
 
 // New creates a new Redis client, pings the server, and returns it.
+// Use this for a Redis the app cannot run correctly without.
 func New(ctx context.Context, cfg *Config) (*Client, error) {
-	rdb := redis.NewClient(&redis.Options{
+	client := NewLazy(cfg)
+
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if err := client.Ping(pingCtx).Err(); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("redis ping failed: %w", err)
+	}
+
+	return client, nil
+}
+
+// NewLazy creates a client without verifying connectivity. go-redis dials on
+// first use and reconnects on its own, so a server that is down right now starts
+// working once it comes back.
+//
+// Use this for an optional dependency, where discarding the client on a failed
+// boot probe would disable the feature for the whole life of the process rather
+// than for the length of the outage. Callers that want to report reachability
+// should call HealthCheck and log the result instead of acting on it.
+func NewLazy(cfg *Config) *Client {
+	return &Client{redis.NewClient(&redis.Options{
 		Addr:         cfg.Addr(),
 		Password:     cfg.Password,
 		DB:           cfg.DB,
@@ -25,17 +48,7 @@ func New(ctx context.Context, cfg *Config) (*Client, error) {
 		WriteTimeout: cfg.WriteTimeout,
 		PoolSize:     cfg.PoolSize,
 		MinIdleConns: cfg.MinIdleConns,
-	})
-
-	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	if err := rdb.Ping(pingCtx).Err(); err != nil {
-		_ = rdb.Close()
-		return nil, fmt.Errorf("redis ping failed: %w", err)
-	}
-
-	return &Client{rdb}, nil
+	})}
 }
 
 // Close closes the underlying connection pool.

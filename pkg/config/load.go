@@ -104,6 +104,14 @@ func loadRootConfig() RootConfig {
 //	CODOHUE_ADMIN_KEY      (default: CODOHUE_API_KEY) — admin key for namespace provisioning only
 //	CODOHUE_DENSE_SOURCE   (default: "byoe") — "byoe" or "catalog" (server-side auto-embedding)
 //	CODOHUE_NAMESPACE      (default: "darkvoid_feed")
+//
+// The codohue:events stream can live on a Redis other than the app's own. Leave
+// the host unset to publish to the app's Redis — see CodohueConfig.EventsRedis.
+//
+//	CODOHUE_EVENTS_REDIS_HOST     (default: "") — unset means reuse the app's Redis
+//	CODOHUE_EVENTS_REDIS_PORT     (default: 6379)
+//	CODOHUE_EVENTS_REDIS_PASSWORD (default: "")
+//	CODOHUE_EVENTS_REDIS_DB       (default: 0)
 func loadCodohueConfig() CodohueConfig {
 	return CodohueConfig{
 		Enabled:      getEnvBool("CODOHUE_ENABLED", false),
@@ -114,6 +122,28 @@ func loadCodohueConfig() CodohueConfig {
 		DenseSource:  getEnv("CODOHUE_DENSE_SOURCE", "byoe"),
 		Namespace:    getEnv("CODOHUE_NAMESPACE", "darkvoid_feed"),
 		EmbeddingDim: getEnvInt("CODOHUE_EMBEDDING_DIM", 64),
+		EventsRedis:  loadCodohueEventsRedisConfig(),
+	}
+}
+
+// loadCodohueEventsRedisConfig loads the connection to the Redis holding the
+// codohue:events stream. Enabled is derived rather than read from its own
+// variable: a separate events Redis is exactly the case where a host was named,
+// so a CODOHUE_EVENTS_REDIS_ENABLED flag could only ever disagree with the host
+// it was supposed to describe.
+//
+// PoolSize is deliberately not configurable. This client publishes to one stream
+// and does nothing else, so it needs far fewer connections than the cache — and a
+// knob whose only correct value is "small" is a knob that gets set wrong.
+func loadCodohueEventsRedisConfig() RedisConfig {
+	host := getEnv("CODOHUE_EVENTS_REDIS_HOST", "")
+	return RedisConfig{
+		Enabled:  host != "",
+		Host:     host,
+		Port:     getEnvInt("CODOHUE_EVENTS_REDIS_PORT", 6379),
+		Password: getEnv("CODOHUE_EVENTS_REDIS_PASSWORD", ""),
+		DB:       getEnvInt("CODOHUE_EVENTS_REDIS_DB", 0),
+		PoolSize: 5,
 	}
 }
 

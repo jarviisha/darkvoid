@@ -30,14 +30,18 @@ import (
 
 // Application represents the entire application with all its dependencies
 type Application struct {
-	cfg        *config.Config
-	log        *logger.Logger
-	pool       *pgxpool.Pool
-	redis      *pkgredis.Client // nil when Redis is disabled
-	server     *Server
-	jwtService *jwt.Service
-	runCtx     context.Context
-	runCancel  context.CancelFunc
+	cfg   *config.Config
+	log   *logger.Logger
+	pool  *pgxpool.Pool
+	redis *pkgredis.Client // nil when Redis is disabled
+	// codohueEvents carries the codohue:events stream when Codohue owns a Redis
+	// separate from ours. Nil means the stream lives on our own Redis and the
+	// producer shares that client — read it through codohueEventsClient().
+	codohueEvents *pkgredis.Client
+	server        *Server
+	jwtService    *jwt.Service
+	runCtx        context.Context
+	runCancel     context.CancelFunc
 	// codohue is the reported health of the recommender integration. Read by the
 	// health handler, written by startup and the degraded-state monitor.
 	codohue *codohueStatus
@@ -72,6 +76,9 @@ func New(ctx context.Context, cfg *config.Config) (app *Application, err error) 
 		if app != nil && app.redis != nil {
 			_ = app.redis.Close()
 		}
+		if app != nil && app.codohueEvents != nil {
+			_ = app.codohueEvents.Close()
+		}
 		if app != nil && app.pool != nil {
 			database.Close(app.pool)
 		}
@@ -95,6 +102,10 @@ func New(ctx context.Context, cfg *config.Config) (app *Application, err error) 
 	if err = app.setupRedis(ctx); err != nil {
 		return app, fmt.Errorf("failed to setup redis: %w", err)
 	}
+
+	// Setup the Codohue events Redis (optional — only when Codohue owns its own
+	// instance). Deliberately cannot fail boot; see the method comment.
+	app.setupCodohueEventsRedis(ctx)
 
 	// Setup JWT service
 	if err = app.setupJWT(); err != nil {
@@ -216,6 +227,50 @@ func (app *Application) setupRedis(ctx context.Context) error {
 	app.redis = client
 	app.log.Info("redis connected successfully")
 	return nil
+}
+
+// setupCodohueEventsRedis dials the Redis that holds the codohue:events stream
+// when Codohue owns one separate from ours. No-op otherwise, which leaves the
+// producer sharing app.redis.
+//
+// It never fails boot. This client publishes behavior events and nothing else,
+// and an event that cannot be published is already dropped per call — so the
+// worst a Redis that is down right now can cost is the events published while it
+// is down. Returning an error here would instead cost the whole process: the API
+// would refuse to start because an optional integration's message bus was
+// unreachable. For the same reason the client is kept after a failed probe
+// rather than discarded; go-redis reconnects on its own once the server is back.
+func (app *Application) setupCodohueEventsRedis(ctx context.Context) {
+	cfg := app.cfg.Codohue.EventsRedis
+	if !app.cfg.Codohue.Enabled || !cfg.Enabled {
+		return
+	}
+
+	client := pkgredis.NewLazy(&pkgredis.Config{
+		Host:     cfg.Host,
+		Port:     cfg.Port,
+		Password: cfg.Password,
+		DB:       cfg.DB,
+		PoolSize: cfg.PoolSize,
+	})
+	app.codohueEvents = client
+
+	if err := pkgredis.HealthCheck(ctx, client); err != nil {
+		app.log.Warn("codohue events redis unreachable, behavior events will be dropped until it recovers",
+			"host", cfg.Host, "port", cfg.Port, "error", err)
+		return
+	}
+	app.log.Info("codohue events redis connected", "host", cfg.Host, "port", cfg.Port)
+}
+
+// codohueEventsClient returns the Redis the behavior-event producer should use:
+// Codohue's own instance when one is configured, otherwise ours. Nil when Redis
+// is disabled entirely, which disables event publishing.
+func (app *Application) codohueEventsClient() *pkgredis.Client {
+	if app.codohueEvents != nil {
+		return app.codohueEvents
+	}
+	return app.redis
 }
 
 // setupJWT initializes JWT service
@@ -408,6 +463,12 @@ func (app *Application) Shutdown(ctx context.Context) error {
 	if app.redis != nil {
 		app.log.Info("closing redis connection")
 		_ = app.redis.Close()
+	}
+
+	// Close the Codohue events Redis, when it is a separate instance.
+	if app.codohueEvents != nil {
+		app.log.Info("closing codohue events redis connection")
+		_ = app.codohueEvents.Close()
 	}
 
 	// Close database connection

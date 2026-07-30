@@ -32,6 +32,14 @@ type FeedPorts struct {
 // SetupFeedContext initializes the Feed context with all required dependencies.
 // It accepts only the minimal reader ports the feed context actually needs.
 // redisClient may be nil — in that case a no-op cache is used.
+//
+// eventsRedisClient is the Redis carrying the codohue:events stream, which is not
+// always redisClient: Codohue's consumer reads that stream from whichever instance
+// Codohue owns. Keeping it a separate parameter is what lets the cache, the
+// timeline store, and the notification pub/sub stay on our own Redis while only
+// the event producer reaches into Codohue's. May be nil, which disables event
+// publishing but leaves the rest of the integration working.
+//
 // Returns the FeedContext and a *codohue.Client (nil when Codohue is disabled) so
 // the caller (app.go) can wire Codohue into other contexts.
 func SetupFeedContext(
@@ -40,6 +48,7 @@ func SetupFeedContext(
 	followReader feed.FollowGraphReader,
 	likeReader feed.LikeReader,
 	redisClient *pkgredis.Client,
+	eventsRedisClient *pkgredis.Client,
 	feedTimelineCfg config.FeedTimelineConfig,
 	cohodueCfg config.CodohueConfig,
 ) (*FeedContext, *codohue.Client) {
@@ -73,7 +82,7 @@ func SetupFeedContext(
 	// Wiring Codohue into other contexts (post services) is the caller's responsibility.
 	var codohueClient *codohue.Client
 	if cohodueCfg.Enabled {
-		codohueClient = codohue.NewClient(cohodueCfg.BaseURL, cohodueCfg.NamespaceKey, cohodueCfg.Namespace, redisClient)
+		codohueClient = codohue.NewClient(cohodueCfg.BaseURL, cohodueCfg.NamespaceKey, cohodueCfg.Namespace, eventsRedisClient)
 		feedSvc.WithRecommender(codohueClient)
 		feedSvc.WithTrendingFetcher(codohueClient)
 	}

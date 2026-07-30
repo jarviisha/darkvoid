@@ -40,6 +40,23 @@ type CodohueConfig struct {
 	DenseSource  string // "byoe" (local TF-IDF vectors pushed by darkvoid) or "catalog" (Codohue embeds post content server-side)
 	Namespace    string // namespace identifier for this app's events and recommendations
 	EmbeddingDim int    // output dimension for BYOE vectors; must match embedding_dim in namespace config
+
+	// EventsRedis addresses the Redis that carries the codohue:events stream.
+	// Behavior events are the one part of this integration that does not travel
+	// over HTTP: Codohue's consumer reads the stream from its own Redis, so
+	// darkvoid has to XADD into that same instance for events to arrive at all.
+	//
+	// Enabled false (CODOHUE_EVENTS_REDIS_HOST unset) means the stream lives on
+	// the app's own Redis, and the producer reuses that client. That is the right
+	// default: it is correct whenever one Redis serves both sides, and it keeps
+	// the deployments that already do so working untouched.
+	//
+	// Set it when Codohue owns a separate Redis. Pointing the app's REDIS_HOST at
+	// Codohue's instance also works, but it drags the feed cache, the timeline
+	// store, and the notification pub/sub onto a server darkvoid does not own —
+	// so an outage in an integration that is meant to be optional takes core
+	// features down with it.
+	EventsRedis RedisConfig
 }
 
 // RedisConfig holds Redis connection configuration.
