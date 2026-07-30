@@ -14,21 +14,80 @@
 # it — which is what a copy-pasted command carries.
 #
 # Requires production secrets in .env or the shell.
+#
+# Rollback: CD tags every image with its commit SHA as well as `latest`, so
+# pinning the tag is all a rollback needs — no edit to this file:
+#   echo 'APP_TAG=<sha>' >> .env && dv up -d app
+# Leaving APP_TAG unset keeps the previous behaviour (`latest`).
+
+# ---------------------------------------------------------------------------
+# Shared fragments
+# ---------------------------------------------------------------------------
+
+# Without this every container's stdout accumulates in an unbounded json-file on
+# the host until the disk fills — the failure takes the whole box, not one
+# service, and it takes out Postgres with it. 10m x 3 caps the stack at ~30MB per
+# container while still holding enough history to debug a crash loop.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Containers here never need to gain privileges via setuid binaries; the app
+# image already runs as an unprivileged user. Costs nothing, closes one
+# escalation path if a service is ever compromised.
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+
+# The four migration services differ only in which directory they apply and
+# which version table they record it in — everything else is identical, so it
+# lives here. Adding a module is now a ~10-line service, not a ~20-line copy.
+x-migrate: &migrate
+  image: migrate/migrate:4
+  # Bounded, not bare `on-failure`. An unbounded restart on a genuinely broken
+  # migration (bad SQL, dirty version) retries forever, and because the app gates
+  # on service_completed_successfully the deploy hangs instead of failing — with
+  # no error surfaced to CD. A bounded count lets compose exit non-zero so
+  # `set -e` in cd.yml catches it. Dependencies are started before the app is
+  # recreated, so a failure here leaves the running app untouched.
+  restart: on-failure:5
+  logging: *logging
+  <<: *hardening
+  volumes:
+    - ./migrations:/migrations:ro
+  environment:
+    # Out of band rather than inside the -database URL: a credential in argv is
+    # visible to anyone who can run `docker inspect`, and a password inside a
+    # postgres:// string is what secret scanners match on — by shape, whatever
+    # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
+    PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
 
 x-redis-command: &redis-command
   - sh
   - -c
   - |
     if [ -n "$$REDIS_PASSWORD" ]; then
-      exec redis-server --requirepass "$$REDIS_PASSWORD"
+      exec redis-server \
+        --requirepass "$$REDIS_PASSWORD" \
+        --maxmemory "$$REDIS_MAXMEMORY" \
+        --maxmemory-policy allkeys-lru
     fi
-    exec redis-server
+    exec redis-server \
+      --maxmemory "$$REDIS_MAXMEMORY" \
+      --maxmemory-policy allkeys-lru
 
 x-redis-healthcheck: &redis-healthcheck
+  # REDISCLI_AUTH rather than `-a`: same result, but redis-cli stops printing
+  # "Using a password ... may not be safe" to stderr on every probe, which
+  # otherwise fills `docker logs redis` with warnings that mean nothing. Set
+  # inside the branch — an empty REDISCLI_AUTH is still "set", and redis-cli
+  # would then send AUTH "" to a password-less server.
   test:
     [
       "CMD-SHELL",
-      'if [ -n "$$REDIS_PASSWORD" ]; then redis-cli -a "$$REDIS_PASSWORD" ping; else redis-cli ping; fi',
+      'if [ -n "$$REDIS_PASSWORD" ]; then REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping; else redis-cli ping; fi',
     ]
   interval: 5s
   timeout: 5s
@@ -38,6 +97,14 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *logging
+    <<: *hardening
+    # A fast shutdown still has to checkpoint; killed at the 10s default, the
+    # next start replays WAL instead of opening clean.
+    stop_grace_period: 60s
+    # The default 64MB /dev/shm is what parallel query workers allocate from —
+    # "could not resize shared memory segment" under load is this, not a bug.
+    shm_size: 256mb
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
@@ -53,28 +120,46 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      # First boot runs initdb, during which the bootstrap server accepts socket
+      # connections before it is really up. Failures inside start_period do not
+      # count against retries, so the migrate chain no longer burns restarts on
+      # a cold volume.
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: ${POSTGRES_MEMORY_LIMIT:-1g}
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *logging
+    <<: *hardening
+    # Long enough to finish the shutdown RDB save.
+    stop_grace_period: 30s
     command: *redis-command
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # Redis holds only derived data here (following:ids, trending:posts) and
+      # the notification pub/sub channel, so an unbounded instance grows until
+      # the kernel OOM-kills it. Keep this comfortably below the container limit
+      # below: eviction should be what reclaims memory, not the OOM killer, and
+      # a background RDB save needs copy-on-write headroom.
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-256mb}
     volumes:
       - redis_data:/data
     healthcheck: *redis-healthcheck
+    deploy:
+      resources:
+        limits:
+          memory: ${REDIS_MEMORY_LIMIT:-384m}
 
+  # Migrations are serialized on purpose, not for lack of parallelism: golang-migrate
+  # takes a session-level advisory lock keyed on the database, so running the four
+  # modules concurrently would contend on that lock rather than overlap. Explicit
+  # ordering also keeps post/notification behind the user schema they reference.
   migrate-user:
-    image: migrate/migrate:4
-    restart: on-failure
-    volumes:
-      - ./migrations:/migrations:ro
-    environment:
-      # Out of band rather than inside the -database URL: a credential in argv is
-      # visible to anyone who can run `docker inspect`, and a password inside a
-      # postgres:// string is what secret scanners match on — by shape, whatever
-      # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
-      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    <<: *migrate
     command:
       [
         "-path",
@@ -88,16 +173,7 @@ services:
         condition: service_healthy
 
   migrate-post:
-    image: migrate/migrate:4
-    restart: on-failure
-    volumes:
-      - ./migrations:/migrations:ro
-    environment:
-      # Out of band rather than inside the -database URL: a credential in argv is
-      # visible to anyone who can run `docker inspect`, and a password inside a
-      # postgres:// string is what secret scanners match on — by shape, whatever
-      # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
-      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    <<: *migrate
     command:
       [
         "-path",
@@ -111,16 +187,7 @@ services:
         condition: service_completed_successfully
 
   migrate-notification:
-    image: migrate/migrate:4
-    restart: on-failure
-    volumes:
-      - ./migrations:/migrations:ro
-    environment:
-      # Out of band rather than inside the -database URL: a credential in argv is
-      # visible to anyone who can run `docker inspect`, and a password inside a
-      # postgres:// string is what secret scanners match on — by shape, whatever
-      # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
-      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    <<: *migrate
     command:
       [
         "-path",
@@ -134,16 +201,7 @@ services:
         condition: service_completed_successfully
 
   migrate-bot:
-    image: migrate/migrate:4
-    restart: on-failure
-    volumes:
-      - ./migrations:/migrations:ro
-    environment:
-      # Out of band rather than inside the -database URL: a credential in argv is
-      # visible to anyone who can run `docker inspect`, and a password inside a
-      # postgres:// string is what secret scanners match on — by shape, whatever
-      # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
-      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    <<: *migrate
     command:
       [
         "-path",
@@ -157,13 +215,26 @@ services:
         condition: service_completed_successfully
 
   app:
-    image: ghcr.io/jarviisha/darkvoid:latest
+    image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}:${APP_TAG:-latest}
     restart: unless-stopped
+    logging: *logging
+    <<: *hardening
+    # cmd/api drains for up to 30s (GracefulShutdown(30*time.Second) in
+    # cmd/api/main.go). Docker's default grace is 10s, so every deploy was
+    # SIGKILLing the app mid-drain: in-flight requests cut, SSE streams dropped
+    # without the broker's close, connections left for the client to notice.
+    # 40s covers the full drain plus margin.
+    stop_grace_period: 40s
     ports:
-      - "${SERVER_PORT:-8080}:8080"
+      # Bind address is a variable so a deployment that puts a reverse proxy in
+      # front can set SERVER_BIND=127.0.0.1 and stop publishing the app on every
+      # interface, without editing this file. Default preserves today's binding.
+      - "${SERVER_BIND:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
     healthcheck:
       # GET, not --spider: /health only registers GET; wget --spider sends
       # HEAD, which chi answers with 405 and the check reports a broken link.
+      # /health returns 503 when the DB ping fails, and wget exits non-zero on
+      # 503 — so this tracks "can serve", not just "process is alive".
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 5s
       timeout: 5s
@@ -199,12 +270,21 @@ services:
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
       STORAGE_BASE_URL: ${STORAGE_BASE_URL:-http://localhost:8080/static}
       STORAGE_LOCAL_DIR: /app/uploads
-
       # Mailer
       MAILER_PROVIDER: ${MAILER_PROVIDER:-nop}
     volumes:
       - uploads:/app/uploads
+    deploy:
+      resources:
+        limits:
+          memory: ${APP_MEMORY_LIMIT:-768m}
+          # Bounds a runaway goroutine/thread leak to this container instead of
+          # letting it exhaust the host's process table. Generous: the pgx pool
+          # is 25 and Go multiplexes goroutines onto far fewer OS threads.
+          pids: ${APP_PIDS_LIMIT:-512}
     depends_on:
+      # postgres is implied by the migrate chain; kept because it states the
+      # app's own requirement rather than inheriting it from a migration detail.
       postgres:
         condition: service_healthy
       migrate-bot:
@@ -217,9 +297,11 @@ services:
   # hand-installed binary. Usage:
   #   docker compose -f docker-compose.prod.yml --profile tools run --rm ctl user list
   ctl:
-    image: ghcr.io/jarviisha/darkvoid:latest
+    image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}:${APP_TAG:-latest}
     profiles: [tools]
     restart: "no"
+    logging: *logging
+    <<: *hardening
     entrypoint: ["/app/darkvoidctl"]
     env_file:
       - path: .env
@@ -249,9 +331,11 @@ services:
   # would break every compose command for a deployment that does not run the bot. The
   # bot reports the missing variables itself on startup.
   bot:
-    image: ghcr.io/jarviisha/darkvoid:latest
+    image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}:${APP_TAG:-latest}
     profiles: [bot]
     restart: unless-stopped
+    logging: *logging
+    <<: *hardening
     entrypoint: ["/app/bot"]
     env_file:
       - path: .env
@@ -259,11 +343,52 @@ services:
     environment:
       BOT_API_BASE_URL: http://app:8080/api/v1
       BOT_RUNNER_USERNAME: ${BOT_RUNNER_USERNAME:-bot_runner}
+    deploy:
+      resources:
+        limits:
+          memory: ${BOT_MEMORY_LIMIT:-256m}
     depends_on:
       app:
         condition: service_healthy
+
+  # Postgres backup — opt-in one-shot, never runs as part of a deploy:
+  #   dv --profile backup run --rm pg-backup
+  # Cron it on the host for a schedule. Uses the same image as the server so
+  # pg_dump can never be older than the server it dumps. Writes to a named
+  # volume; ship those files off the host to have an actual backup.
+  pg-backup:
+    image: postgres:16-alpine
+    profiles: [backup]
+    restart: "no"
+    logging: *logging
+    <<: *hardening
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - pg_backups:/backups
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -eu
+        out="/backups/${DB_NAME:-darkvoid}-$$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+        pg_dump -h postgres -U "${DB_USER:-postgres}" -d "${DB_NAME:-darkvoid}" \
+          --clean --if-exists | gzip -9 > "$$out"
+        echo "wrote $$out"
+        ls -1t /backups/*.sql.gz | tail -n +$$(( ${BACKUP_KEEP:-14} + 1 )) | xargs -r rm -f
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+# Named explicitly so server-local override files (docker-compose.codohue.yml)
+# can join it by a stable name instead of the generated <project>_default, which
+# changes with the deployment directory.
+networks:
+  default:
+    name: ${COMPOSE_NETWORK_NAME:-darkvoid}
 
 volumes:
   postgres_data:
   redis_data:
   uploads:
+  pg_backups:
