@@ -72,7 +72,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
-          source: "docker-compose.prod.yml,migrations/**,scripts/**"
+          source: "docker-compose.prod.yml,docker-compose.codohue.yml,migrations/**,scripts/**"
           target: ${{ env.DEPLOY_DIR }}
 
       - name: Deploy to VPS
@@ -86,10 +86,16 @@ jobs:
             set -e
             cd ${{ env.DEPLOY_DIR }}
 
-            # docker-compose.codohue.yml is a server-local override that
-            # attaches the app to the codohue stack; use it when present.
+            # docker-compose.codohue.yml attaches the app to a Codohue stack
+            # running as its own compose project. It ships with the repo, so it
+            # is now on every deployment and its presence no longer says whether
+            # this one wants it — gate on COMPOSE_FILE in the deployment's .env,
+            # which is where that intent is already declared and what a bare
+            # `docker compose` on the box already honours. Guessing from the file
+            # being there would attach every future environment to a codohue
+            # network it has no reason to have.
             COMPOSE="docker compose -f docker-compose.prod.yml"
-            if [ -f docker-compose.codohue.yml ]; then
+            if grep -qs 'docker-compose\.codohue\.yml' .env; then
               COMPOSE="$COMPOSE -f docker-compose.codohue.yml"
             fi
 
@@ -128,7 +134,7 @@ jobs:
             cd ${{ env.DEPLOY_DIR }}
 
             COMPOSE="docker compose -f docker-compose.prod.yml"
-            if [ -f docker-compose.codohue.yml ]; then
+            if grep -qs 'docker-compose\.codohue\.yml' .env; then
               COMPOSE="$COMPOSE -f docker-compose.codohue.yml"
             fi
             APP_CID=$($COMPOSE ps -q app)
