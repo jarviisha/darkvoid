@@ -23,6 +23,14 @@ type apiClient struct {
 	http    *http.Client
 	now     func() time.Time
 
+	// timeout bounds one request. It comes from the plan, so the run loop rewrites it
+	// between ticks; the runner is a single goroutine and every call it makes is
+	// sequential, so no synchronisation is needed. It is applied per request through
+	// the context rather than by writing http.Client.Timeout, because that field is
+	// read inside Do and rewriting it would be a data race the moment anything in
+	// this process became concurrent.
+	timeout time.Duration
+
 	runner botAccount
 }
 
@@ -89,12 +97,27 @@ type createPostResponse struct {
 
 // plan is the desired state served by GET /bot/plan. It mirrors the server's
 // dto.PlanResponse; contract_test.go pins the two together.
+//
+// Temperature, MaxTagsPerPost and RecentMemory are pointers because zero is a legal
+// value for each of them — deterministic sampling, no tags, no repetition guard —
+// so an absent field and a deliberate zero have to stay distinguishable. Without
+// that, a plan from an API predating these fields would decode as "ask for zero
+// tags and disable the repetition guard" rather than as "not configured". The
+// timeouts need no such treatment: zero is not a usable timeout, so it can mean
+// absent on its own.
 type plan struct {
 	Paused              bool      `json:"paused"`
 	PostIntervalSeconds int32     `json:"post_interval_seconds"`
 	Models              []string  `json:"models"`
 	Bots                []planBot `json:"bots"`
 	Topics              []string  `json:"topics"`
+
+	PromptTemplate       string   `json:"prompt_template"`
+	Temperature          *float64 `json:"temperature"`
+	MaxTagsPerPost       *int32   `json:"max_tags_per_post"`
+	RecentMemory         *int32   `json:"recent_memory"`
+	APITimeoutSeconds    int32    `json:"api_timeout_seconds"`
+	GeminiTimeoutSeconds int32    `json:"gemini_timeout_seconds"`
 }
 
 type planBot struct {
@@ -112,6 +135,53 @@ func (p *plan) interval() time.Duration {
 		return planRetryInterval
 	}
 	return time.Duration(p.PostIntervalSeconds) * time.Second
+}
+
+// The accessors below all read "the server's answer, or the built-in default if it
+// did not give one". They exist so the fallback is decided in one place per knob
+// rather than at each use, which is what kept the old `interval()` honest when a
+// server sent a nonsensical value.
+
+// temperature is the Gemini sampling temperature for this tick.
+func (p *plan) temperature() float64 {
+	if p.Temperature == nil {
+		return defaultTemperature
+	}
+	return *p.Temperature
+}
+
+// maxTags is how many tags to ask for and keep. Negative is treated as absent
+// rather than clamped to zero: it can only come from a corrupt payload, and
+// silently posting untagged is harder to notice than posting as configured.
+func (p *plan) maxTags() int {
+	if p.MaxTagsPerPost == nil || *p.MaxTagsPerPost < 0 {
+		return defaultMaxTags
+	}
+	return int(*p.MaxTagsPerPost)
+}
+
+// recentMemory is how many of a persona's latest posts feed the repetition guard.
+func (p *plan) recentMemory() int {
+	if p.RecentMemory == nil || *p.RecentMemory < 0 {
+		return defaultRecentMemory
+	}
+	return int(*p.RecentMemory)
+}
+
+// apiTimeout bounds one request to the DarkVoid API.
+func (p *plan) apiTimeout() time.Duration {
+	if p.APITimeoutSeconds <= 0 {
+		return defaultAPITimeout
+	}
+	return time.Duration(p.APITimeoutSeconds) * time.Second
+}
+
+// geminiTimeout bounds one generateContent call.
+func (p *plan) geminiTimeout() time.Duration {
+	if p.GeminiTimeoutSeconds <= 0 {
+		return defaultGeminiTimeout
+	}
+	return time.Duration(p.GeminiTimeoutSeconds) * time.Second
 }
 
 // persona converts a plan entry into the voice Gemini is prompted with.
@@ -340,6 +410,14 @@ func (c *apiClient) postJSON(ctx context.Context, path, token string, in, out an
 // Non-2xx statuses are returned to the caller for flow decisions (the raw body
 // comes along for error messages); only transport-level failures produce an error.
 func (c *apiClient) do(ctx context.Context, method, path, token string, in, out any) (int, []byte, error) {
+	if c.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+		// Safe to cancel on return: the response body is fully read below, so nothing
+		// is still reading from the request's context by the time this fires.
+		defer cancel()
+	}
+
 	var reader io.Reader
 	if in != nil {
 		payload, err := json.Marshal(in)

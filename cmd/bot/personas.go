@@ -1,10 +1,5 @@
 package main
 
-import (
-	"fmt"
-	"strings"
-)
-
 // persona is one bot account and the writing voice Gemini should adopt, as handed
 // out by GET /bot/plan. It used to be a compile-time slice here; moving it into the
 // database is what lets an operator retire or re-voice a bot without a rebuild.
@@ -19,28 +14,15 @@ type persona struct {
 	runRequested bool
 }
 
-// buildPrompt assembles the Gemini prompt for one post.
-// recent contains openings of the bot's latest posts so the model avoids
-// repeating itself.
-func buildPrompt(p persona, topic string, recent []string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, `Bạn là %q, một người dùng mạng xã hội Việt Nam. Phong cách viết: %s.
-
-Hãy viết đúng MỘT bài đăng mạng xã hội bằng tiếng Việt về chủ đề: %s.
-
-Yêu cầu:
-- Dài 1-4 câu, tự nhiên như người thật viết, không mở đầu bằng lời chào.
-- Không dùng hashtag trong phần nội dung.
-- Kèm 1-3 tag ngắn (chỉ chữ thường không dấu, số, gạch dưới; ví dụ "caphe", "hanoi", "worklife").
-`, p.displayName, p.style, topic)
-
-	if len(recent) > 0 {
-		b.WriteString("\nTránh lặp lại ý của các bài gần đây:\n")
-		for _, r := range recent {
-			fmt.Fprintf(&b, "- %s\n", r)
-		}
+// promptData turns the persona into the value a prompt template renders against,
+// combined with the subject drawn for this post and the repetition guard.
+func (p persona) promptData(topic string, recent []string, maxTags int) promptData {
+	return promptData{
+		Username:    p.username,
+		DisplayName: p.displayName,
+		Style:       p.style,
+		Topic:       topic,
+		Recent:      recent,
+		MaxTags:     maxTags,
 	}
-
-	b.WriteString("\nTrả về JSON: {\"content\": \"...\", \"tags\": [\"...\"]}")
-	return b.String()
 }

@@ -31,10 +31,6 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
 
-// recentMemory is how many of a bot's latest posts are echoed back into the
-// prompt to steer Gemini away from repeating itself.
-const recentMemory = 5
-
 func main() {
 	maxPosts := flag.Int("max-posts", 0, "stop after N successful posts (0 = run forever)")
 	flag.Parse()
@@ -59,16 +55,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Both clients start on the built-in timeouts and are moved onto the plan's on
+	// every tick. The timeout is carried on the client rather than on http.Client so
+	// it can change without rewriting a field Do reads concurrently.
 	bot := &runner{
 		api: &apiClient{
 			baseURL: cfg.APIBaseURL,
-			http:    &http.Client{Timeout: 15 * time.Second},
+			http:    &http.Client{},
 			now:     time.Now,
+			timeout: defaultAPITimeout,
 		},
 		gemini: &geminiClient{
 			baseURL: cfg.GeminiBaseURL,
 			apiKey:  cfg.GeminiAPIKey,
-			http:    &http.Client{Timeout: 60 * time.Second},
+			http:    &http.Client{},
+			timeout: defaultGeminiTimeout,
 		},
 		personaPassword: cfg.Password,
 		rng:             rand.New(rand.NewSource(time.Now().UnixNano())), //nolint:gosec // content variety, not crypto
@@ -124,6 +125,14 @@ func (r *runner) run(ctx context.Context, maxPosts int) {
 		wait := planRetryInterval
 
 		p, err := r.api.FetchPlan(ctx)
+		if err == nil {
+			// Applied before anything uses the plan, and outside the switch so a
+			// paused or empty plan still moves the timeouts — those are the states an
+			// operator is most likely to be sitting in while tuning them.
+			r.api.timeout = p.apiTimeout()
+			r.gemini.timeout = p.geminiTimeout()
+		}
+
 		switch {
 		case err != nil:
 			if ctx.Err() != nil {
@@ -172,7 +181,12 @@ func (r *runner) postOnce(ctx context.Context, p *plan) error {
 	topic := p.Topics[r.rng.Intn(len(p.Topics))]
 	acc := r.account(per)
 
-	post, model, err := r.gemini.GeneratePost(ctx, p.Models, per, topic, r.recent[per.username])
+	maxTags := p.maxTags()
+	post, model, err := r.gemini.GeneratePost(ctx, p.Models, generationSettings{
+		Prompt:      buildPrompt(ctx, p.PromptTemplate, per.promptData(topic, r.recent[per.username], maxTags)),
+		Temperature: p.temperature(),
+		MaxTags:     maxTags,
+	})
 	if err != nil {
 		r.report(ctx, per, failedRun(per, model, err))
 		return err
@@ -185,7 +199,7 @@ func (r *runner) postOnce(ctx context.Context, p *plan) error {
 	}
 
 	r.linkIdentity(ctx, per, acc)
-	r.remember(per.username, post.Content)
+	r.remember(per.username, post.Content, p.recentMemory())
 	r.report(ctx, per, runReport{
 		BotID:             per.id,
 		Status:            "success",
@@ -286,11 +300,22 @@ func (r *runner) linkIdentity(ctx context.Context, per persona, acc *botAccount)
 	r.linked[per.id] = true
 }
 
-// remember keeps the opening of the bot's latest posts for the prompt.
-func (r *runner) remember(username, content string) {
+// remember keeps the opening of the bot's latest posts for the prompt, trimmed to
+// the limit the plan asks for.
+//
+// The trim happens on write rather than on read so that lowering the limit through
+// the admin API takes effect immediately instead of leaving the surplus entries
+// sitting in the map until the process restarts. A limit of 0 disables the guard and
+// drops what was already remembered, which is what "off" should mean.
+func (r *runner) remember(username, content string, limit int) {
+	if limit <= 0 {
+		delete(r.recent, username)
+		return
+	}
+
 	entries := append(r.recent[username], truncate(content, 60))
-	if len(entries) > recentMemory {
-		entries = entries[len(entries)-recentMemory:]
+	if len(entries) > limit {
+		entries = entries[len(entries)-limit:]
 	}
 	r.recent[username] = entries
 }

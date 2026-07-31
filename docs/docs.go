@@ -4500,6 +4500,18 @@ const docTemplate = `{
                     "type": "integer",
                     "example": 3
                 },
+                "api_timeout_seconds": {
+                    "type": "integer",
+                    "example": 15
+                },
+                "gemini_timeout_seconds": {
+                    "type": "integer",
+                    "example": 60
+                },
+                "max_tags_per_post": {
+                    "type": "integer",
+                    "example": 3
+                },
                 "models": {
                     "type": "array",
                     "items": {
@@ -4516,6 +4528,18 @@ const docTemplate = `{
                 "post_interval_seconds": {
                     "type": "integer",
                     "example": 120
+                },
+                "prompt_template": {
+                    "type": "string",
+                    "example": ""
+                },
+                "recent_memory": {
+                    "type": "integer",
+                    "example": 5
+                },
+                "temperature": {
+                    "type": "number",
+                    "example": 1
                 },
                 "updated_at": {
                     "type": "string",
@@ -4912,11 +4936,23 @@ const docTemplate = `{
         "dto.PlanResponse": {
             "type": "object",
             "properties": {
+                "api_timeout_seconds": {
+                    "type": "integer",
+                    "example": 15
+                },
                 "bots": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/dto.PlanBot"
                     }
+                },
+                "gemini_timeout_seconds": {
+                    "type": "integer",
+                    "example": 60
+                },
+                "max_tags_per_post": {
+                    "type": "integer",
+                    "example": 3
                 },
                 "models": {
                     "type": "array",
@@ -4935,6 +4971,19 @@ const docTemplate = `{
                 "post_interval_seconds": {
                     "type": "integer",
                     "example": 120
+                },
+                "prompt_template": {
+                    "description": "The generation knobs, which were compile-time constants in cmd/bot. They ride\non the plan rather than on a separate endpoint so one fetch still tells the bot\neverything it needs for the tick — a second call could fail on its own and\nleave the bot generating under half a configuration.\n\nPromptTemplate is empty when no template is stored, which the bot reads as\n\"use your built-in default\". The server does not substitute the default here:\nit does not have one, deliberately, so that there is exactly one copy.",
+                    "type": "string",
+                    "example": ""
+                },
+                "recent_memory": {
+                    "type": "integer",
+                    "example": 5
+                },
+                "temperature": {
+                    "type": "number",
+                    "example": 1
                 },
                 "topics": {
                     "type": "array",
@@ -5369,6 +5418,20 @@ const docTemplate = `{
                     "type": "integer",
                     "example": 5
                 },
+                "api_timeout_seconds": {
+                    "description": "APITimeoutSeconds and GeminiTimeoutSeconds bound one HTTP request each in the\nbot process. They take effect on the tick after the bot next fetches its plan.",
+                    "type": "integer",
+                    "example": 15
+                },
+                "gemini_timeout_seconds": {
+                    "type": "integer",
+                    "example": 60
+                },
+                "max_tags_per_post": {
+                    "description": "MaxTagsPerPost is capped at the post service's own tag limit of 10.",
+                    "type": "integer",
+                    "example": 3
+                },
                 "models": {
                     "type": "array",
                     "items": {
@@ -5385,6 +5448,21 @@ const docTemplate = `{
                 "post_interval_seconds": {
                     "type": "integer",
                     "example": 120
+                },
+                "prompt_template": {
+                    "description": "PromptTemplate is a Go text/template rendered against the persona, the drawn\ntopic and the recent-post list: {{.DisplayName}}, {{.Username}}, {{.Style}},\n{{.Topic}}, {{.MaxTags}}, and {{range .Recent}}. It is validated by rendering\nit, so a reference to a field that does not exist is a 400 here rather than a\nrun error on the bot host.",
+                    "type": "string",
+                    "example": "Bạn là {{.DisplayName}}..."
+                },
+                "recent_memory": {
+                    "description": "RecentMemory is how many recent posts feed the repetition guard; 0 disables it.",
+                    "type": "integer",
+                    "example": 5
+                },
+                "temperature": {
+                    "description": "Temperature is Gemini's sampling temperature, 0 to 2.",
+                    "type": "number",
+                    "example": 1
                 }
             }
         },

@@ -37,7 +37,7 @@ func TestParseGeneratedPost_Success(t *testing.T) {
 		Tags:    []string{"#CaPhe", "hanoi", "hanoi", "có dấu!"},
 	})
 
-	post, err := parseGeneratedPost(body)
+	post, err := parseGeneratedPost(body, defaultMaxTags)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -50,13 +50,13 @@ func TestParseGeneratedPost_Success(t *testing.T) {
 }
 
 func TestParseGeneratedPost_EmptyContent(t *testing.T) {
-	if _, err := parseGeneratedPost(geminiBody(t, generatedPost{Content: "   "})); err == nil {
+	if _, err := parseGeneratedPost(geminiBody(t, generatedPost{Content: "   "}), defaultMaxTags); err == nil {
 		t.Fatal("expected error for empty content")
 	}
 }
 
 func TestParseGeneratedPost_NoCandidates(t *testing.T) {
-	if _, err := parseGeneratedPost([]byte(`{"candidates":[]}`)); err == nil {
+	if _, err := parseGeneratedPost([]byte(`{"candidates":[]}`), defaultMaxTags); err == nil {
 		t.Fatal("expected error for missing candidates")
 	}
 }
@@ -72,26 +72,81 @@ func TestParseGeneratedPost_InvalidInnerJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal response: %v", err)
 	}
-	if _, err := parseGeneratedPost(body); err == nil {
+	if _, err := parseGeneratedPost(body, defaultMaxTags); err == nil {
 		t.Fatal("expected error for non-JSON candidate text")
 	}
 }
 
 func TestSanitizeTags_CapsAndFilters(t *testing.T) {
-	got := sanitizeTags([]string{"#Golang", "", "tiếng-việt", "ok_1", "extra", "more"})
+	got := sanitizeTags([]string{"#Golang", "", "tiếng-việt", "ok_1", "extra", "more"}, defaultMaxTags)
 	if want := []string{"golang", "ok_1", "extra"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("sanitizeTags = %v, want %v", got, want)
 	}
 }
 
-func TestBuildPrompt_IncludesPersonaTopicAndRecent(t *testing.T) {
-	p := testPersona()
-	prompt := buildPrompt(p, "chuyện đi làm", []string{"bài cũ số 1"})
+// The cap is whatever the plan configured, not the built-in default: an operator
+// lowering it must not keep getting three tags per post.
+func TestSanitizeTags_HonoursConfiguredCap(t *testing.T) {
+	got := sanitizeTags([]string{"a", "b", "c", "d"}, 1)
+	if want := []string{"a"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sanitizeTags = %v, want %v", got, want)
+	}
+}
 
-	for _, want := range []string{p.displayName, p.style, "chuyện đi làm", "bài cũ số 1"} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("prompt missing %q", want)
+// max_tags_per_post = 0 means "no tags". Falling through to the default here would
+// publish tagged posts for an operator who explicitly turned tagging off.
+func TestSanitizeTags_ZeroCapDropsEverything(t *testing.T) {
+	if got := sanitizeTags([]string{"golang", "hanoi"}, 0); len(got) != 0 {
+		t.Errorf("sanitizeTags = %v, want none", got)
+	}
+}
+
+// The temperature and prompt on the wire have to be the ones the plan asked for —
+// this is the whole point of moving them out of the binary.
+func TestGeneratePost_SendsConfiguredPromptAndTemperature(t *testing.T) {
+	var got generateContentRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode request: %v", err)
 		}
+		_, _ = w.Write(geminiBody(t, generatedPost{Content: "ok"}))
+	}))
+	defer srv.Close()
+
+	g := &geminiClient{baseURL: srv.URL, apiKey: "k", http: srv.Client()}
+	_, _, err := g.GeneratePost(context.Background(), []string{"m1"}, generationSettings{
+		Prompt:      "prompt do người vận hành đặt",
+		Temperature: 0.25,
+		MaxTags:     2,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(got.Contents) != 1 || len(got.Contents[0].Parts) != 1 {
+		t.Fatalf("request carried %+v", got.Contents)
+	}
+	if text := got.Contents[0].Parts[0].Text; text != "prompt do người vận hành đặt" {
+		t.Errorf("prompt = %q, want the configured one", text)
+	}
+	if got.GenerationConfig.Temperature != 0.25 {
+		t.Errorf("temperature = %v, want the configured 0.25", got.GenerationConfig.Temperature)
+	}
+}
+
+// The timeout comes from the plan, so a hung Gemini must end the call rather than
+// hold the tick open until the process is killed.
+func TestGeneratePost_HonoursTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	g := &geminiClient{baseURL: srv.URL, apiKey: "k", http: srv.Client(), timeout: 50 * time.Millisecond}
+	if _, _, err := g.GeneratePost(context.Background(), []string{"m1"}, testGen()); err == nil {
+		t.Fatal("expected the call to time out")
 	}
 }
 
@@ -105,7 +160,7 @@ func TestGeneratePost_CallsEndpointWithKey(t *testing.T) {
 	defer srv.Close()
 
 	g := &geminiClient{baseURL: srv.URL, apiKey: "secret", http: srv.Client()}
-	post, model, err := g.GeneratePost(context.Background(), []string{"gemini-2.5-flash"}, testPersona(), "chủ đề", nil)
+	post, model, err := g.GeneratePost(context.Background(), []string{"gemini-2.5-flash"}, testGen())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -130,7 +185,7 @@ func TestGeneratePost_AllModelsRateLimited(t *testing.T) {
 	defer srv.Close()
 
 	g := &geminiClient{baseURL: srv.URL, apiKey: "k", http: srv.Client()}
-	if _, _, err := g.GeneratePost(context.Background(), []string{"m1", "m2"}, testPersona(), "chủ đề", nil); err == nil {
+	if _, _, err := g.GeneratePost(context.Background(), []string{"m1", "m2"}, testGen()); err == nil {
 		t.Fatal("expected error when every model is 429")
 	}
 }
@@ -149,7 +204,7 @@ func TestGeneratePost_RotatesPast429(t *testing.T) {
 	defer srv.Close()
 
 	g := &geminiClient{baseURL: srv.URL, apiKey: "k", http: srv.Client()}
-	post, model, err := g.GeneratePost(context.Background(), []string{"busy-model", "spare-model"}, testPersona(), "chủ đề", nil)
+	post, model, err := g.GeneratePost(context.Background(), []string{"busy-model", "spare-model"}, testGen())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -174,7 +229,7 @@ func TestGeneratePost_RealErrorDoesNotRotate(t *testing.T) {
 	defer srv.Close()
 
 	g := &geminiClient{baseURL: srv.URL, apiKey: "k", http: srv.Client()}
-	if _, _, err := g.GeneratePost(context.Background(), []string{"m1", "m2"}, testPersona(), "chủ đề", nil); err == nil {
+	if _, _, err := g.GeneratePost(context.Background(), []string{"m1", "m2"}, testGen()); err == nil {
 		t.Fatal("expected error for 400 response")
 	}
 	if calls != 1 {
@@ -183,7 +238,7 @@ func TestGeneratePost_RealErrorDoesNotRotate(t *testing.T) {
 }
 
 func TestJittered_StaysWithinBounds(t *testing.T) {
-	r := newTestRunner(nil)
+	r := newTestRunner()
 	base := 40 * time.Second
 	for range 100 {
 		d := r.jittered(base)
@@ -194,13 +249,40 @@ func TestJittered_StaysWithinBounds(t *testing.T) {
 }
 
 func TestRemember_KeepsLastN(t *testing.T) {
-	r := newTestRunner(nil)
+	r := newTestRunner()
 	r.recent = map[string][]string{}
-	for i := range recentMemory + 3 {
-		r.remember("bot_sky", strings.Repeat("x", i+1))
+	for i := range defaultRecentMemory + 3 {
+		r.remember("bot_sky", strings.Repeat("x", i+1), defaultRecentMemory)
 	}
-	if got := len(r.recent["bot_sky"]); got != recentMemory {
-		t.Errorf("recent len = %d, want %d", got, recentMemory)
+	if got := len(r.recent["bot_sky"]); got != defaultRecentMemory {
+		t.Errorf("recent len = %d, want %d", got, defaultRecentMemory)
+	}
+}
+
+// Lowering recent_memory has to trim what is already held, or the surplus entries
+// would keep going into the prompt until the process restarted — which is exactly
+// the restart this change exists to remove.
+func TestRemember_ShrinksToANewLowerLimit(t *testing.T) {
+	r := newTestRunner()
+	r.recent = map[string][]string{"bot_sky": {"a", "b", "c", "d", "e"}}
+
+	r.remember("bot_sky", "f", 2)
+
+	if want := []string{"e", "f"}; !reflect.DeepEqual(r.recent["bot_sky"], want) {
+		t.Errorf("recent = %v, want the newest %v", r.recent["bot_sky"], want)
+	}
+}
+
+// A limit of 0 turns the repetition guard off, which has to drop what was already
+// remembered — otherwise "off" would still feed old posts into every prompt.
+func TestRemember_ZeroLimitForgets(t *testing.T) {
+	r := newTestRunner()
+	r.recent = map[string][]string{"bot_sky": {"a", "b"}}
+
+	r.remember("bot_sky", "c", 0)
+
+	if got := r.recent["bot_sky"]; len(got) != 0 {
+		t.Errorf("recent = %v, want nothing remembered", got)
 	}
 }
 

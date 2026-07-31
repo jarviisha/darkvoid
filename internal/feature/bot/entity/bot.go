@@ -47,8 +47,9 @@ func DurationToSeconds(d time.Duration) int32 {
 }
 
 // Config holds the runtime knobs the bot process reads on every tick. These were
-// BOT_POST_INTERVAL, BOT_ACCOUNTS, and GEMINI_MODELS in the environment; keeping
-// them here is what lets an operator change them without a restart.
+// BOT_POST_INTERVAL, BOT_ACCOUNTS, and GEMINI_MODELS in the environment, and — for
+// the generation group — compile-time constants in cmd/bot; keeping them here is
+// what lets an operator change them without a restart.
 type Config struct {
 	PostInterval time.Duration
 	// Accounts caps how many enabled personas are active at once.
@@ -58,7 +59,25 @@ type Config struct {
 	Models []string
 	// Paused is the global kill switch. It leaves each persona's Enabled flag alone,
 	// so resuming restores exactly the previous selection.
-	Paused    bool
+	Paused bool
+
+	// PromptTemplate is the Gemini prompt as a Go text/template, rendered against
+	// PromptData. Empty means the bot uses its built-in default — see
+	// ValidatePromptTemplate for why the default is not stored here.
+	PromptTemplate string
+	// Temperature is the sampling temperature for generateContent.
+	Temperature float64
+	// MaxTagsPerPost is how many tags to ask for and keep, capped at the post
+	// service's own tag limit.
+	MaxTagsPerPost int
+	// RecentMemory is how many of a persona's latest posts are fed back into the
+	// prompt as a repetition guard. 0 disables it.
+	RecentMemory int
+	// APITimeout and GeminiTimeout bound one HTTP request each in the bot process.
+	// They are separate because the two endpoints answer on very different scales.
+	APITimeout    time.Duration
+	GeminiTimeout time.Duration
+
 	UpdatedBy *uuid.UUID
 	UpdatedAt time.Time
 }
@@ -66,12 +85,23 @@ type Config struct {
 // ConfigUpdate is a partial update: a nil field keeps its stored value. Models is
 // a slice rather than a pointer because an empty chain is already invalid, so nil
 // and empty can both mean "unchanged" without losing a meaningful state.
+//
+// PromptTemplate is a pointer, unlike Models, precisely because empty *is* a
+// meaningful value for it: it is how an operator reverts to the built-in default.
 type ConfigUpdate struct {
 	PostInterval *time.Duration
 	Accounts     *int
 	Models       []string
 	Paused       *bool
-	UpdatedBy    *uuid.UUID
+
+	PromptTemplate *string
+	Temperature    *float64
+	MaxTagsPerPost *int
+	RecentMemory   *int
+	APITimeout     *time.Duration
+	GeminiTimeout  *time.Duration
+
+	UpdatedBy *uuid.UUID
 }
 
 // Topic is one subject the bots draw from at random.
@@ -183,6 +213,27 @@ const (
 	// personas exist. It keeps the value inside the SMALLINT column and rejects
 	// obvious typos before they reach the database.
 	MaxAccounts = 1000
+
+	// MinTemperature and MaxTemperature are Gemini's own accepted range. Out-of-range
+	// values are rejected by the API, so accepting one here would only turn an
+	// operator's typo into a run of 400s in the activity log.
+	MinTemperature = 0.0
+	MaxTemperature = 2.0
+
+	// MaxTagsCeiling is the post service's tag limit (see post/service.validateTags).
+	// Asking for more would produce posts CreatePost refuses.
+	MaxTagsCeiling = 10
+
+	// MaxRecentMemory bounds the repetition guard. Each remembered post is another
+	// line in the prompt, so this is a prompt-size guard rather than a product limit.
+	MaxRecentMemory = 50
+
+	// MinTimeout and MaxTimeout bound the bot's per-request HTTP timeouts. The floor
+	// is a second because anything under it fails every generateContent call; the
+	// ceiling keeps a hung request from holding a tick for longer than any plausible
+	// post interval.
+	MinTimeout = time.Second
+	MaxTimeout = 5 * time.Minute
 )
 
 // usernamePattern is the user-service username rule. A persona's username has to

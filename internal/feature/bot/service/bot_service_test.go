@@ -209,6 +209,27 @@ func (f *fakeStore) UpdateConfig(_ context.Context, update entity.ConfigUpdate) 
 	if update.Paused != nil {
 		f.config.Paused = *update.Paused
 	}
+	// PromptTemplate is applied on a non-nil pointer rather than a non-empty string:
+	// '' is the documented way back to the bot's built-in prompt, so the fake has to
+	// distinguish "omitted" from "cleared" exactly as the COALESCE does.
+	if update.PromptTemplate != nil {
+		f.config.PromptTemplate = *update.PromptTemplate
+	}
+	if update.Temperature != nil {
+		f.config.Temperature = *update.Temperature
+	}
+	if update.MaxTagsPerPost != nil {
+		f.config.MaxTagsPerPost = *update.MaxTagsPerPost
+	}
+	if update.RecentMemory != nil {
+		f.config.RecentMemory = *update.RecentMemory
+	}
+	if update.APITimeout != nil {
+		f.config.APITimeout = *update.APITimeout
+	}
+	if update.GeminiTimeout != nil {
+		f.config.GeminiTimeout = *update.GeminiTimeout
+	}
 	return f.config, nil
 }
 
@@ -315,12 +336,21 @@ func (f *fakePostReader) GetPostPreviews(_ context.Context, ids []uuid.UUID) (ma
 func newTestStore() *fakeStore {
 	return &fakeStore{
 		config: &entity.Config{
-			PostInterval: 30 * time.Second,
-			Accounts:     3,
-			Models:       []string{"gemini-2.5-flash"},
+			PostInterval:   30 * time.Second,
+			Accounts:       3,
+			Models:         []string{"gemini-2.5-flash"},
+			Temperature:    1.0,
+			MaxTagsPerPost: 3,
+			RecentMemory:   5,
+			APITimeout:     15 * time.Second,
+			GeminiTimeout:  60 * time.Second,
 		},
 	}
 }
+
+// ptr is for the partial-update DTOs, whose optional fields are pointers so that an
+// omitted field and a deliberate zero stay distinguishable.
+func ptr[T any](v T) *T { return &v }
 
 func bot(username string, enabled bool) *entity.Bot {
 	return &entity.Bot{ID: uuid.New(), Username: username, DisplayName: username, Style: "s", Enabled: enabled}
@@ -357,6 +387,39 @@ func TestGetPlan_CapsPersonasAtConfiguredAccounts(t *testing.T) {
 	}
 	if len(plan.Bots) != 2 {
 		t.Fatalf("plan has %d personas, want 2 — the bot applies no cap of its own", len(plan.Bots))
+	}
+}
+
+// The generation knobs travel on the plan, not on a separate endpoint. If any of
+// them is dropped here, the bot silently falls back to its built-in default and an
+// operator's edit does nothing — with the admin UI still showing it as saved.
+func TestGetPlan_CarriesTheGenerationKnobs(t *testing.T) {
+	store := newTestStore()
+	store.config.PromptTemplate = "viết như {{.DisplayName}}"
+	store.config.Temperature = 0.3
+	store.config.MaxTagsPerPost = 2
+	store.config.RecentMemory = 7
+	store.config.APITimeout = 11 * time.Second
+	store.config.GeminiTimeout = 45 * time.Second
+	store.bots = []*entity.Bot{bot("bot_a", true)}
+	store.topics = []*entity.Topic{topic("cà phê", true)}
+
+	plan, err := NewBotService(store).GetPlan(context.Background())
+	if err != nil {
+		t.Fatalf("GetPlan() error = %v", err)
+	}
+
+	if plan.PromptTemplate != "viết như {{.DisplayName}}" {
+		t.Errorf("PromptTemplate = %q", plan.PromptTemplate)
+	}
+	if plan.Temperature != 0.3 {
+		t.Errorf("Temperature = %v, want 0.3", plan.Temperature)
+	}
+	if plan.MaxTagsPerPost != 2 || plan.RecentMemory != 7 {
+		t.Errorf("MaxTagsPerPost/RecentMemory = %d/%d, want 2/7", plan.MaxTagsPerPost, plan.RecentMemory)
+	}
+	if plan.APITimeoutSeconds != 11 || plan.GeminiTimeoutSeconds != 45 {
+		t.Errorf("timeouts = %d/%d, want 11/45", plan.APITimeoutSeconds, plan.GeminiTimeoutSeconds)
 	}
 }
 
@@ -695,6 +758,22 @@ func TestUpdateConfig_RejectsOutOfRangeValues(t *testing.T) {
 		{"no accounts", dto.UpdateConfigRequest{Accounts: &zero}},
 		{"more accounts than the column holds", dto.UpdateConfigRequest{Accounts: &tooMany}},
 		{"empty model id", dto.UpdateConfigRequest{Models: []string{"gemini-2.5-flash", empty}}},
+		{"temperature below the floor", dto.UpdateConfigRequest{Temperature: ptr(-0.1)}},
+		{"temperature above the ceiling", dto.UpdateConfigRequest{Temperature: ptr(2.1)}},
+		{"negative tag cap", dto.UpdateConfigRequest{MaxTagsPerPost: ptr(int32(-1))}},
+		// Above the post service's own tag limit, so every post would be rejected by
+		// CreatePost and the setting would surface as a run of failures instead.
+		{"tag cap above what CreatePost accepts", dto.UpdateConfigRequest{MaxTagsPerPost: ptr(int32(entity.MaxTagsCeiling + 1))}},
+		{"negative repetition guard", dto.UpdateConfigRequest{RecentMemory: ptr(int32(-1))}},
+		{"repetition guard above the ceiling", dto.UpdateConfigRequest{RecentMemory: ptr(int32(entity.MaxRecentMemory + 1))}},
+		{"api timeout of zero", dto.UpdateConfigRequest{APITimeoutSeconds: &zero}},
+		{"gemini timeout above the ceiling", dto.UpdateConfigRequest{GeminiTimeoutSeconds: ptr(int32(entity.MaxTimeout/time.Second) + 1)}},
+		// Validation renders the template rather than only parsing it, so a reference
+		// to a field that does not exist is caught here rather than on the bot host.
+		{"unparseable prompt template", dto.UpdateConfigRequest{PromptTemplate: ptr("{{.DisplayName")}},
+		{"prompt template naming a field that does not exist", dto.UpdateConfigRequest{PromptTemplate: ptr("viết như {{.NoSuchField}}")}},
+		{"prompt template that renders to nothing", dto.UpdateConfigRequest{PromptTemplate: ptr("{{/* rỗng */}}  ")}},
+		{"prompt template past the length limit", dto.UpdateConfigRequest{PromptTemplate: ptr(strings.Repeat("x", entity.MaxPromptTemplateLen+1))}},
 	}
 
 	for _, tt := range tests {
@@ -726,6 +805,81 @@ func TestUpdateConfig_EmptyModelsLeavesTheChainAlone(t *testing.T) {
 	}
 	if len(resp.Models) != 1 || resp.Models[0] != "gemini-2.5-flash" {
 		t.Errorf("Models = %v, want the stored chain", resp.Models)
+	}
+}
+
+// The generation knobs have to survive the round trip, since the plan is what the
+// bot reads them from — a value that validates but never reaches the store would
+// look saved in the admin UI and change nothing about what gets posted.
+func TestUpdateConfig_AppliesTheGenerationKnobs(t *testing.T) {
+	store := newTestStore()
+
+	resp, err := NewBotService(store).UpdateConfig(context.Background(), &dto.UpdateConfigRequest{
+		PromptTemplate:       ptr("viết như {{.DisplayName}} về {{.Topic}}"),
+		Temperature:          ptr(0.4),
+		MaxTagsPerPost:       ptr(int32(1)),
+		RecentMemory:         ptr(int32(0)),
+		APITimeoutSeconds:    ptr(int32(5)),
+		GeminiTimeoutSeconds: ptr(int32(90)),
+	}, uuid.New())
+	if err != nil {
+		t.Fatalf("UpdateConfig() error = %v", err)
+	}
+
+	if resp.PromptTemplate != "viết như {{.DisplayName}} về {{.Topic}}" {
+		t.Errorf("PromptTemplate = %q", resp.PromptTemplate)
+	}
+	if resp.Temperature != 0.4 {
+		t.Errorf("Temperature = %v, want 0.4", resp.Temperature)
+	}
+	if resp.MaxTagsPerPost != 1 {
+		t.Errorf("MaxTagsPerPost = %d, want 1", resp.MaxTagsPerPost)
+	}
+	// 0 is a legal value here — it turns the repetition guard off — so it must be
+	// written rather than treated as an omitted field.
+	if resp.RecentMemory != 0 {
+		t.Errorf("RecentMemory = %d, want the configured 0", resp.RecentMemory)
+	}
+	if resp.APITimeoutSeconds != 5 || resp.GeminiTimeoutSeconds != 90 {
+		t.Errorf("timeouts = %d/%d, want 5/90", resp.APITimeoutSeconds, resp.GeminiTimeoutSeconds)
+	}
+}
+
+// Clearing the template is the only way back to the bot's built-in prompt, so an
+// empty string has to reach the store instead of being read as "no change".
+func TestUpdateConfig_EmptyPromptTemplateRevertsToTheBuiltIn(t *testing.T) {
+	store := newTestStore()
+	store.config.PromptTemplate = "một template cũ"
+
+	resp, err := NewBotService(store).UpdateConfig(context.Background(),
+		&dto.UpdateConfigRequest{PromptTemplate: ptr("")}, uuid.New())
+	if err != nil {
+		t.Fatalf("UpdateConfig() error = %v", err)
+	}
+	if resp.PromptTemplate != "" {
+		t.Errorf("PromptTemplate = %q, want it cleared", resp.PromptTemplate)
+	}
+	if store.gotConfigUpdate.PromptTemplate == nil {
+		t.Error("an empty template must reach the store, not be dropped as an omitted field")
+	}
+}
+
+// Omitting the template must leave the stored one alone, which is what separates it
+// from clearing it.
+func TestUpdateConfig_OmittedPromptTemplateIsLeftAlone(t *testing.T) {
+	store := newTestStore()
+	store.config.PromptTemplate = "một template cũ"
+
+	resp, err := NewBotService(store).UpdateConfig(context.Background(),
+		&dto.UpdateConfigRequest{Temperature: ptr(0.5)}, uuid.New())
+	if err != nil {
+		t.Fatalf("UpdateConfig() error = %v", err)
+	}
+	if resp.PromptTemplate != "một template cũ" {
+		t.Errorf("PromptTemplate = %q, want the stored one", resp.PromptTemplate)
+	}
+	if store.gotConfigUpdate.PromptTemplate != nil {
+		t.Error("an omitted template must not reach the store")
 	}
 }
 

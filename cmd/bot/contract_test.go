@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
+	"time"
 
 	botdto "github.com/jarviisha/darkvoid/internal/feature/bot/dto"
+	botentity "github.com/jarviisha/darkvoid/internal/feature/bot/entity"
 	postdto "github.com/jarviisha/darkvoid/internal/feature/post/dto"
 	userdto "github.com/jarviisha/darkvoid/internal/feature/user/dto"
 )
@@ -46,6 +49,12 @@ func TestContract_PlanResponse(t *testing.T) {
 			Style:        "giọng trẻ trung",
 			RunRequested: true,
 		}},
+		PromptTemplate:       "viết như {{.DisplayName}}",
+		Temperature:          0.25,
+		MaxTagsPerPost:       2,
+		RecentMemory:         7,
+		APITimeoutSeconds:    11,
+		GeminiTimeoutSeconds: 45,
 	}
 
 	var got plan
@@ -79,6 +88,103 @@ func TestContract_PlanResponse(t *testing.T) {
 	}
 	if !b.RunRequested {
 		t.Error("run_requested did not survive: run-now would silently never fire")
+	}
+
+	if got.PromptTemplate != server.PromptTemplate {
+		t.Errorf("prompt_template = %q — every persona would fall back to the built-in voice", got.PromptTemplate)
+	}
+	if got.temperature() != server.Temperature {
+		t.Errorf("temperature = %v, want %v", got.temperature(), server.Temperature)
+	}
+	if got.maxTags() != int(server.MaxTagsPerPost) {
+		t.Errorf("max_tags_per_post = %d, want %d", got.maxTags(), server.MaxTagsPerPost)
+	}
+	if got.recentMemory() != int(server.RecentMemory) {
+		t.Errorf("recent_memory = %d, want %d", got.recentMemory(), server.RecentMemory)
+	}
+	if got.apiTimeout() != 11*time.Second {
+		t.Errorf("api_timeout_seconds = %v, want 11s", got.apiTimeout())
+	}
+	if got.geminiTimeout() != 45*time.Second {
+		t.Errorf("gemini_timeout_seconds = %v, want 45s", got.geminiTimeout())
+	}
+}
+
+// A plan from an API predating the generation knobs omits them entirely. Each has to
+// read as "not configured" rather than as the zero value, or an upgrade of the bot
+// ahead of the server would silently turn off tagging and the repetition guard and
+// pin temperature to 0.
+func TestContract_PlanResponse_AbsentGenerationKnobsFallBackToDefaults(t *testing.T) {
+	var got plan
+	if err := json.Unmarshal([]byte(`{"paused":false,"post_interval_seconds":30}`), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if got.temperature() != defaultTemperature {
+		t.Errorf("temperature = %v, want the built-in default %v", got.temperature(), defaultTemperature)
+	}
+	if got.maxTags() != defaultMaxTags {
+		t.Errorf("max_tags_per_post = %d, want the built-in default %d", got.maxTags(), defaultMaxTags)
+	}
+	if got.recentMemory() != defaultRecentMemory {
+		t.Errorf("recent_memory = %d, want the built-in default %d", got.recentMemory(), defaultRecentMemory)
+	}
+	if got.apiTimeout() != defaultAPITimeout || got.geminiTimeout() != defaultGeminiTimeout {
+		t.Errorf("timeouts = %v/%v, want the built-in defaults", got.apiTimeout(), got.geminiTimeout())
+	}
+	if got.PromptTemplate != "" {
+		t.Errorf("prompt_template = %q, want empty so the built-in prompt is used", got.PromptTemplate)
+	}
+}
+
+// A deliberate zero is not the same as an absent field: an operator who sets
+// temperature to 0, tags to 0 or the repetition guard to 0 means it.
+func TestContract_PlanResponse_ExplicitZerosAreHonoured(t *testing.T) {
+	var got plan
+	raw := `{"temperature":0,"max_tags_per_post":0,"recent_memory":0}`
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if got.temperature() != 0 {
+		t.Errorf("temperature = %v, want the configured 0", got.temperature())
+	}
+	if got.maxTags() != 0 {
+		t.Errorf("max_tags_per_post = %d, want the configured 0", got.maxTags())
+	}
+	if got.recentMemory() != 0 {
+		t.Errorf("recent_memory = %d, want the configured 0", got.recentMemory())
+	}
+}
+
+// The bot renders operator-written templates against its own promptData; the admin
+// API validates them against entity.PromptData. Nothing at compile time connects the
+// two, so a field renamed on one side would let a template pass validation and then
+// fail to render on the bot host — for every persona, until somebody noticed.
+func TestContract_PromptDataMatchesTheServersShape(t *testing.T) {
+	fields := func(v any) map[string]string {
+		typ := reflect.TypeOf(v)
+		out := make(map[string]string, typ.NumField())
+		for i := range typ.NumField() {
+			f := typ.Field(i)
+			out[f.Name] = f.Type.String()
+		}
+		return out
+	}
+
+	bot := fields(promptData{})
+	server := fields(botentity.PromptData{})
+
+	if !reflect.DeepEqual(bot, server) {
+		t.Errorf("prompt template data shapes differ:\n bot    = %v\n server = %v", bot, server)
+	}
+}
+
+// The server rejects a template it cannot render. If it would reject the bot's own
+// default, an operator could never save an edited copy of it.
+func TestContract_ServerAcceptsTheBotsDefaultPromptTemplate(t *testing.T) {
+	if err := botentity.ValidatePromptTemplate(defaultPromptTemplate); err != nil {
+		t.Fatalf("the server would reject the bot's built-in prompt: %v", err)
 	}
 }
 

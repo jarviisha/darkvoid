@@ -54,23 +54,56 @@ type UpdateBotRequest struct {
 // ─── Config (admin plane) ────────────────────────────────────────────────────
 
 // ConfigResponse is the current runtime configuration of the bot.
+//
+// PromptTemplate is returned exactly as stored, empty string included. Empty means
+// the bot falls back to its built-in prompt, so an admin UI should render it as a
+// placeholder rather than as "no prompt".
 type ConfigResponse struct {
 	PostIntervalSeconds int32    `json:"post_interval_seconds" example:"120"`
 	Accounts            int32    `json:"accounts"              example:"3"`
 	Models              []string `json:"models"                example:"gemini-2.5-flash"`
 	Paused              bool     `json:"paused"                example:"false"`
-	UpdatedBy           *string  `json:"updated_by,omitempty"  example:"550e8400-e29b-41d4-a716-446655440000"`
-	UpdatedAt           string   `json:"updated_at"            example:"2026-07-27T10:30:00Z"`
+
+	PromptTemplate       string  `json:"prompt_template"        example:""`
+	Temperature          float64 `json:"temperature"            example:"1"`
+	MaxTagsPerPost       int32   `json:"max_tags_per_post"      example:"3"`
+	RecentMemory         int32   `json:"recent_memory"          example:"5"`
+	APITimeoutSeconds    int32   `json:"api_timeout_seconds"    example:"15"`
+	GeminiTimeoutSeconds int32   `json:"gemini_timeout_seconds" example:"60"`
+
+	UpdatedBy *string `json:"updated_by,omitempty"  example:"550e8400-e29b-41d4-a716-446655440000"`
+	UpdatedAt string  `json:"updated_at"            example:"2026-07-27T10:30:00Z"`
 }
 
 // UpdateConfigRequest is a partial update — an omitted field keeps its stored
 // value. An empty Models array counts as omitted, since an empty fallback chain
 // would stall the bot and is rejected by the database anyway.
+//
+// PromptTemplate is a pointer rather than a plain string for the opposite reason:
+// an empty template is the documented way back to the bot's built-in prompt, so
+// "omitted" and "set to empty" have to stay distinguishable.
 type UpdateConfigRequest struct {
 	PostIntervalSeconds *int32   `json:"post_interval_seconds,omitempty" example:"120"`
 	Accounts            *int32   `json:"accounts,omitempty"              example:"5"`
 	Models              []string `json:"models,omitempty"                example:"gemini-2.5-flash"`
 	Paused              *bool    `json:"paused,omitempty"                example:"true"`
+
+	// PromptTemplate is a Go text/template rendered against the persona, the drawn
+	// topic and the recent-post list: {{.DisplayName}}, {{.Username}}, {{.Style}},
+	// {{.Topic}}, {{.MaxTags}}, and {{range .Recent}}. It is validated by rendering
+	// it, so a reference to a field that does not exist is a 400 here rather than a
+	// run error on the bot host.
+	PromptTemplate *string `json:"prompt_template,omitempty" example:"Bạn là {{.DisplayName}}..."`
+	// Temperature is Gemini's sampling temperature, 0 to 2.
+	Temperature *float64 `json:"temperature,omitempty" example:"1"`
+	// MaxTagsPerPost is capped at the post service's own tag limit of 10.
+	MaxTagsPerPost *int32 `json:"max_tags_per_post,omitempty" example:"3"`
+	// RecentMemory is how many recent posts feed the repetition guard; 0 disables it.
+	RecentMemory *int32 `json:"recent_memory,omitempty" example:"5"`
+	// APITimeoutSeconds and GeminiTimeoutSeconds bound one HTTP request each in the
+	// bot process. They take effect on the tick after the bot next fetches its plan.
+	APITimeoutSeconds    *int32 `json:"api_timeout_seconds,omitempty"    example:"15"`
+	GeminiTimeoutSeconds *int32 `json:"gemini_timeout_seconds,omitempty" example:"60"`
 }
 
 // ─── Topics (admin plane) ────────────────────────────────────────────────────
@@ -133,6 +166,21 @@ type PlanResponse struct {
 	Models              []string  `json:"models"                example:"gemini-2.5-flash"`
 	Bots                []PlanBot `json:"bots"`
 	Topics              []string  `json:"topics"                example:"quán cà phê mới phát hiện ở góc phố quen"`
+
+	// The generation knobs, which were compile-time constants in cmd/bot. They ride
+	// on the plan rather than on a separate endpoint so one fetch still tells the bot
+	// everything it needs for the tick — a second call could fail on its own and
+	// leave the bot generating under half a configuration.
+	//
+	// PromptTemplate is empty when no template is stored, which the bot reads as
+	// "use your built-in default". The server does not substitute the default here:
+	// it does not have one, deliberately, so that there is exactly one copy.
+	PromptTemplate       string  `json:"prompt_template"        example:""`
+	Temperature          float64 `json:"temperature"            example:"1"`
+	MaxTagsPerPost       int32   `json:"max_tags_per_post"      example:"3"`
+	RecentMemory         int32   `json:"recent_memory"          example:"5"`
+	APITimeoutSeconds    int32   `json:"api_timeout_seconds"    example:"15"`
+	GeminiTimeoutSeconds int32   `json:"gemini_timeout_seconds" example:"60"`
 }
 
 // PlanBot is one active persona as the bot process sees it. Only enabled personas

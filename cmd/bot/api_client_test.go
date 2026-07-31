@@ -16,9 +16,11 @@ import (
 // next to a password-shaped field, which both gosec and secret scanners flag.
 const fixturePassword = "fixture-value"
 
-func newTestRunner(api *apiClient) *runner {
+// newTestRunner builds a runner for the pieces that need no API at all — the
+// jitter and the repetition guard. Anything that talks to a server uses
+// newLoopRunner, which wires real stubs into both clients.
+func newTestRunner() *runner {
 	return &runner{
-		api: api,
 		rng: rand.New(rand.NewSource(1)), //nolint:gosec // deterministic test rng
 	}
 }
@@ -31,6 +33,17 @@ func testPersona() persona {
 		username:    "bot_sky",
 		displayName: "Sky Vũ",
 		style:       "giọng trẻ trung, hài hước",
+	}
+}
+
+// testGen is the generation settings a test that does not care about them would
+// otherwise have to spell out. It uses the built-in defaults so a test asserting on
+// generation behaviour reads against the same values production falls back to.
+func testGen() generationSettings {
+	return generationSettings{
+		Prompt:      "viết một bài đăng",
+		Temperature: defaultTemperature,
+		MaxTags:     defaultMaxTags,
 	}
 }
 

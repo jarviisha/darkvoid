@@ -23,6 +23,25 @@ const (
 	reportTimeout    = 20 * time.Second
 )
 
+// Defaults for the generation knobs served by GET /bot/plan. They are not dead
+// code waiting on a migration: the bot has to be able to generate before it has
+// ever seen a plan (the first API calls happen during runner login) and after a
+// plan fetch that failed or came from an older API that does not send the fields.
+// A default of zero would mean no tags, no repetition guard and a timeout that
+// fails every request, so each of these is the value the bot shipped with when
+// they were compile-time constants.
+//
+// They are deliberately not environment variables. Putting them back in the
+// environment would recreate exactly the problem this change removes; their real
+// home is bot.config, and these are only the floor under a missing answer.
+const (
+	defaultTemperature   = 1.0
+	defaultMaxTags       = 3
+	defaultRecentMemory  = 5
+	defaultAPITimeout    = 15 * time.Second
+	defaultGeminiTimeout = 60 * time.Second
+)
+
 // config holds everything the content bot needs from its environment, which is now
 // only credentials and an address. Post interval, account count, model fallback
 // chain, personas, and topics all come from GET /bot/plan instead, so an operator

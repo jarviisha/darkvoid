@@ -252,21 +252,95 @@ func (s *BotService) UpdateConfig(ctx context.Context, req *dto.UpdateConfigRequ
 		update.Models = req.Models
 	}
 
+	// Unlike Models, an empty template is a value rather than an omission — it is how
+	// an operator reverts to the bot's built-in prompt — so the pointer, not the
+	// contents, decides whether this field is being written.
+	if req.PromptTemplate != nil {
+		if err := entity.ValidatePromptTemplate(*req.PromptTemplate); err != nil {
+			return nil, errors.NewValidationError("prompt_template", err.Error())
+		}
+		update.PromptTemplate = req.PromptTemplate
+	}
+
+	if req.Temperature != nil {
+		if *req.Temperature < entity.MinTemperature || *req.Temperature > entity.MaxTemperature {
+			return nil, errors.NewValidationError("temperature",
+				fmt.Sprintf("must be between %g and %g", entity.MinTemperature, entity.MaxTemperature))
+		}
+		update.Temperature = req.Temperature
+	}
+
+	if req.MaxTagsPerPost != nil {
+		maxTags := int(*req.MaxTagsPerPost)
+		if maxTags < 0 || maxTags > entity.MaxTagsCeiling {
+			return nil, errors.NewValidationError("max_tags_per_post",
+				fmt.Sprintf("must be between 0 and %d", entity.MaxTagsCeiling))
+		}
+		update.MaxTagsPerPost = &maxTags
+	}
+
+	if req.RecentMemory != nil {
+		recent := int(*req.RecentMemory)
+		if recent < 0 || recent > entity.MaxRecentMemory {
+			return nil, errors.NewValidationError("recent_memory",
+				fmt.Sprintf("must be between 0 and %d", entity.MaxRecentMemory))
+		}
+		update.RecentMemory = &recent
+	}
+
+	if req.APITimeoutSeconds != nil {
+		timeout, err := validateTimeout("api_timeout_seconds", *req.APITimeoutSeconds)
+		if err != nil {
+			return nil, err
+		}
+		update.APITimeout = &timeout
+	}
+
+	if req.GeminiTimeoutSeconds != nil {
+		timeout, err := validateTimeout("gemini_timeout_seconds", *req.GeminiTimeoutSeconds)
+		if err != nil {
+			return nil, err
+		}
+		update.GeminiTimeout = &timeout
+	}
+
 	cfg, err := s.store.UpdateConfig(ctx, update)
 	if err != nil {
 		logger.LogError(ctx, err, "bot: failed to update config", "admin_id", adminID)
 		return nil, err
 	}
 
+	// The prompt template is logged as a flag rather than as text: it is multi-line
+	// and up to MaxPromptTemplateLen characters, which would bury every other field
+	// on the line. Its contents are readable from GET /admin/bots/config.
 	logger.Info(ctx, "bot: config updated",
 		"admin_id", adminID,
 		"post_interval", cfg.PostInterval.String(),
 		"accounts", cfg.Accounts,
 		"models", cfg.Models,
 		"paused", cfg.Paused,
+		"custom_prompt", cfg.PromptTemplate != "",
+		"temperature", cfg.Temperature,
+		"max_tags_per_post", cfg.MaxTagsPerPost,
+		"recent_memory", cfg.RecentMemory,
+		"api_timeout", cfg.APITimeout.String(),
+		"gemini_timeout", cfg.GeminiTimeout.String(),
 	)
 	resp := toConfigResponse(cfg)
 	return &resp, nil
+}
+
+// validateTimeout converts a timeout expressed in seconds into a Duration, bounded
+// by the range the bot's HTTP clients accept. Both timeout fields share it so their
+// messages cannot drift apart, with the field name passed in so the error still
+// names the one the caller sent.
+func validateTimeout(field string, seconds int32) (time.Duration, error) {
+	timeout := time.Duration(seconds) * time.Second
+	if timeout < entity.MinTimeout || timeout > entity.MaxTimeout {
+		return 0, errors.NewValidationError(field, fmt.Sprintf("must be between %d and %d seconds",
+			int64(entity.MinTimeout/time.Second), int64(entity.MaxTimeout/time.Second)))
+	}
+	return timeout, nil
 }
 
 // SetPaused flips the global kill switch. Each persona's Enabled flag is untouched,
@@ -452,11 +526,17 @@ func (s *BotService) GetPlan(ctx context.Context) (*dto.PlanResponse, error) {
 	}
 
 	return &dto.PlanResponse{
-		Paused:              cfg.Paused,
-		PostIntervalSeconds: entity.DurationToSeconds(cfg.PostInterval),
-		Models:              cfg.Models,
-		Bots:                planBots,
-		Topics:              topicContents,
+		Paused:               cfg.Paused,
+		PostIntervalSeconds:  entity.DurationToSeconds(cfg.PostInterval),
+		Models:               cfg.Models,
+		Bots:                 planBots,
+		Topics:               topicContents,
+		PromptTemplate:       cfg.PromptTemplate,
+		Temperature:          cfg.Temperature,
+		MaxTagsPerPost:       int32(cfg.MaxTagsPerPost), //nolint:gosec // bounded by MaxTagsCeiling on write
+		RecentMemory:         int32(cfg.RecentMemory),   //nolint:gosec // bounded by MaxRecentMemory on write
+		APITimeoutSeconds:    entity.DurationToSeconds(cfg.APITimeout),
+		GeminiTimeoutSeconds: entity.DurationToSeconds(cfg.GeminiTimeout),
 	}, nil
 }
 
@@ -603,12 +683,18 @@ func toBotResponse(b *entity.Bot, stats *entity.RunStats) dto.BotResponse {
 
 func toConfigResponse(c *entity.Config) dto.ConfigResponse {
 	return dto.ConfigResponse{
-		PostIntervalSeconds: entity.DurationToSeconds(c.PostInterval),
-		Accounts:            int32(c.Accounts), //nolint:gosec // bounded by MaxAccounts on write
-		Models:              c.Models,
-		Paused:              c.Paused,
-		UpdatedBy:           formatUUID(c.UpdatedBy),
-		UpdatedAt:           c.UpdatedAt.UTC().Format(timeFormat),
+		PostIntervalSeconds:  entity.DurationToSeconds(c.PostInterval),
+		Accounts:             int32(c.Accounts), //nolint:gosec // bounded by MaxAccounts on write
+		Models:               c.Models,
+		Paused:               c.Paused,
+		PromptTemplate:       c.PromptTemplate,
+		Temperature:          c.Temperature,
+		MaxTagsPerPost:       int32(c.MaxTagsPerPost), //nolint:gosec // bounded by MaxTagsCeiling on write
+		RecentMemory:         int32(c.RecentMemory),   //nolint:gosec // bounded by MaxRecentMemory on write
+		APITimeoutSeconds:    entity.DurationToSeconds(c.APITimeout),
+		GeminiTimeoutSeconds: entity.DurationToSeconds(c.GeminiTimeout),
+		UpdatedBy:            formatUUID(c.UpdatedBy),
+		UpdatedAt:            c.UpdatedAt.UTC().Format(timeFormat),
 	}
 }
 

@@ -133,6 +133,26 @@ func (r *BotRepository) UpdateConfig(ctx context.Context, update entity.ConfigUp
 		accounts := int16(*update.Accounts) //nolint:gosec // bounded by the service's MaxAccounts check
 		params.Accounts = &accounts
 	}
+	// Passed through as-is, empty string included: '' is how an operator reverts to
+	// the bot's built-in prompt, so only a nil pointer may mean "unchanged".
+	params.PromptTemplate = update.PromptTemplate
+	params.Temperature = update.Temperature
+	if update.MaxTagsPerPost != nil {
+		maxTags := int16(*update.MaxTagsPerPost) //nolint:gosec // bounded by the service's MaxTagsCeiling check
+		params.MaxTagsPerPost = &maxTags
+	}
+	if update.RecentMemory != nil {
+		recent := int16(*update.RecentMemory) //nolint:gosec // bounded by the service's MaxRecentMemory check
+		params.RecentMemory = &recent
+	}
+	if update.APITimeout != nil {
+		seconds := int16(entity.DurationToSeconds(*update.APITimeout)) //nolint:gosec // bounded by the service's MaxTimeout check
+		params.ApiTimeoutSeconds = &seconds
+	}
+	if update.GeminiTimeout != nil {
+		seconds := int16(entity.DurationToSeconds(*update.GeminiTimeout)) //nolint:gosec // bounded by the service's MaxTimeout check
+		params.GeminiTimeoutSeconds = &seconds
+	}
 	if update.UpdatedBy != nil {
 		params.UpdatedBy = pgtype.UUID{Bytes: *update.UpdatedBy, Valid: true}
 	}
@@ -277,12 +297,18 @@ func rowToBot(row db.BotBot) *entity.Bot {
 
 func rowToConfig(row db.BotConfig) *entity.Config {
 	return &entity.Config{
-		PostInterval: time.Duration(row.PostIntervalSeconds) * time.Second,
-		Accounts:     int(row.Accounts),
-		Models:       row.Models,
-		Paused:       row.Paused,
-		UpdatedBy:    nullableToUUID(row.UpdatedBy),
-		UpdatedAt:    row.UpdatedAt.Time,
+		PostInterval:   time.Duration(row.PostIntervalSeconds) * time.Second,
+		Accounts:       int(row.Accounts),
+		Models:         row.Models,
+		Paused:         row.Paused,
+		PromptTemplate: row.PromptTemplate,
+		Temperature:    row.Temperature,
+		MaxTagsPerPost: int(row.MaxTagsPerPost),
+		RecentMemory:   int(row.RecentMemory),
+		APITimeout:     time.Duration(row.ApiTimeoutSeconds) * time.Second,
+		GeminiTimeout:  time.Duration(row.GeminiTimeoutSeconds) * time.Second,
+		UpdatedBy:      nullableToUUID(row.UpdatedBy),
+		UpdatedAt:      row.UpdatedAt.Time,
 	}
 }
 

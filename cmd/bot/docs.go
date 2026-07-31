@@ -17,6 +17,14 @@
 // Each attempt is reported back to POST /bot/runs, which is the only reason its
 // activity is visible anywhere other than this process's own logs.
 //
+// The same is true of what shapes the writing: the prompt template, the sampling
+// temperature, how many tags to ask for, how many recent posts feed the repetition
+// guard, and the two HTTP timeouts. Those were compile-time constants here until
+// they moved to bot.config, which is why prompt.go keeps a default template rather
+// than the prompt: the default is the floor under a failed plan fetch, not the
+// normal path. See prompt.go for how a stored template is rendered and what happens
+// when it turns out to be unusable.
+//
 // The environment therefore carries only credentials and an address: BOT_API_BASE_URL,
 // BOT_PASSWORD (shared by the persona accounts), BOT_RUNNER_USERNAME/PASSWORD, and
 // GEMINI_API_KEY. See config.go for the full list and main.go for usage.

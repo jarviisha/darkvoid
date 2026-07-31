@@ -183,7 +183,7 @@ func (q *Queries) GetBotByUsername(ctx context.Context, username string) (BotBot
 
 const getBotConfig = `-- name: GetBotConfig :one
 
-SELECT id, post_interval_seconds, accounts, models, paused, updated_by, updated_at FROM bot.config WHERE id = 1
+SELECT id, post_interval_seconds, accounts, models, paused, updated_by, updated_at, prompt_template, temperature, max_tags_per_post, recent_memory, api_timeout_seconds, gemini_timeout_seconds FROM bot.config WHERE id = 1
 `
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -198,6 +198,12 @@ func (q *Queries) GetBotConfig(ctx context.Context) (BotConfig, error) {
 		&i.Paused,
 		&i.UpdatedBy,
 		&i.UpdatedAt,
+		&i.PromptTemplate,
+		&i.Temperature,
+		&i.MaxTagsPerPost,
+		&i.RecentMemory,
+		&i.ApiTimeoutSeconds,
+		&i.GeminiTimeoutSeconds,
 	)
 	return i, err
 }
@@ -586,22 +592,37 @@ func (q *Queries) UpdateBot(ctx context.Context, arg UpdateBotParams) (BotBot, e
 
 const updateBotConfig = `-- name: UpdateBotConfig :one
 UPDATE bot.config
-SET post_interval_seconds = COALESCE($1, post_interval_seconds),
-    accounts              = COALESCE($2, accounts),
-    models                = COALESCE($3, models),
-    paused                = COALESCE($4, paused),
-    updated_by            = $5,
-    updated_at            = NOW()
+SET post_interval_seconds  = COALESCE($1, post_interval_seconds),
+    accounts               = COALESCE($2, accounts),
+    models                 = COALESCE($3, models),
+    paused                 = COALESCE($4, paused),
+    -- prompt_template is COALESCE'd like the rest, but note that '' is a value here
+    -- rather than an omission: it is how an operator reverts to the bot's built-in
+    -- default. Only SQL NULL means "unchanged".
+    prompt_template        = COALESCE($5, prompt_template),
+    temperature            = COALESCE($6, temperature),
+    max_tags_per_post      = COALESCE($7, max_tags_per_post),
+    recent_memory          = COALESCE($8, recent_memory),
+    api_timeout_seconds    = COALESCE($9, api_timeout_seconds),
+    gemini_timeout_seconds = COALESCE($10, gemini_timeout_seconds),
+    updated_by             = $11,
+    updated_at             = NOW()
 WHERE id = 1
-RETURNING id, post_interval_seconds, accounts, models, paused, updated_by, updated_at
+RETURNING id, post_interval_seconds, accounts, models, paused, updated_by, updated_at, prompt_template, temperature, max_tags_per_post, recent_memory, api_timeout_seconds, gemini_timeout_seconds
 `
 
 type UpdateBotConfigParams struct {
-	PostIntervalSeconds *int32      `json:"post_interval_seconds"`
-	Accounts            *int16      `json:"accounts"`
-	Models              []string    `json:"models"`
-	Paused              *bool       `json:"paused"`
-	UpdatedBy           pgtype.UUID `json:"updated_by"`
+	PostIntervalSeconds  *int32      `json:"post_interval_seconds"`
+	Accounts             *int16      `json:"accounts"`
+	Models               []string    `json:"models"`
+	Paused               *bool       `json:"paused"`
+	PromptTemplate       *string     `json:"prompt_template"`
+	Temperature          *float64    `json:"temperature"`
+	MaxTagsPerPost       *int16      `json:"max_tags_per_post"`
+	RecentMemory         *int16      `json:"recent_memory"`
+	ApiTimeoutSeconds    *int16      `json:"api_timeout_seconds"`
+	GeminiTimeoutSeconds *int16      `json:"gemini_timeout_seconds"`
+	UpdatedBy            pgtype.UUID `json:"updated_by"`
 }
 
 // Every editable field is COALESCE'd so an omitted one keeps its stored value.
@@ -617,6 +638,12 @@ func (q *Queries) UpdateBotConfig(ctx context.Context, arg UpdateBotConfigParams
 		arg.Accounts,
 		arg.Models,
 		arg.Paused,
+		arg.PromptTemplate,
+		arg.Temperature,
+		arg.MaxTagsPerPost,
+		arg.RecentMemory,
+		arg.ApiTimeoutSeconds,
+		arg.GeminiTimeoutSeconds,
 		arg.UpdatedBy,
 	)
 	var i BotConfig
@@ -628,6 +655,12 @@ func (q *Queries) UpdateBotConfig(ctx context.Context, arg UpdateBotConfigParams
 		&i.Paused,
 		&i.UpdatedBy,
 		&i.UpdatedAt,
+		&i.PromptTemplate,
+		&i.Temperature,
+		&i.MaxTagsPerPost,
+		&i.RecentMemory,
+		&i.ApiTimeoutSeconds,
+		&i.GeminiTimeoutSeconds,
 	)
 	return i, err
 }

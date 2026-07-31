@@ -222,6 +222,15 @@ definitions:
       accounts:
         example: 3
         type: integer
+      api_timeout_seconds:
+        example: 15
+        type: integer
+      gemini_timeout_seconds:
+        example: 60
+        type: integer
+      max_tags_per_post:
+        example: 3
+        type: integer
       models:
         example:
         - gemini-2.5-flash
@@ -234,6 +243,15 @@ definitions:
       post_interval_seconds:
         example: 120
         type: integer
+      prompt_template:
+        example: ""
+        type: string
+      recent_memory:
+        example: 5
+        type: integer
+      temperature:
+        example: 1
+        type: number
       updated_at:
         example: "2026-07-27T10:30:00Z"
         type: string
@@ -499,10 +517,19 @@ definitions:
     type: object
   dto.PlanResponse:
     properties:
+      api_timeout_seconds:
+        example: 15
+        type: integer
       bots:
         items:
           $ref: '#/definitions/dto.PlanBot'
         type: array
+      gemini_timeout_seconds:
+        example: 60
+        type: integer
+      max_tags_per_post:
+        example: 3
+        type: integer
       models:
         example:
         - gemini-2.5-flash
@@ -516,6 +543,24 @@ definitions:
       post_interval_seconds:
         example: 120
         type: integer
+      prompt_template:
+        description: |-
+          The generation knobs, which were compile-time constants in cmd/bot. They ride
+          on the plan rather than on a separate endpoint so one fetch still tells the bot
+          everything it needs for the tick — a second call could fail on its own and
+          leave the bot generating under half a configuration.
+
+          PromptTemplate is empty when no template is stored, which the bot reads as
+          "use your built-in default". The server does not substitute the default here:
+          it does not have one, deliberately, so that there is exactly one copy.
+        example: ""
+        type: string
+      recent_memory:
+        example: 5
+        type: integer
+      temperature:
+        example: 1
+        type: number
       topics:
         example:
         - quán cà phê mới phát hiện ở góc phố quen
@@ -813,6 +858,20 @@ definitions:
       accounts:
         example: 5
         type: integer
+      api_timeout_seconds:
+        description: |-
+          APITimeoutSeconds and GeminiTimeoutSeconds bound one HTTP request each in the
+          bot process. They take effect on the tick after the bot next fetches its plan.
+        example: 15
+        type: integer
+      gemini_timeout_seconds:
+        example: 60
+        type: integer
+      max_tags_per_post:
+        description: MaxTagsPerPost is capped at the post service's own tag limit
+          of 10.
+        example: 3
+        type: integer
       models:
         example:
         - gemini-2.5-flash
@@ -825,6 +884,24 @@ definitions:
       post_interval_seconds:
         example: 120
         type: integer
+      prompt_template:
+        description: |-
+          PromptTemplate is a Go text/template rendered against the persona, the drawn
+          topic and the recent-post list: {{.DisplayName}}, {{.Username}}, {{.Style}},
+          {{.Topic}}, {{.MaxTags}}, and {{range .Recent}}. It is validated by rendering
+          it, so a reference to a field that does not exist is a 400 here rather than a
+          run error on the bot host.
+        example: Bạn là {{.DisplayName}}...
+        type: string
+      recent_memory:
+        description: RecentMemory is how many recent posts feed the repetition guard;
+          0 disables it.
+        example: 5
+        type: integer
+      temperature:
+        description: Temperature is Gemini's sampling temperature, 0 to 2.
+        example: 1
+        type: number
     type: object
   dto.UpdatePostRequest:
     properties:

@@ -22,13 +22,19 @@ type BotBot struct {
 }
 
 type BotConfig struct {
-	ID                  int16              `json:"id"`
-	PostIntervalSeconds int32              `json:"post_interval_seconds"`
-	Accounts            int16              `json:"accounts"`
-	Models              []string           `json:"models"`
-	Paused              bool               `json:"paused"`
-	UpdatedBy           pgtype.UUID        `json:"updated_by"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                   int16              `json:"id"`
+	PostIntervalSeconds  int32              `json:"post_interval_seconds"`
+	Accounts             int16              `json:"accounts"`
+	Models               []string           `json:"models"`
+	Paused               bool               `json:"paused"`
+	UpdatedBy            pgtype.UUID        `json:"updated_by"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	PromptTemplate       string             `json:"prompt_template"`
+	Temperature          float64            `json:"temperature"`
+	MaxTagsPerPost       int16              `json:"max_tags_per_post"`
+	RecentMemory         int16              `json:"recent_memory"`
+	ApiTimeoutSeconds    int16              `json:"api_timeout_seconds"`
+	GeminiTimeoutSeconds int16              `json:"gemini_timeout_seconds"`
 }
 
 type BotRun struct {

@@ -84,12 +84,21 @@ SELECT * FROM bot.config WHERE id = 1;
 -- the only writer and always passes the acting admin.
 -- name: UpdateBotConfig :one
 UPDATE bot.config
-SET post_interval_seconds = COALESCE(sqlc.narg(post_interval_seconds), post_interval_seconds),
-    accounts              = COALESCE(sqlc.narg(accounts), accounts),
-    models                = COALESCE(sqlc.narg(models), models),
-    paused                = COALESCE(sqlc.narg(paused), paused),
-    updated_by            = sqlc.narg(updated_by),
-    updated_at            = NOW()
+SET post_interval_seconds  = COALESCE(sqlc.narg(post_interval_seconds), post_interval_seconds),
+    accounts               = COALESCE(sqlc.narg(accounts), accounts),
+    models                 = COALESCE(sqlc.narg(models), models),
+    paused                 = COALESCE(sqlc.narg(paused), paused),
+    -- prompt_template is COALESCE'd like the rest, but note that '' is a value here
+    -- rather than an omission: it is how an operator reverts to the bot's built-in
+    -- default. Only SQL NULL means "unchanged".
+    prompt_template        = COALESCE(sqlc.narg(prompt_template), prompt_template),
+    temperature            = COALESCE(sqlc.narg(temperature), temperature),
+    max_tags_per_post      = COALESCE(sqlc.narg(max_tags_per_post), max_tags_per_post),
+    recent_memory          = COALESCE(sqlc.narg(recent_memory), recent_memory),
+    api_timeout_seconds    = COALESCE(sqlc.narg(api_timeout_seconds), api_timeout_seconds),
+    gemini_timeout_seconds = COALESCE(sqlc.narg(gemini_timeout_seconds), gemini_timeout_seconds),
+    updated_by             = sqlc.narg(updated_by),
+    updated_at             = NOW()
 WHERE id = 1
 RETURNING *;
 
