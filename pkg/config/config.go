@@ -18,7 +18,8 @@ type Config struct {
 	Storage      StorageConfig
 	Root         RootConfig
 	Redis        RedisConfig
-	FeedTimeline FeedTimelineConfig
+	FeedFanout   FeedFanoutConfig
+	Settings     SettingsConfig
 	Codohue      CodohueConfig
 	Mailer       MailerConfig
 }
@@ -70,18 +71,33 @@ type RedisConfig struct {
 	PoolSize int
 }
 
-// FeedTimelineConfig holds configuration for precomputed feed timelines and
-// in-process fanout workers.
-type FeedTimelineConfig struct {
-	TimelineEnabled        bool
-	TimelineRolloutPercent int
-	TimelineMaxItems       int
-	TimelineTTL            time.Duration
-	FanoutEnabled          bool
-	FanoutWorkers          int
-	FanoutQueueSize        int
-	FanoutMaxFollowers     int
-	RefreshOnMiss          bool
+// FeedFanoutConfig is what is left of the old FEED_* group after the rest moved
+// into settings.feed: the two knobs that size the in-process fanout machinery.
+//
+// They stayed in the environment because they are allocated once, at
+// construction — Workers starts that many goroutines and QueueSize fixes the
+// channel's capacity. A stored value for either would present a knob that appears
+// to change something and does not, until the next restart, which is a worse
+// deal than a variable that is honest about needing one.
+//
+// Everything else the feed does — whether timelines are served, to whom, how many
+// entries they hold, whether fanout runs at all, and the three ranking weights —
+// is in settings.feed and editable through PATCH /admin/settings/feed.
+type FeedFanoutConfig struct {
+	Workers   int
+	QueueSize int
+}
+
+// SettingsConfig configures how the process reads its database-stored settings.
+//
+// This one cannot itself live in the database: it is the setting that says how
+// often to read the settings, and a stored value would only take effect after a
+// read performed at the interval it was trying to change.
+type SettingsConfig struct {
+	// RefreshInterval is how often each instance re-reads settings.feed. It bounds
+	// how long a change made through the admin API takes to reach an instance that
+	// did not serve the request — the one that did applies it immediately.
+	RefreshInterval time.Duration
 }
 
 // RootConfig holds bootstrap configuration for the initial root/admin account.
@@ -212,7 +228,8 @@ func Load() (*Config, error) {
 		Storage:      loadStorageConfig(),
 		Root:         loadRootConfig(),
 		Redis:        loadRedisConfig(),
-		FeedTimeline: loadFeedTimelineConfig(),
+		FeedFanout:   loadFeedFanoutConfig(),
+		Settings:     loadSettingsConfig(),
 		Codohue:      loadCodohueConfig(),
 		Mailer:       loadMailerConfig(),
 	}
@@ -284,23 +301,19 @@ func (c *Config) Validate() error {
 	if c.RefreshToken.Expiry <= 0 {
 		return fmt.Errorf("refresh token expiry must be positive")
 	}
-	if c.FeedTimeline.TimelineRolloutPercent < 0 || c.FeedTimeline.TimelineRolloutPercent > 100 {
-		return fmt.Errorf("feed timeline rollout percent must be between 0 and 100")
-	}
-	if c.FeedTimeline.TimelineMaxItems < 1 {
-		return fmt.Errorf("feed timeline max items must be at least 1")
-	}
-	if c.FeedTimeline.TimelineTTL <= 0 {
-		return fmt.Errorf("feed timeline TTL must be positive")
-	}
-	if c.FeedTimeline.FanoutWorkers < 1 {
+	if c.FeedFanout.Workers < 1 {
 		return fmt.Errorf("feed fanout workers must be at least 1")
 	}
-	if c.FeedTimeline.FanoutQueueSize < 1 {
+	if c.FeedFanout.QueueSize < 1 {
 		return fmt.Errorf("feed fanout queue size must be at least 1")
 	}
-	if c.FeedTimeline.FanoutMaxFollowers < 1 {
-		return fmt.Errorf("feed fanout max followers must be at least 1")
+	// The rollout percent, TTL and item-count checks that used to sit here moved
+	// to entity.FeedSettingsUpdate.Validate and to the CHECKs on settings.feed —
+	// the values are no longer read from the environment, so there is nothing left
+	// here to validate. A bad value is now a 400 from the admin API instead of a
+	// startup failure, which is the right trade for a knob that changes hourly.
+	if c.Settings.RefreshInterval <= 0 {
+		return fmt.Errorf("settings refresh interval must be positive")
 	}
 
 	return nil

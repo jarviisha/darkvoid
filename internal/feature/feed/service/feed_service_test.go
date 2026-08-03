@@ -157,6 +157,17 @@ func (m *mockRecommender) GetRecommendations(_ context.Context, _ string, limit 
 	return &feed.RecommendationPage{Items: m.items[offset:end], Limit: limit, Offset: offset, Total: len(m.items)}, nil
 }
 
+// timelineSettings builds the snapshot the rollout gates read from. The service
+// consults it per request, so these are the settings in force for the call under
+// test rather than the ones it was constructed with.
+func timelineSettings(enabled bool, rolloutPercent int, refreshOnMiss bool) *feed.Settings {
+	rs := feed.DefaultRuntimeSettings()
+	rs.TimelineEnabled = enabled
+	rs.TimelineRolloutPercent = rolloutPercent
+	rs.TimelineRefreshOnMiss = refreshOnMiss
+	return feed.NewSettings(rs)
+}
+
 func newTestService(posts *mockPostReader, ranker feed.Ranker) *FeedService {
 	return NewFeedService(
 		posts,
@@ -462,7 +473,7 @@ func TestGetFeed_TimelineRolloutGateDisablesPreparedTimelineRead(t *testing.T) {
 
 	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{fallbackPost.ID: 1}})
 	svc.WithTimelineStore(store)
-	svc.WithTimelineOptions(false, 100, true)
+	svc.WithSettings(timelineSettings(false, 100, true))
 
 	page, _, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -485,7 +496,7 @@ func TestGetFeed_TimelineRefreshOnMissGate(t *testing.T) {
 	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
 	svc.WithTimelineStore(store)
 	svc.WithTimelineRefresher(refresher)
-	svc.WithTimelineOptions(true, 100, false)
+	svc.WithSettings(timelineSettings(true, 100, false))
 
 	if _, _, err := svc.GetFeed(context.Background(), userID, nil); err != nil {
 		t.Fatalf("GetFeed: %v", err)

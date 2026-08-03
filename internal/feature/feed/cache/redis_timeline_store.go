@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
@@ -22,20 +21,19 @@ func timelineKey(userID uuid.UUID) string {
 }
 
 // RedisTimelineStore stores prepared feed timelines in Redis sorted sets.
+//
+// The retention limits are read per write rather than captured at construction,
+// so lowering them starts reclaiming memory on the next fanout instead of on the
+// next restart. Note that a lowered TTL only applies to keys written after the
+// change: Redis holds one expiry per key, and existing timelines keep the one
+// they were last given until something writes to them again.
 type RedisTimelineStore struct {
 	client   *pkgredis.Client
-	maxItems int
-	ttl      time.Duration
+	settings *feed.Settings
 }
 
-func NewRedisTimelineStore(client *pkgredis.Client, maxItems int, ttl time.Duration) *RedisTimelineStore {
-	if maxItems <= 0 {
-		maxItems = 1000
-	}
-	if ttl <= 0 {
-		ttl = 7 * 24 * time.Hour
-	}
-	return &RedisTimelineStore{client: client, maxItems: maxItems, ttl: ttl}
+func NewRedisTimelineStore(client *pkgredis.Client, settings *feed.Settings) *RedisTimelineStore {
+	return &RedisTimelineStore{client: client, settings: settings}
 }
 
 func (s *RedisTimelineStore) AddPost(ctx context.Context, userID uuid.UUID, entry feed.TimelineEntry) error {
@@ -64,10 +62,11 @@ func (s *RedisTimelineStore) writeBatch(ctx context.Context, userID uuid.UUID, e
 		})
 	}
 
+	maxItems, ttl := s.settings.TimelineWriteLimits()
 	pipe := s.client.Pipeline()
 	pipe.ZAddArgs(ctx, key, redis.ZAddArgs{NX: nx, Members: members})
-	pipe.ZRemRangeByRank(ctx, key, 0, int64(-s.maxItems-1))
-	pipe.Expire(ctx, key, s.ttl)
+	pipe.ZRemRangeByRank(ctx, key, 0, int64(-maxItems-1))
+	pipe.Expire(ctx, key, ttl)
 	if _, err := pipe.Exec(ctx); err != nil {
 		feed.ObserveRedisError(err)
 		return fmt.Errorf("redis timeline write batch: %w", err)
@@ -125,7 +124,8 @@ func (s *RedisTimelineStore) ReadPage(ctx context.Context, userID uuid.UUID, aft
 }
 
 func (s *RedisTimelineStore) Trim(ctx context.Context, userID uuid.UUID) error {
-	if err := s.client.ZRemRangeByRank(ctx, timelineKey(userID), 0, int64(-s.maxItems-1)).Err(); err != nil {
+	maxItems, _ := s.settings.TimelineWriteLimits()
+	if err := s.client.ZRemRangeByRank(ctx, timelineKey(userID), 0, int64(-maxItems-1)).Err(); err != nil {
 		feed.ObserveRedisError(err)
 		return fmt.Errorf("redis timeline trim: %w", err)
 	}

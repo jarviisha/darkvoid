@@ -14,6 +14,16 @@ type recordingEventHandler struct {
 	err    error
 }
 
+// fanoutDisabledSettings is the snapshot an operator produces by flipping the
+// fanout kill switch off. Note the workers still start — that is deliberate, so
+// flipping it back on does not race a worker pool coming up — which is why the
+// tests below assert on Dispatch's return rather than on worker absence.
+func fanoutDisabledSettings() RuntimeSettings {
+	rs := DefaultRuntimeSettings()
+	rs.FanoutEnabled = false
+	return rs
+}
+
 func (h *recordingEventHandler) HandleFeedEvent(_ context.Context, event Event) error {
 	if h.events != nil {
 		h.events <- event
@@ -23,8 +33,9 @@ func (h *recordingEventHandler) HandleFeedEvent(_ context.Context, event Event) 
 
 func TestEventDispatcher_EmitPostCreatedWritesPackedWriteTimeScore(t *testing.T) {
 	handler := &recordingEventHandler{events: make(chan Event, 1)}
-	cfg := DefaultScorerConfig()
-	dispatcher := NewEventDispatcher(true, 1, 1, handler, cfg)
+	rs := DefaultRuntimeSettings()
+	cfg := rs.Scorer
+	dispatcher := NewEventDispatcher(NewSettings(rs), 1, 1, handler)
 	defer dispatcher.Close()
 
 	postID, authorID := uuid.New(), uuid.New()
@@ -51,7 +62,8 @@ func TestEventDispatcher_EmitPostCreatedWritesPackedWriteTimeScore(t *testing.T)
 
 func TestEventDispatcher_DisabledDoesNotEnqueue(t *testing.T) {
 	handler := &recordingEventHandler{events: make(chan Event, 1)}
-	dispatcher := NewEventDispatcher(false, 1, 1, handler, DefaultScorerConfig())
+	dispatcher := NewEventDispatcher(NewSettings(fanoutDisabledSettings()), 1, 1, handler)
+	defer dispatcher.Close()
 
 	if dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
 		t.Fatal("disabled dispatcher should not enqueue")
@@ -63,7 +75,7 @@ func TestEventDispatcher_DisabledDoesNotEnqueue(t *testing.T) {
 
 func TestEventDispatcher_EnqueueSuccess(t *testing.T) {
 	handler := &recordingEventHandler{events: make(chan Event, 1)}
-	dispatcher := NewEventDispatcher(true, 1, 1, handler, DefaultScorerConfig())
+	dispatcher := NewEventDispatcher(NewSettings(DefaultRuntimeSettings()), 1, 1, handler)
 	defer dispatcher.Close()
 
 	postID := uuid.New()
@@ -82,9 +94,9 @@ func TestEventDispatcher_EnqueueSuccess(t *testing.T) {
 
 func TestEventDispatcher_FullQueueReturnsFalse(t *testing.T) {
 	dispatcher := &EventDispatcher{
-		enabled: true,
-		jobs:    make(chan Event, 1),
-		handler: &recordingEventHandler{},
+		settings: NewSettings(DefaultRuntimeSettings()),
+		jobs:     make(chan Event, 1),
+		handler:  &recordingEventHandler{},
 	}
 	dispatcher.jobs <- Event{Type: EventPostCreated}
 
@@ -95,7 +107,7 @@ func TestEventDispatcher_FullQueueReturnsFalse(t *testing.T) {
 
 func TestEventDispatcher_HandlerErrorIsNonFatal(t *testing.T) {
 	handler := &recordingEventHandler{events: make(chan Event, 1), err: errors.New("boom")}
-	dispatcher := NewEventDispatcher(true, 1, 1, handler, DefaultScorerConfig())
+	dispatcher := NewEventDispatcher(NewSettings(DefaultRuntimeSettings()), 1, 1, handler)
 	defer dispatcher.Close()
 
 	if !dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
@@ -124,7 +136,7 @@ func (h *deadlineCapturingHandler) HandleFeedEvent(ctx context.Context, _ Event)
 
 func TestEventDispatcher_WorkerAppliesPerEventTimeout(t *testing.T) {
 	handler := &deadlineCapturingHandler{done: make(chan struct{})}
-	dispatcher := NewEventDispatcher(true, 1, 1, handler, DefaultScorerConfig())
+	dispatcher := NewEventDispatcher(NewSettings(DefaultRuntimeSettings()), 1, 1, handler)
 	defer dispatcher.Close()
 
 	start := time.Now()
@@ -166,7 +178,7 @@ func TestEventDispatcher_CloseDrainsInFlightEvents(t *testing.T) {
 		release: make(chan struct{}),
 		done:    make(chan struct{}),
 	}
-	dispatcher := NewEventDispatcher(true, 1, 1, handler, DefaultScorerConfig())
+	dispatcher := NewEventDispatcher(NewSettings(DefaultRuntimeSettings()), 1, 1, handler)
 
 	if !dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
 		t.Fatal("dispatch failed")
@@ -200,7 +212,7 @@ func TestEventDispatcher_CloseDrainsInFlightEvents(t *testing.T) {
 }
 
 func TestEventDispatcher_DispatchAfterCloseReturnsFalse(t *testing.T) {
-	dispatcher := NewEventDispatcher(true, 1, 1, &recordingEventHandler{}, DefaultScorerConfig())
+	dispatcher := NewEventDispatcher(NewSettings(DefaultRuntimeSettings()), 1, 1, &recordingEventHandler{})
 	dispatcher.Close()
 	if dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
 		t.Fatal("expected dispatch after Close to return false")

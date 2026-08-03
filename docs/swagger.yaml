@@ -326,6 +326,45 @@ definitions:
         example: một món ăn đường phố Việt Nam đáng nhớ
         type: string
     type: object
+  dto.FeedSettingsResponse:
+    properties:
+      decay_exponent:
+        example: 1.5
+        type: number
+      fanout_enabled:
+        example: true
+        type: boolean
+      fanout_max_followers:
+        example: 10000
+        type: integer
+      recency_scale:
+        example: 20
+        type: number
+      relationship_bonus:
+        example: 10
+        type: number
+      timeline_enabled:
+        example: false
+        type: boolean
+      timeline_max_items:
+        example: 1000
+        type: integer
+      timeline_refresh_on_miss:
+        example: true
+        type: boolean
+      timeline_rollout_percent:
+        example: 0
+        type: integer
+      timeline_ttl_seconds:
+        example: 604800
+        type: integer
+      updated_at:
+        example: "2026-07-27T10:30:00Z"
+        type: string
+      updated_by:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
   dto.FollowListResponse:
     properties:
       data:
@@ -902,6 +941,66 @@ definitions:
         description: Temperature is Gemini's sampling temperature, 0 to 2.
         example: 1
         type: number
+    type: object
+  dto.UpdateFeedSettingsRequest:
+    properties:
+      decay_exponent:
+        description: |-
+          DecayExponent must be greater than 0. At 0 the recency term is the same
+          constant for every post, which removes recency from the formula rather than
+          flattening it — a small exponent is how to ask for a slow decay.
+        example: 1.5
+        type: number
+      fanout_enabled:
+        description: |-
+          FanoutEnabled is the kill switch for writing prepared timelines. The workers
+          stay running and idle, so it is reversible without a restart.
+        example: true
+        type: boolean
+      fanout_max_followers:
+        description: FanoutMaxFollowers bounds how many followers one event writes
+          to.
+        example: 10000
+        type: integer
+      recency_scale:
+        example: 20
+        type: number
+      relationship_bonus:
+        description: "The local ranking weights:\n\n\tscore = log(1+likes)*10 + recency_scale/(1+hours)^decay_exponent
+          + relationship_bonus\n\nThe three components are meant to sit on a comparable
+          scale, which is what\nthe 0-1000 bounds protect: a relationship_bonus far
+          above the others stops\nranking the feed and merely sorts followed authors
+          to the top."
+        example: 10
+        type: number
+      timeline_enabled:
+        description: |-
+          TimelineEnabled gates prepared-timeline serving; TimelineRolloutPercent
+          (0-100) decides for what share of users. They are separate so a rollout can
+          be paused without losing the percentage to return to.
+        example: true
+        type: boolean
+      timeline_max_items:
+        description: |-
+          TimelineMaxItems is entries retained per user timeline, 1-10000. It is a
+          per-user memory cost in Redis, not a global one.
+        example: 1000
+        type: integer
+      timeline_refresh_on_miss:
+        description: |-
+          TimelineRefreshOnMiss lets a miss rebuild that user's timeline inline, on the
+          request goroutine. Turn it off first when a cold cache is making reads slow.
+        example: true
+        type: boolean
+      timeline_rollout_percent:
+        example: 25
+        type: integer
+      timeline_ttl_seconds:
+        description: |-
+          TimelineTTLSeconds is how long a prepared timeline survives without a write,
+          1 second to 90 days.
+        example: 604800
+        type: integer
     type: object
   dto.UpdatePostRequest:
     properties:
@@ -1826,6 +1925,80 @@ paths:
       security:
       - BearerAuth: []
       summary: List assignable roles
+      tags:
+      - admin
+  /admin/settings/feed:
+    get:
+      description: 'Returns the feed knobs that can be changed while the API is running:
+        prepared-timeline serving and its rollout, fanout, and the three local ranking
+        weights. Fanout worker count and queue size are not here — they size a goroutine
+        pool at construction and still require a restart, so they stay in the environment.'
+      operationId: adminGetFeedSettings
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.FeedSettingsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get feed runtime settings
+      tags:
+      - admin
+    patch:
+      consumes:
+      - application/json
+      description: Partial update — an omitted field keeps its stored value, and a
+        body naming no field at all is a 400 rather than an edit that changes nothing.
+        Takes effect on this instance immediately and on any other instance within
+        one refresh interval, without a restart.
+      operationId: adminUpdateFeedSettings
+      parameters:
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateFeedSettingsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.FeedSettingsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update feed runtime settings
       tags:
       - admin
   /admin/stats:

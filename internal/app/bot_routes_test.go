@@ -195,7 +195,7 @@ func TestAdminRegisterRoutes_PutsBotRoutesBehindTheGroupGuard(t *testing.T) {
 	}
 
 	router := chi.NewRouter()
-	(&AdminContext{}).RegisterRoutes(router, auth, newRouteTestBotContext())
+	(&AdminContext{}).RegisterRoutes(router, auth, newRouteTestBotContext(), newRouteTestSettingsContext())
 
 	for _, tt := range []struct{ method, target string }{
 		{http.MethodGet, "/admin/bots/"},

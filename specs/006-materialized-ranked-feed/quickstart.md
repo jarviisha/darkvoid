@@ -37,8 +37,12 @@ make lint
 
 ```bash
 make docker-up
-# .env: ensure FEED_TIMELINE_ENABLED=true, FEED_TIMELINE_ROLLOUT_PERCENT=100,
-#        FEED_FANOUT_ENABLED=true, REDIS_ENABLED=true
+# .env: ensure REDIS_ENABLED=true. The timeline and fanout switches are no longer
+#        environment variables — set them through the admin API instead:
+#   curl -X PATCH -H "Authorization: Bearer $ADMIN_TOKEN" \
+#        -H 'Content-Type: application/json' \
+#        -d '{"timeline_enabled":true,"timeline_rollout_percent":100,"fanout_enabled":true}' \
+#        localhost:8080/api/v1/admin/settings/feed
 
 # 1. Log in as a user following at least one author; call feed once to trigger lazy refresh:
 curl -s -H "Authorization: Bearer $TOKEN" 'localhost:8080/api/v1/feed' | jq '.data[].id'

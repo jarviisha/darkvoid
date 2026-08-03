@@ -7,10 +7,11 @@ import (
 
 // RegisterRoutes registers all /admin/* routes.
 //
-// The bot context mounts its operator routes inside this group so /admin/bots/*
-// inherits the auth and role check below. A sibling /admin/bots route would resolve
-// fine but would not inherit them, leaving that surface unauthenticated.
-func (ctx *AdminContext) RegisterRoutes(r chi.Router, auth appMiddleware.AuthMiddleware, bot *BotContext) {
+// The bot and settings contexts mount their operator routes inside this group so
+// /admin/bots/* and /admin/settings/* inherit the auth and role check below. A
+// sibling /admin/bots or /admin/settings route would resolve fine but would not
+// inherit them, leaving that surface unauthenticated.
+func (ctx *AdminContext) RegisterRoutes(r chi.Router, auth appMiddleware.AuthMiddleware, bot *BotContext, settings *SettingsContext) {
 	r.Route("/admin", func(r chi.Router) {
 		r.Use(auth.Required)
 		r.Use(appMiddleware.RequireRole(ctx.adminService, adminRoleName))
@@ -26,5 +27,6 @@ func (ctx *AdminContext) RegisterRoutes(r chi.Router, auth appMiddleware.AuthMid
 		r.Post("/notifications/broadcast", ctx.adminHandler.BroadcastNotification)
 
 		bot.registerAdminRoutes(r)
+		settings.registerAdminRoutes(r)
 	})
 }

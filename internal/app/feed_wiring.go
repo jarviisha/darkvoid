@@ -22,7 +22,7 @@ func (app *Application) setupFeedContext(store storage.Storage) *codohue.Client 
 		store,
 		postReader, followReader, likeReader,
 		app.redis, app.codohueEventsClient(),
-		app.cfg.FeedTimeline, app.cfg.Codohue,
+		app.cfg.FeedFanout, app.cfg.Codohue,
 	)
 	app.log.Info("feed context initialized",
 		"redis_cache", app.redis != nil,

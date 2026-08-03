@@ -34,14 +34,11 @@ type FeedService struct {
 	refresher       feed.TimelineRefresher
 	recommender     feed.Recommender     // optional: nil = no CF augmentation
 	trendingFetcher feed.TrendingFetcher // optional: nil = use local DB trending
-	timelineOptions timelineOptions
-}
-
-type timelineOptions struct {
-	configured     bool
-	servingEnabled bool
-	rolloutPercent int
-	refreshOnMiss  bool
+	// settings carries the timeline rollout gates. Nil means "no gates" — the
+	// pre-rollout behaviour the tests that predate this rely on — which is why the
+	// checks below test the pointer rather than calling Get and reading a default
+	// that would gate them off.
+	settings *feed.Settings
 }
 
 // NewFeedService creates a new FeedService.
@@ -76,14 +73,12 @@ func (s *FeedService) WithTimelineRefresher(refresher feed.TimelineRefresher) {
 	s.refresher = refresher
 }
 
-// WithTimelineOptions configures rollout gates for prepared timeline reads.
-func (s *FeedService) WithTimelineOptions(servingEnabled bool, rolloutPercent int, refreshOnMiss bool) {
-	s.timelineOptions = timelineOptions{
-		configured:     true,
-		servingEnabled: servingEnabled,
-		rolloutPercent: normalizeRolloutPercent(rolloutPercent),
-		refreshOnMiss:  refreshOnMiss,
-	}
+// WithSettings attaches the live settings holder that gates prepared timeline
+// reads. Once attached, every read consults the current snapshot, so an operator
+// raising the rollout percent takes effect on the next request rather than the
+// next restart.
+func (s *FeedService) WithSettings(settings *feed.Settings) {
+	s.settings = settings
 }
 
 // GetFeed returns the cursor-paginated mixed feed for userID.
@@ -155,17 +150,18 @@ func (s *FeedService) timelineReadAllowed(userID uuid.UUID) bool {
 	if s.timelineStore == nil {
 		return false
 	}
-	if !s.timelineOptions.configured {
+	if s.settings == nil {
 		return true
 	}
-	return s.timelineOptions.servingEnabled && inRollout(userID, s.timelineOptions.rolloutPercent)
+	rs := s.settings.Get()
+	return rs.TimelineEnabled && inRollout(userID, rs.TimelineRolloutPercent)
 }
 
 func (s *FeedService) refreshOnMissAllowed() bool {
-	if !s.timelineOptions.configured {
+	if s.settings == nil {
 		return true
 	}
-	return s.timelineOptions.refreshOnMiss
+	return s.settings.Get().TimelineRefreshOnMiss
 }
 
 func normalizeRolloutPercent(percent int) int {

@@ -9,6 +9,15 @@ import (
 	"github.com/google/uuid"
 )
 
+// settingsWithFanoutCap builds the snapshot a worker reads its follower cap from.
+// The cap is no longer a constructor argument — it is read per event, so an
+// operator lowering it during an incident takes effect on the next post.
+func settingsWithFanoutCap(maxFollowers int) *Settings {
+	rs := DefaultRuntimeSettings()
+	rs.FanoutMaxFollowers = maxFollowers
+	return NewSettings(rs)
+}
+
 type mockFollowerReader struct {
 	ids []uuid.UUID
 	err error
@@ -60,7 +69,7 @@ func TestFanoutWorker_PostCreatedWritesFollowers(t *testing.T) {
 	followerA, followerB := uuid.New(), uuid.New()
 	postID := uuid.New()
 	store := &recordingTimelineStore{}
-	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{followerA, followerB}}, store, 10)
+	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{followerA, followerB}}, store, settingsWithFanoutCap(10))
 
 	err := worker.HandleFeedEvent(context.Background(), Event{
 		Type:      EventPostCreated,
@@ -83,7 +92,7 @@ func TestFanoutWorker_PostCreatedWritesFollowers(t *testing.T) {
 func TestFanoutWorker_MaxFollowerCap(t *testing.T) {
 	followers := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
 	store := &recordingTimelineStore{}
-	worker := NewFanoutWorker(&mockFollowerReader{ids: followers}, store, 2)
+	worker := NewFanoutWorker(&mockFollowerReader{ids: followers}, store, settingsWithFanoutCap(2))
 
 	if err := worker.HandleFeedEvent(context.Background(), Event{Type: EventPostCreated, PostID: uuid.New(), AuthorID: uuid.New(), Score: 1}); err != nil {
 		t.Fatalf("HandleFeedEvent: %v", err)
@@ -97,7 +106,7 @@ func TestFanoutWorker_TimelineErrorsAreReturned(t *testing.T) {
 	worker := NewFanoutWorker(
 		&mockFollowerReader{ids: []uuid.UUID{uuid.New()}},
 		&recordingTimelineStore{err: errors.New("redis down")},
-		10,
+		settingsWithFanoutCap(10),
 	)
 	if err := worker.HandleFeedEvent(context.Background(), Event{Type: EventPostCreated, PostID: uuid.New(), AuthorID: uuid.New(), Score: 1}); err == nil {
 		t.Fatal("expected timeline error")
@@ -106,7 +115,7 @@ func TestFanoutWorker_TimelineErrorsAreReturned(t *testing.T) {
 
 func TestFanoutWorker_IgnoresNonPostCreatedEvents(t *testing.T) {
 	store := &recordingTimelineStore{}
-	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{uuid.New()}}, store, 10)
+	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{uuid.New()}}, store, settingsWithFanoutCap(10))
 	if err := worker.HandleFeedEvent(context.Background(), Event{Type: EventFollowCreated}); err != nil {
 		t.Fatalf("HandleFeedEvent: %v", err)
 	}
@@ -146,7 +155,7 @@ func (s *flakyTimelineStore) RemovePostBestEffort(_ context.Context, _ uuid.UUID
 func TestFanoutWorker_PartialFailureContinuesAndSucceeds(t *testing.T) {
 	good1, bad, good2 := uuid.New(), uuid.New(), uuid.New()
 	store := &flakyTimelineStore{failFor: map[uuid.UUID]bool{bad: true}}
-	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{good1, bad, good2}}, store, 10)
+	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{good1, bad, good2}}, store, settingsWithFanoutCap(10))
 
 	err := worker.HandleFeedEvent(context.Background(), Event{
 		Type: EventPostCreated, PostID: uuid.New(), AuthorID: uuid.New(), Score: 1,
@@ -165,7 +174,7 @@ func TestFanoutWorker_PartialFailureContinuesAndSucceeds(t *testing.T) {
 func TestFanoutWorker_AllFailuresReturnError(t *testing.T) {
 	a, b := uuid.New(), uuid.New()
 	store := &flakyTimelineStore{failFor: map[uuid.UUID]bool{a: true, b: true}}
-	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{a, b}}, store, 10)
+	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{a, b}}, store, settingsWithFanoutCap(10))
 
 	err := worker.HandleFeedEvent(context.Background(), Event{
 		Type: EventPostCreated, PostID: uuid.New(), AuthorID: uuid.New(), Score: 1,
@@ -178,7 +187,7 @@ func TestFanoutWorker_AllFailuresReturnError(t *testing.T) {
 func TestFanoutWorker_SkipsNilFollowerIDs(t *testing.T) {
 	real := uuid.New()
 	store := &recordingTimelineStore{}
-	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{uuid.Nil, real, uuid.Nil}}, store, 10)
+	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{uuid.Nil, real, uuid.Nil}}, store, settingsWithFanoutCap(10))
 
 	if err := worker.HandleFeedEvent(context.Background(), Event{Type: EventPostCreated, PostID: uuid.New(), AuthorID: uuid.New(), Score: 1}); err != nil {
 		t.Fatalf("HandleFeedEvent: %v", err)
@@ -191,7 +200,7 @@ func TestFanoutWorker_SkipsNilFollowerIDs(t *testing.T) {
 func TestFanoutWorker_BailsOnContextCancel(t *testing.T) {
 	followers := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
 	store := &recordingTimelineStore{}
-	worker := NewFanoutWorker(&mockFollowerReader{ids: followers}, store, 10)
+	worker := NewFanoutWorker(&mockFollowerReader{ids: followers}, store, settingsWithFanoutCap(10))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before fanout starts
@@ -209,7 +218,7 @@ func TestFanoutWorker_FollowerReaderErrorPropagates(t *testing.T) {
 	worker := NewFanoutWorker(
 		&mockFollowerReader{err: errors.New("db down")},
 		&recordingTimelineStore{},
-		10,
+		settingsWithFanoutCap(10),
 	)
 	err := worker.HandleFeedEvent(context.Background(), Event{Type: EventPostCreated, PostID: uuid.New(), AuthorID: uuid.New(), Score: 1})
 	if err == nil {

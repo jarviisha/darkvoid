@@ -38,6 +38,11 @@ func (app *Application) setupContexts(ctx context.Context) error {
 	}
 	codohueClient := app.setupFeedContext(store)
 	app.wireFeedDependencies()
+	// After the feed context: the settings context owns the feed's runtime knobs,
+	// so it needs the holder the feed just built. Before the server serves, so the
+	// first request already sees the stored values rather than the defaults.
+	app.setupSettingsContext()
+	app.wireSettings()
 	app.wireCodohue(ctx, codohueClient)
 	app.setupNotificationContext(store)
 	app.wireNotificationDependencies()

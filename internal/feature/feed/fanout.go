@@ -10,21 +10,34 @@ import (
 )
 
 // FanoutWorker writes post-created events into followers' prepared timelines.
+//
+// The follower cap is read from settings per event rather than captured here, so
+// lowering it takes effect on the next post instead of the next restart — which
+// is when an operator reaches for it: a single very-followed account flooding the
+// queue is a live incident, not a deployment.
 type FanoutWorker struct {
 	followerReader FollowerReader
 	timeline       TimelineStore
-	maxFollowers   int
+	settings       *Settings
 }
 
-func NewFanoutWorker(followerReader FollowerReader, timeline TimelineStore, maxFollowers int) *FanoutWorker {
-	if maxFollowers <= 0 {
-		maxFollowers = 10000
-	}
+func NewFanoutWorker(followerReader FollowerReader, timeline TimelineStore, settings *Settings) *FanoutWorker {
 	return &FanoutWorker{
 		followerReader: followerReader,
 		timeline:       timeline,
-		maxFollowers:   maxFollowers,
+		settings:       settings,
 	}
+}
+
+// maxFollowers is the current cap. A non-positive stored value falls back to the
+// default rather than to "no followers": the column's CHECK keeps it at 1 or more,
+// so reaching zero here would mean the settings were never loaded, and silently
+// fanning out to nobody is the one outcome that looks like success.
+func (w *FanoutWorker) maxFollowers() int {
+	if n := w.settings.Get().FanoutMaxFollowers; n > 0 {
+		return n
+	}
+	return DefaultRuntimeSettings().FanoutMaxFollowers
 }
 
 func (w *FanoutWorker) HandleFeedEvent(ctx context.Context, event Event) error {
@@ -47,10 +60,11 @@ func (w *FanoutWorker) handlePostCreated(ctx context.Context, event Event) error
 		return fmt.Errorf("get follower IDs: %w", err)
 	}
 	originalFollowerCount := len(followers)
-	if len(followers) > w.maxFollowers {
-		followers = followers[:w.maxFollowers]
+	followerCap := w.maxFollowers()
+	if len(followers) > followerCap {
+		followers = followers[:followerCap]
 		CountFanoutCapped()
-		logger.Info(ctx, "fanout follower list capped", "post_id", event.PostID, "author_id", event.AuthorID, "followers", originalFollowerCount, "cap", w.maxFollowers)
+		logger.Info(ctx, "fanout follower list capped", "post_id", event.PostID, "author_id", event.AuthorID, "followers", originalFollowerCount, "cap", followerCap)
 	}
 	entry := TimelineEntry{PostID: event.PostID, Score: event.Score}
 	var attempted, succeeded, failed int

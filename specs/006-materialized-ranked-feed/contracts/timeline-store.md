@@ -46,8 +46,11 @@ semantics of the rest.
 
 - P1 key: `feed:tl:v2:{userID}`. The v1 prefix `feed:tl:` MUST NOT be written or read after
   P1 ships; v1 keys expire via their TTL.
-- Trim bound `maxItems` and TTL come from `FEED_TIMELINE_MAX_ITEMS` / `FEED_TIMELINE_TTL`
-  as today.
+- Trim bound `maxItems` and TTL are read from the live `feed.Settings` snapshot on every
+  write (columns `timeline_max_items` / `timeline_ttl_seconds` in `settings.feed`, edited
+  through `PATCH /admin/settings/feed`). They were `FEED_TIMELINE_MAX_ITEMS` /
+  `FEED_TIMELINE_TTL` until those moved out of the environment. A lowered TTL applies only
+  to keys written after the change — Redis holds one expiry per key.
 
 ## Nop implementation
 

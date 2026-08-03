@@ -12,6 +12,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// timelineSettings builds the snapshot the store reads its retention limits from.
+// They are no longer constructor arguments — the store reads them per write, so
+// lowering them starts reclaiming memory on the next fanout instead of on the
+// next restart.
+func timelineSettings(maxItems int, ttl time.Duration) *feed.Settings {
+	rs := feed.DefaultRuntimeSettings()
+	rs.TimelineMaxItems = maxItems
+	rs.TimelineTTL = ttl
+	return feed.NewSettings(rs)
+}
+
 func newRedisTimelineStoreForTest(t *testing.T) (*RedisTimelineStore, *pkgredis.Client) {
 	t.Helper()
 	addr := os.Getenv("REDIS_TEST_ADDR")
@@ -25,7 +36,7 @@ func newRedisTimelineStoreForTest(t *testing.T) (*RedisTimelineStore, *pkgredis.
 	if err := client.FlushDB(context.Background()).Err(); err != nil {
 		t.Fatalf("flush redis test DB: %v", err)
 	}
-	return NewRedisTimelineStore(client, 3, time.Hour), client
+	return NewRedisTimelineStore(client, timelineSettings(3, time.Hour)), client
 }
 
 func TestRedisTimelineStore_SetReadTrimAndTTL(t *testing.T) {
@@ -150,7 +161,7 @@ func TestRedisTimelineStore_EqualScoreBlockPagination(t *testing.T) {
 		{PostID: uuid.New(), Score: score},
 	}
 	// The shared helper store trims at 3 items; use one with room for 4.
-	bigStore := NewRedisTimelineStore(client, 10, time.Hour)
+	bigStore := NewRedisTimelineStore(client, timelineSettings(10, time.Hour))
 	if err := bigStore.SetPostsBatch(ctx, userID, members); err != nil {
 		t.Fatalf("SetPostsBatch: %v", err)
 	}
@@ -272,5 +283,113 @@ func TestRedisTimelineStore_MissAndRemoveBestEffort(t *testing.T) {
 	}
 	if len(page.Entries) != 0 {
 		t.Fatalf("entries after remove = %+v, want empty", page.Entries)
+	}
+}
+
+// The retention limits are read per write, so an operator lowering them starts
+// reclaiming memory on the next fanout rather than on the next restart. This is
+// the property the store gained when maxItems and ttl stopped being constructor
+// arguments, and it needs a real Redis to observe: the trim is a ZREMRANGEBYRANK
+// in the write pipeline, not a value the store can be asked for.
+func TestRedisTimelineStore_TrimBoundFollowsSettingsChange(t *testing.T) {
+	ctx := context.Background()
+	addr := os.Getenv("REDIS_TEST_ADDR")
+	if addr == "" {
+		t.Skip("REDIS_TEST_ADDR not set")
+	}
+	_, client := newRedisTimelineStoreForTest(t)
+	defer client.Close() //nolint:errcheck
+
+	settings := timelineSettings(5, time.Hour)
+	store := NewRedisTimelineStore(client, settings)
+	userID := uuid.New()
+
+	entries := make([]feed.TimelineEntry, 5)
+	for i := range entries {
+		entries[i] = feed.TimelineEntry{PostID: uuid.New(), Score: int64(100 * (i + 1))}
+	}
+	if err := store.SetPostsBatch(ctx, userID, entries); err != nil {
+		t.Fatalf("SetPostsBatch: %v", err)
+	}
+	page, err := store.ReadPage(ctx, userID, nil, 10)
+	if err != nil {
+		t.Fatalf("ReadPage: %v", err)
+	}
+	if len(page.Entries) != 5 {
+		t.Fatalf("entries = %d, want 5 under the initial cap", len(page.Entries))
+	}
+
+	rs := feed.DefaultRuntimeSettings()
+	rs.TimelineMaxItems = 2
+	rs.TimelineTTL = time.Hour
+	settings.Set(rs)
+
+	// The next write must trim to the new bound — no new store, no restart.
+	if err = store.AddPost(ctx, userID, feed.TimelineEntry{PostID: uuid.New(), Score: 600}); err != nil {
+		t.Fatalf("AddPost after lowering the cap: %v", err)
+	}
+	page, err = store.ReadPage(ctx, userID, nil, 10)
+	if err != nil {
+		t.Fatalf("ReadPage after lowering the cap: %v", err)
+	}
+	if len(page.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2 — the store is still trimming to the cap it was built with", len(page.Entries))
+	}
+
+	// Trim() reads the same live bound rather than a captured one.
+	rs.TimelineMaxItems = 1
+	settings.Set(rs)
+	if err = store.Trim(ctx, userID); err != nil {
+		t.Fatalf("Trim: %v", err)
+	}
+	page, err = store.ReadPage(ctx, userID, nil, 10)
+	if err != nil {
+		t.Fatalf("ReadPage after Trim: %v", err)
+	}
+	if len(page.Entries) != 1 {
+		t.Fatalf("entries after Trim = %d, want 1", len(page.Entries))
+	}
+}
+
+// A TTL edit reaches keys written after it. Keys already in Redis keep the expiry
+// they were last given — Redis holds one per key — so this asserts the write path,
+// not a retroactive sweep.
+func TestRedisTimelineStore_TTLFollowsSettingsChange(t *testing.T) {
+	ctx := context.Background()
+	if os.Getenv("REDIS_TEST_ADDR") == "" {
+		t.Skip("REDIS_TEST_ADDR not set")
+	}
+	_, client := newRedisTimelineStoreForTest(t)
+	defer client.Close() //nolint:errcheck
+
+	settings := timelineSettings(10, 24*time.Hour)
+	store := NewRedisTimelineStore(client, settings)
+	userID := uuid.New()
+
+	if err := store.AddPost(ctx, userID, feed.TimelineEntry{PostID: uuid.New(), Score: 100}); err != nil {
+		t.Fatalf("AddPost: %v", err)
+	}
+	ttl, err := client.TTL(ctx, timelineKey(userID)).Result()
+	if err != nil {
+		t.Fatalf("TTL: %v", err)
+	}
+	if ttl <= 23*time.Hour {
+		t.Fatalf("initial TTL = %v, want ~24h", ttl)
+	}
+
+	rs := feed.DefaultRuntimeSettings()
+	rs.TimelineMaxItems = 10
+	rs.TimelineTTL = time.Minute
+	settings.Set(rs)
+
+	if err = store.AddPost(ctx, userID, feed.TimelineEntry{PostID: uuid.New(), Score: 200}); err != nil {
+		t.Fatalf("AddPost after lowering the TTL: %v", err)
+	}
+	ttl, err = client.TTL(ctx, timelineKey(userID)).Result()
+	if err != nil {
+		t.Fatalf("TTL after lowering: %v", err)
+	}
+	if ttl > time.Minute {
+		t.Fatalf("TTL after lowering = %v, want at most 1m — the store is still using the TTL it was built with", ttl)
 	}
 }

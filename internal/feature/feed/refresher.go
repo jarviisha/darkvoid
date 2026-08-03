@@ -16,25 +16,37 @@ type TimelineRefresher interface {
 // and recent posts, materializing rank scores so the read path never ranks.
 // This is the background re-rank write path: it overwrites fan-out write-time
 // scores via SetPostsBatch.
+//
+// The item count is read from settings per refresh, so it agrees with what the
+// timeline store trims to. Capturing it here instead would let the two drift
+// apart on an operator's edit — the refresher would write more entries than the
+// store keeps, or fewer than a page needs, and neither shows up as an error.
 type PreparedTimelineRefresher struct {
 	postReader   PostReader
 	followReader FollowReader
 	timeline     TimelineStore
 	ranker       Ranker
-	maxItems     int
+	settings     *Settings
 }
 
-func NewPreparedTimelineRefresher(postReader PostReader, followReader FollowReader, timeline TimelineStore, ranker Ranker, maxItems int) *PreparedTimelineRefresher {
-	if maxItems <= 0 {
-		maxItems = 1000
-	}
+func NewPreparedTimelineRefresher(postReader PostReader, followReader FollowReader, timeline TimelineStore, ranker Ranker, settings *Settings) *PreparedTimelineRefresher {
 	return &PreparedTimelineRefresher{
 		postReader:   postReader,
 		followReader: followReader,
 		timeline:     timeline,
 		ranker:       ranker,
-		maxItems:     maxItems,
+		settings:     settings,
 	}
+}
+
+// maxItems is the current per-timeline entry count. A non-positive stored value
+// falls back to the default rather than to zero, which would refresh every
+// timeline into an empty one and report success.
+func (r *PreparedTimelineRefresher) maxItems() int {
+	if n := r.settings.Get().TimelineMaxItems; n > 0 {
+		return n
+	}
+	return DefaultRuntimeSettings().TimelineMaxItems
 }
 
 func (r *PreparedTimelineRefresher) RefreshTimeline(ctx context.Context, userID uuid.UUID) error {
@@ -63,7 +75,7 @@ func (r *PreparedTimelineRefresher) refreshOne(ctx context.Context, userID uuid.
 		return err
 	}
 	authorIDs = append(authorIDs, userID)
-	posts, err := r.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, nil, int32(r.maxItems)) //nolint:gosec // maxItems is configuration-validated.
+	posts, err := r.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, nil, int32(r.maxItems())) //nolint:gosec // bounded to 1..10000 by the settings.feed CHECK and entity.Validate.
 	if err != nil {
 		return err
 	}

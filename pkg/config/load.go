@@ -197,27 +197,37 @@ func loadRedisConfig() RedisConfig {
 	}
 }
 
-// loadFeedTimelineConfig loads precomputed feed timeline and fanout settings.
+// loadFeedFanoutConfig loads the two fanout knobs that size the in-process worker
+// pool at construction.
 //
-//	FEED_TIMELINE_ENABLED          (default: false)
-//	FEED_TIMELINE_ROLLOUT_PERCENT (default: 0)
-//	FEED_TIMELINE_MAX_ITEMS       (default: 1000)
-//	FEED_TIMELINE_TTL             (default: 168h)
-//	FEED_FANOUT_ENABLED           (default: true)
-//	FEED_FANOUT_WORKERS           (default: 10)
-//	FEED_FANOUT_QUEUE_SIZE        (default: 10000)
-//	FEED_FANOUT_MAX_FOLLOWERS     (default: 10000)
-//	FEED_TIMELINE_REFRESH_ON_MISS (default: true)
-func loadFeedTimelineConfig() FeedTimelineConfig {
-	return FeedTimelineConfig{
-		TimelineEnabled:        getEnvBool("FEED_TIMELINE_ENABLED", false),
-		TimelineRolloutPercent: getEnvInt("FEED_TIMELINE_ROLLOUT_PERCENT", 0),
-		TimelineMaxItems:       getEnvInt("FEED_TIMELINE_MAX_ITEMS", 1000),
-		TimelineTTL:            getEnvDuration("FEED_TIMELINE_TTL", 7*24*time.Hour),
-		FanoutEnabled:          getEnvBool("FEED_FANOUT_ENABLED", true),
-		FanoutWorkers:          getEnvInt("FEED_FANOUT_WORKERS", 10),
-		FanoutQueueSize:        getEnvInt("FEED_FANOUT_QUEUE_SIZE", 10000),
-		FanoutMaxFollowers:     getEnvInt("FEED_FANOUT_MAX_FOLLOWERS", 10000),
-		RefreshOnMiss:          getEnvBool("FEED_TIMELINE_REFRESH_ON_MISS", true),
+//	FEED_FANOUT_WORKERS    (default: 10)
+//	FEED_FANOUT_QUEUE_SIZE (default: 10000)
+//
+// The rest of the old FEED_* group — FEED_TIMELINE_ENABLED,
+// FEED_TIMELINE_ROLLOUT_PERCENT, FEED_TIMELINE_MAX_ITEMS, FEED_TIMELINE_TTL,
+// FEED_TIMELINE_REFRESH_ON_MISS, FEED_FANOUT_ENABLED and
+// FEED_FANOUT_MAX_FOLLOWERS — is no longer read here. Those live in settings.feed
+// and are edited through PATCH /admin/settings/feed, so setting them in the
+// environment now does nothing. See migrations/settings/000002 for why these two
+// stayed behind.
+func loadFeedFanoutConfig() FeedFanoutConfig {
+	return FeedFanoutConfig{
+		Workers:   getEnvInt("FEED_FANOUT_WORKERS", 10),
+		QueueSize: getEnvInt("FEED_FANOUT_QUEUE_SIZE", 10000),
+	}
+}
+
+// loadSettingsConfig loads how often database-stored settings are re-read.
+//
+//	SETTINGS_REFRESH_INTERVAL (default: 30s)
+//
+// 30 seconds is chosen against what these settings are for: an operator watching
+// a graph after nudging a rollout wants the effect inside a minute, and the cost
+// is one indexed one-row SELECT per instance per interval. The instance serving
+// the PATCH does not wait for a tick — this only bounds how far behind its
+// siblings can be.
+func loadSettingsConfig() SettingsConfig {
+	return SettingsConfig{
+		RefreshInterval: getEnvDuration("SETTINGS_REFRESH_INTERVAL", 30*time.Second),
 	}
 }

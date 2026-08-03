@@ -956,6 +956,112 @@
                 }
             }
         },
+        "/admin/settings/feed": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the feed knobs that can be changed while the API is running: prepared-timeline serving and its rollout, fanout, and the three local ranking weights. Fanout worker count and queue size are not here — they size a goroutine pool at construction and still require a restart, so they stay in the environment.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Get feed runtime settings",
+                "operationId": "adminGetFeedSettings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.FeedSettingsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Partial update — an omitted field keeps its stored value, and a body naming no field at all is a 400 rather than an edit that changes nothing. Takes effect on this instance immediately and on any other instance within one refresh interval, without a restart.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Update feed runtime settings",
+                "operationId": "adminUpdateFeedSettings",
+                "parameters": [
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateFeedSettingsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.FeedSettingsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/stats": {
             "get": {
                 "security": [
@@ -4643,6 +4749,59 @@
                 }
             }
         },
+        "dto.FeedSettingsResponse": {
+            "type": "object",
+            "properties": {
+                "decay_exponent": {
+                    "type": "number",
+                    "example": 1.5
+                },
+                "fanout_enabled": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "fanout_max_followers": {
+                    "type": "integer",
+                    "example": 10000
+                },
+                "recency_scale": {
+                    "type": "number",
+                    "example": 20
+                },
+                "relationship_bonus": {
+                    "type": "number",
+                    "example": 10
+                },
+                "timeline_enabled": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "timeline_max_items": {
+                    "type": "integer",
+                    "example": 1000
+                },
+                "timeline_refresh_on_miss": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "timeline_rollout_percent": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "timeline_ttl_seconds": {
+                    "type": "integer",
+                    "example": 604800
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-07-27T10:30:00Z"
+                },
+                "updated_by": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
         "dto.FollowListResponse": {
             "type": "object",
             "properties": {
@@ -5457,6 +5616,59 @@
                     "description": "Temperature is Gemini's sampling temperature, 0 to 2.",
                     "type": "number",
                     "example": 1
+                }
+            }
+        },
+        "dto.UpdateFeedSettingsRequest": {
+            "type": "object",
+            "properties": {
+                "decay_exponent": {
+                    "description": "DecayExponent must be greater than 0. At 0 the recency term is the same\nconstant for every post, which removes recency from the formula rather than\nflattening it — a small exponent is how to ask for a slow decay.",
+                    "type": "number",
+                    "example": 1.5
+                },
+                "fanout_enabled": {
+                    "description": "FanoutEnabled is the kill switch for writing prepared timelines. The workers\nstay running and idle, so it is reversible without a restart.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "fanout_max_followers": {
+                    "description": "FanoutMaxFollowers bounds how many followers one event writes to.",
+                    "type": "integer",
+                    "example": 10000
+                },
+                "recency_scale": {
+                    "type": "number",
+                    "example": 20
+                },
+                "relationship_bonus": {
+                    "description": "The local ranking weights:\n\n\tscore = log(1+likes)*10 + recency_scale/(1+hours)^decay_exponent + relationship_bonus\n\nThe three components are meant to sit on a comparable scale, which is what\nthe 0-1000 bounds protect: a relationship_bonus far above the others stops\nranking the feed and merely sorts followed authors to the top.",
+                    "type": "number",
+                    "example": 10
+                },
+                "timeline_enabled": {
+                    "description": "TimelineEnabled gates prepared-timeline serving; TimelineRolloutPercent\n(0-100) decides for what share of users. They are separate so a rollout can\nbe paused without losing the percentage to return to.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "timeline_max_items": {
+                    "description": "TimelineMaxItems is entries retained per user timeline, 1-10000. It is a\nper-user memory cost in Redis, not a global one.",
+                    "type": "integer",
+                    "example": 1000
+                },
+                "timeline_refresh_on_miss": {
+                    "description": "TimelineRefreshOnMiss lets a miss rebuild that user's timeline inline, on the\nrequest goroutine. Turn it off first when a cold cache is making reads slow.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "timeline_rollout_percent": {
+                    "type": "integer",
+                    "example": 25
+                },
+                "timeline_ttl_seconds": {
+                    "description": "TimelineTTLSeconds is how long a prepared timeline survives without a write,\n1 second to 90 days.",
+                    "type": "integer",
+                    "example": 604800
                 }
             }
         },

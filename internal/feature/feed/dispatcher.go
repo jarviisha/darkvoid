@@ -43,22 +43,27 @@ type EventHandler interface {
 }
 
 // EventDispatcher dispatches feed events to in-process workers.
+//
+// Whether fanout is enabled is read from settings per dispatch, not captured at
+// construction — that is what makes it a kill switch rather than a deploy-time
+// choice. The workers are therefore started whenever a handler is present, even
+// with fanout currently off: an idle worker blocked on an empty channel costs
+// nothing, and starting them lazily would mean the first event after an operator
+// flips the switch races the pool coming up.
+//
+// The two sizing knobs, workers and queueSize, stay construction-time arguments
+// fed from the environment. They allocate goroutines and a channel, so no stored
+// value could take effect without rebuilding this — and a knob that quietly does
+// nothing until the next restart is worse than one that says it needs one.
 type EventDispatcher struct {
-	enabled bool
-	jobs    chan Event
-	handler EventHandler
-	closed  atomic.Bool
-	wg      sync.WaitGroup
-	// writeScore is the rank score given to a brand-new post at fan-out time.
-	// For a fresh post the local formula degenerates to exactly
-	// RecencyScale + RelationshipBonus (zero likes, zero age, author followed
-	// by every fan-out recipient), so the constant is used openly; the
-	// createdAt component of the packed score keeps fan-out writes
-	// newest-first inside this shared rank bucket.
-	writeScore float64
+	settings *Settings
+	jobs     chan Event
+	handler  EventHandler
+	closed   atomic.Bool
+	wg       sync.WaitGroup
 }
 
-func NewEventDispatcher(enabled bool, workers int, queueSize int, handler EventHandler, scorerCfg ScorerConfig) *EventDispatcher {
+func NewEventDispatcher(settings *Settings, workers int, queueSize int, handler EventHandler) *EventDispatcher {
 	if workers <= 0 {
 		workers = 1
 	}
@@ -66,12 +71,11 @@ func NewEventDispatcher(enabled bool, workers int, queueSize int, handler EventH
 		queueSize = 1
 	}
 	d := &EventDispatcher{
-		enabled:    enabled,
-		jobs:       make(chan Event, queueSize),
-		handler:    handler,
-		writeScore: scorerCfg.RecencyScale + scorerCfg.RelationshipBonus,
+		settings: settings,
+		jobs:     make(chan Event, queueSize),
+		handler:  handler,
 	}
-	if enabled && handler != nil {
+	if handler != nil {
 		for i := 0; i < workers; i++ {
 			d.wg.Add(1)
 			go d.worker()
@@ -80,8 +84,22 @@ func NewEventDispatcher(enabled bool, workers int, queueSize int, handler EventH
 	return d
 }
 
+// writeScore is the rank score given to a brand-new post at fan-out time.
+//
+// For a fresh post the local formula degenerates to exactly
+// RecencyScale + RelationshipBonus (zero likes, zero age, author followed by
+// every fan-out recipient), so the constant is used openly; the createdAt
+// component of the packed score keeps fan-out writes newest-first inside this
+// shared rank bucket. Computed per emit rather than once, so that a weight change
+// moves fan-out writes and read-path ranking together — the identity above is
+// only true while both use the same numbers.
+func (d *EventDispatcher) writeScore() float64 {
+	cfg := d.settings.Get().Scorer
+	return cfg.RecencyScale + cfg.RelationshipBonus
+}
+
 func (d *EventDispatcher) Dispatch(ctx context.Context, event Event) bool {
-	if d == nil || !d.enabled || d.handler == nil || d.closed.Load() {
+	if d == nil || d.handler == nil || d.closed.Load() || !d.settings.Get().FanoutEnabled {
 		return false
 	}
 	select {
@@ -128,7 +146,7 @@ func (d *EventDispatcher) EmitPostCreated(ctx context.Context, postID, authorID 
 		AuthorID:   authorID,
 		Visibility: visibility,
 		CreatedAt:  createdAt,
-		Score:      PackTimelineScore(d.writeScore, createdAt),
+		Score:      PackTimelineScore(d.writeScore(), createdAt),
 	})
 	return nil
 }

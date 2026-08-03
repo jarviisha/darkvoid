@@ -24,10 +24,10 @@ Always prefer the `Makefile` — it loads `.env` automatically and scopes migrat
 
 Migrations are **split per module** — each module uses its own `schema_migrations_<module>` table. Connection comes from the same `DB_*` variables the app uses, so only `DB_PASSWORD` has no default and is what the targets check for. There is deliberately no `DATABASE_URL`: golang-migrate wants one URL where the app wants discrete fields, and holding a second copy of the connection details meant a stale one silently migrated the wrong database and still exited 0. The Makefile exports `DB_*` as `PG*` instead and passes `postgres:///?x-migrations-table=…`, letting lib/pq fill in the rest — which also keeps the password out of the migrate process's argv.
 
-- `make migrate-up` — runs user → post → notification → bot in order (`MIGRATION_MODULES`)
-- `make migrate-up-user` / `make migrate-up-post` / `make migrate-up-notification` / `make migrate-up-bot`
+- `make migrate-up` — runs user → post → notification → bot → settings in order (`MIGRATION_MODULES`)
+- `make migrate-up-user` / `make migrate-up-post` / `make migrate-up-notification` / `make migrate-up-bot` / `make migrate-up-settings`
 - `make migrate-down` — rolls back **one** step per module, in `MIGRATION_MODULES_REVERSED` order. Adding a module means editing both lists.
-- `make migrate-create module=post name=add_xxx` — creates a new migration pair (module must be one of `user`, `post`, `notification`, `bot`)
+- `make migrate-create module=post name=add_xxx` — creates a new migration pair (module must be one of `user`, `post`, `notification`, `bot`, `settings`)
 - `make migrate-status` — shows current version for each module
 - `make migrate-force module=user version=N` — recover from dirty state
 - `make db-reset` — destroys docker volumes (prompts for confirmation)
@@ -49,7 +49,7 @@ Because contexts can't depend on each other at construction time, cross-context 
 - **DB cursor pagination** via `(created_at, id) < (cursor_ts, cursor_id)` row value comparison (see `migrations/post/000007_add_feed_cursor_index.up.sql` for the composite partial index).
 - **Page 1**: merge ~60 following posts with cached trending, score+sort, return top 20. **Page 2+**: pure following in DB order, no trending injection. **Discover fallback**: when a user has an empty following feed, cursor hands off seamlessly to `GetDiscoverWithCursor` because `FollowingCursor` and `DiscoverCursor` share fields.
 - **Cache keys**: `following:ids:{userID}` (5m TTL), `trending:posts` (15m TTL). No per-user feed cache. Redis is optional — when `REDIS_ENABLED=false`, a no-op cache is substituted so feature code keeps working.
-- **Scoring**: `score = log(1+likes)*10 + RecencyScale/(1+hours)^decay + RelationshipBonus` with defaults `RelationshipBonus=10, RecencyScale=20, DecayExponent=1.5`. Local ranker is the default; Codohue CF recommender plugs in via `feedSvc.WithRecommender(...)` when `CODOHUE_ENABLED=true`.
+- **Scoring**: `score = log(1+likes)*10 + RecencyScale/(1+hours)^decay + RelationshipBonus`, defaults `RelationshipBonus=10, RecencyScale=20, DecayExponent=1.5`. The three weights are stored in `settings.feed`, not compiled in — see Runtime settings below. Local ranker is the default; Codohue CF recommender plugs in via `feedSvc.WithRecommender(...)` when `CODOHUE_ENABLED=true`.
 
 ### Routing Groups
 
@@ -61,7 +61,7 @@ The same property makes route *nesting* load-bearing for authorization. `BotCont
 
 ### Code Generation
 
-- **sqlc** (`sqlc.yaml`): four separate generators (`user`, `post`, `notification`, `bot`), each emitting to `internal/feature/<module>/db/`. Post and notification include the user schema in their `schema:` list because they reference user tables; bot does not, because it holds foreign ids as plain UUIDs and never joins across schemas. **Do not hand-edit files under `internal/feature/*/db/`** — regenerate via `make sqlc-generate`. Exception: some cursor queries in `internal/feature/post/db/post_queries.sql.go` are hand-patched additions; check the `sql/` source before regenerating, or the edits will be lost.
+- **sqlc** (`sqlc.yaml`): five separate generators (`user`, `post`, `notification`, `bot`, `settings`), each emitting to `internal/feature/<module>/db/`. Post and notification include the user schema in their `schema:` list because they reference user tables; bot and settings do not, because they hold foreign ids as plain UUIDs and never join across schemas. **Do not hand-edit files under `internal/feature/*/db/`** — regenerate via `make sqlc-generate`. Exception: some cursor queries in `internal/feature/post/db/post_queries.sql.go` are hand-patched additions; check the `sql/` source before regenerating, or the edits will be lost.
 - **swag** (`swag init -g cmd/api/main.go`): comments on handlers drive `docs/swagger.json`. The two Swagger UIs are produced by `swaggerFilterHandler` at serve-time based on the `admin` / `auth` tags — not two separate generations.
 
 ### Mail Delivery
@@ -97,7 +97,10 @@ Respect `.golangci.yml` — all production and test code must pass `make lint` b
 
 ## Configuration
 
-All config is loaded from `.env` via `pkg/config`. Update `.env.example` whenever a new variable is added. Keys of note:
+Config splits in two. `pkg/config` loads from `.env` everything a process needs before it can reach anything else — the database, the port, the signing keys, the mail and storage providers. Everything an operator changes while watching a graph lives in the database instead; see **Runtime settings** below and the **Bot control plane**. Update `.env.example` whenever a new variable is added. Keys of note:
+
+- `SETTINGS_REFRESH_INTERVAL` (default `30s`) — how often each instance re-reads `settings.feed`. It cannot itself be a stored setting: it is the setting that says how often to read the settings.
+- `FEED_FANOUT_WORKERS` / `FEED_FANOUT_QUEUE_SIZE` — all that is left of the old `FEED_*` group. They allocate a goroutine pool and a channel at construction, so a stored value could not take effect without rebuilding the dispatcher, and a knob that quietly does nothing until the next restart is a worse deal than one that admits it needs one. `FEED_TIMELINE_ENABLED`, `FEED_TIMELINE_ROLLOUT_PERCENT`, `FEED_TIMELINE_MAX_ITEMS`, `FEED_TIMELINE_TTL`, `FEED_TIMELINE_REFRESH_ON_MISS`, `FEED_FANOUT_ENABLED` and `FEED_FANOUT_MAX_FOLLOWERS` are no longer read.
 
 - `REDIS_ENABLED` — when false, feed cache becomes no-op (feature still works).
 - `CODOHUE_ENABLED` — when false, feed uses local scoring only; CF recommender is off. When true, the client is wired whether or not Codohue answers at startup: an unreachable Codohue is already handled per call (the feed falls back to local scoring, ingest logs and moves on), so gating the wiring on a boot probe only meant a brief outage disabled the feature for the whole process. The probe now just classifies, `GET /health` reports `codohue: off|active|degraded`, and a background monitor re-probes every 2 minutes for the life of the process — not only after a failed boot probe, or `/health` would assert `active` through an outage that started a minute after boot. Nothing is rewired at runtime, so no service field is written once the server is serving. `pkg/codohue` carries a circuit breaker over the HTTP surface: 3 consecutive availability failures open it for 30s, so an outage costs one timeout rather than 2-3s added to every feed request. A 4xx counts as *available* — the service answered, and opening the circuit because one call site sent something malformed would disable the integration for everyone. `Ping` bypasses the gate (a health probe answered from a cached "circuit open" measures nothing) but reports its outcome, so a successful probe closes the circuit at once. `/health` reads the breaker as well as the last probe: the breaker learns of an outage from real traffic within a few requests, where the probe would not notice until its next tick, so an open circuit overrides a stale `active`.
@@ -107,6 +110,20 @@ All config is loaded from `.env` via `pkg/config`. Update `.env.example` wheneve
 - `STORAGE_PROVIDER` — `local` (default, serves `/static/*` from `STORAGE_LOCAL_DIR`) or `s3` (S3/MinIO/GCS).
 - `MAILER_PROVIDER` — `nop` (logs only), `resend`, or `smtp`. A named-but-unconfigured provider (`resend` with no `RESEND_API_KEY`) fails at startup instead of falling back to `nop`: a mailer that only logs looks like a healthy boot while every verification and reset email silently disappears. `resend` talks to `POST /emails` over `net/http` rather than through `resend-go` — the API is one call, and owning it keeps the timeout, retry policy and logging consistent with `pkg/codohue`. Retries cover 429/5xx/transport only; a 4xx is permanent (an unverified sending domain does not become verified on the second try) and returns at once. One `Idempotency-Key` is generated per `Send` and reused across its retries, so a delivered-but-timed-out attempt is not re-sent. No circuit breaker, unlike Codohue: two of the three flows are fire-and-forget goroutines and volume is low, so `http.Client.Timeout` plus bounded retries is enough — but note `SendPasswordReset` *is* in the request path and propagates its error, which is why the per-attempt timeout is load-bearing. The Resend sending domain must be verified (SPF + DKIM) or every send returns 403.
 - `BOT_*` / `GEMINI_API_KEY` — read only by `cmd/bot`, never by the API. They cover credentials and an address and nothing else: interval, persona count, model chain, personas, topics, **and the generation knobs** (prompt template, temperature, max tags, repetition-guard depth, the two HTTP timeouts) live in the `bot` schema and are edited through `/admin/bots`, so the bot re-reads them on every tick. `BOT_ACCOUNTS`, `BOT_POST_INTERVAL`, and `GEMINI_MODELS` are no longer read. Don't add the generation knobs to `.env` — a value in two places disagrees with itself.
+
+### Runtime settings
+
+`settings.feed` holds the feed knobs an operator changes without a redeploy: timeline serving and its rollout percent, retention (`timeline_max_items`, `timeline_ttl_seconds`), `timeline_refresh_on_miss`, the fanout kill switch and follower cap, and the three ranking weights — which were never environment variables at all, just literals in `feed.DefaultScorerConfig`. `GET`/`PATCH /admin/settings/feed` reads and edits them, nested inside the `/admin` group so it inherits that group's auth and admin role check, the same load-bearing nesting as `/admin/bots/*`.
+
+The delivery differs from the bot's. The bot is a separate process and polls `GET /bot/plan`; these settings are consumed in-process, so they land in one `feed.Settings` holder (`atomic.Pointer`) that the read path, the ranker, the timeline store, the refresher and the dispatcher all read. **Nothing captures a value at construction any more** — that was the bug the whole change fixes: five components each held their own copy from `SetupFeedContext`, so no value could change without rebuilding all five.
+
+Three properties are load-bearing:
+
+- **The service publishes on read as well as on write.** The instance serving a `PATCH` applies the snapshot at once; its siblings pick it up from their refresh loop within `SETTINGS_REFRESH_INTERVAL`. Publish-on-write alone would leave a two-instance deployment serving two different rollout percentages until the next restart — the exact failure this replaced.
+- **What is published is the row the database returned, not the request.** A partial update names some fields and inherits the rest, so only the round trip knows the whole new state.
+- **A failed read never fails boot and never clears the snapshot.** The defaults are a working configuration and the last known values stand through an outage; the alternative is taking the API down over a ranking weight. `entity.DefaultFeedSettings`, `feed.DefaultRuntimeSettings` and the column `DEFAULT`s are three copies of the same numbers, pinned together by tests in `settings/entity` and `internal/app` — if they drift, every restart spends a moment ranking on numbers the admin API does not report.
+
+Validation lives in `entity.FeedSettingsUpdate.Validate` and mirrors the `CHECK`s, so a bad value is a 400 naming the field rather than a 500 naming a constraint. It validates rather than clamps: a silently clamped rollout percent reads back as a number the operator did not type. `decay_exponent` rejects 0 specifically — at 0 the recency term is the same constant for every post, which removes recency from the formula instead of flattening it.
 
 ### Bot control plane
 

@@ -7,7 +7,7 @@ SHELL := /bin/bash
 	test test-v test-cover test-cover-html test-feature lint deps \
 	docker-up docker-up-app docker-up-codohue docker-up-bot docker-seed docker-seed-reset \
 	docker-down docker-down-app docker-down-bot docker-logs docker-logs-app docker-logs-bot \
-	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-up-bot migrate-down-notification migrate-create migrate-status migrate-force \
+	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-up-bot migrate-up-settings migrate-down-notification migrate-create migrate-status migrate-force \
 	db-reset install-tools
 
 # Load .env if it exists.
@@ -54,9 +54,9 @@ export PGSSLMODE  := $(DB_SSLMODE)
 
 # migrate-up walks MIGRATION_MODULES forward and migrate-down walks the reversed
 # list, so the two must stay mirror images — adding a module means editing both.
-MIGRATION_MODULES          := user post notification bot
-MIGRATION_MODULES_REVERSED := bot notification post user
-SQLC_DB_DIRS := internal/feature/user/db internal/feature/post/db internal/feature/notification/db internal/feature/bot/db
+MIGRATION_MODULES          := user post notification bot settings
+MIGRATION_MODULES_REVERSED := settings bot notification post user
+SQLC_DB_DIRS := internal/feature/user/db internal/feature/post/db internal/feature/notification/db internal/feature/bot/db internal/feature/settings/db
 
 # Tests the variable through the recipe's environment ($${NAME}) rather than
 # expanding its value into the shell command ($(NAME)). Same result for the
@@ -195,11 +195,11 @@ docker-logs: ## View Docker container logs
 docker-logs-app: ## View app-only Docker container logs
 	$(DOCKER_COMPOSE) logs -f app-external
 
-migrate-up: ## Run all pending migrations (user, post, notification, bot)
+migrate-up: ## Run all pending migrations (user, post, notification, bot, settings)
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up DB_PASSWORD=secret)
 	$(call run_migrations,$(MIGRATION_MODULES),Running,up)
 
-migrate-down: ## Roll back the last migration for all modules (bot, notification, post, user)
+migrate-down: ## Roll back the last migration for all modules (settings, bot, notification, post, user)
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-down DB_PASSWORD=secret)
 	$(call run_migrations,$(MIGRATION_MODULES_REVERSED),Rolling back,down 1)
 
@@ -218,6 +218,10 @@ migrate-up-notification: ## Run pending migrations for notification module only
 migrate-up-bot: ## Run pending migrations for bot module only
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up-bot DB_PASSWORD=secret)
 	$(call migrate_cmd,bot,up)
+
+migrate-up-settings: ## Run pending migrations for settings module only
+	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up-settings DB_PASSWORD=secret)
+	$(call migrate_cmd,settings,up)
 
 migrate-down-notification: ## Roll back the last migration for notification module
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-down-notification DB_PASSWORD=secret)

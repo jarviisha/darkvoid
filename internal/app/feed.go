@@ -22,11 +22,16 @@ type FeedContext struct {
 
 	// Cache is exported so app.go can wire WithTrendingInvalidator into post services.
 	cache feedcache.FeedCache
+
+	// settings is the one holder every component above reads its tunable knobs
+	// from. The settings context writes to it; nothing here ever does.
+	settings *feed.Settings
 }
 
 type FeedPorts struct {
 	Cache      feedcache.FeedCache
 	Dispatcher *feed.EventDispatcher
+	Settings   *feed.Settings
 }
 
 // SetupFeedContext initializes the Feed context with all required dependencies.
@@ -49,7 +54,7 @@ func SetupFeedContext(
 	likeReader feed.LikeReader,
 	redisClient *pkgredis.Client,
 	eventsRedisClient *pkgredis.Client,
-	feedTimelineCfg config.FeedTimelineConfig,
+	feedFanoutCfg config.FeedFanoutConfig,
 	cohodueCfg config.CodohueConfig,
 ) (*FeedContext, *codohue.Client) {
 	// Build cache: Redis when available, no-op otherwise.
@@ -60,23 +65,28 @@ func SetupFeedContext(
 		fc = feedcache.NewNopFeedCache()
 	}
 
-	// One ScorerConfig and one LocalRanker shared by the read path, the
-	// background refresher, and the dispatcher's write-time score, so all
-	// three stay on the same formula.
-	scorerCfg := feed.DefaultScorerConfig()
-	ranker := feed.NewLocalRanker(scorerCfg)
+	// One settings holder shared by the read path, the ranker, the timeline
+	// store, the background refresher and the dispatcher's write-time score, so
+	// all five stay on the same numbers and an operator's edit reaches them
+	// together. It is seeded with the defaults; the settings context replaces
+	// them with the stored row during wiring, before the server starts serving.
+	settings := feed.NewSettings(feed.DefaultRuntimeSettings())
+	ranker := feed.NewLocalRanker(settings)
 	feedSvc := feedservice.NewFeedService(postReader, followReader, likeReader, ranker, fc)
 	var timelineStore feed.TimelineStore
 	if redisClient != nil {
-		timelineStore = feedcache.NewRedisTimelineStore(redisClient, feedTimelineCfg.TimelineMaxItems, feedTimelineCfg.TimelineTTL)
+		timelineStore = feedcache.NewRedisTimelineStore(redisClient, settings)
 	} else {
 		timelineStore = feedcache.NewNopTimelineStore()
 	}
 	feedSvc.WithTimelineStore(timelineStore)
-	feedSvc.WithTimelineOptions(feedTimelineCfg.TimelineEnabled, feedTimelineCfg.TimelineRolloutPercent, feedTimelineCfg.RefreshOnMiss)
-	feedSvc.WithTimelineRefresher(feed.NewPreparedTimelineRefresher(postReader, followReader, timelineStore, ranker, feedTimelineCfg.TimelineMaxItems))
-	fanoutWorker := feed.NewFanoutWorker(followReader, timelineStore, feedTimelineCfg.FanoutMaxFollowers)
-	dispatcher := feed.NewEventDispatcher(feedTimelineCfg.FanoutEnabled, feedTimelineCfg.FanoutWorkers, feedTimelineCfg.FanoutQueueSize, fanoutWorker, scorerCfg)
+	feedSvc.WithSettings(settings)
+	feedSvc.WithTimelineRefresher(feed.NewPreparedTimelineRefresher(postReader, followReader, timelineStore, ranker, settings))
+	fanoutWorker := feed.NewFanoutWorker(followReader, timelineStore, settings)
+	// Workers and queue size stay environment-fed: they allocate a goroutine pool
+	// and a channel here, so a stored value could not take effect without
+	// rebuilding the dispatcher. See migrations/settings/000002.
+	dispatcher := feed.NewEventDispatcher(settings, feedFanoutCfg.Workers, feedFanoutCfg.QueueSize, fanoutWorker)
 
 	// Wire Codohue recommender and trending fetcher into the feed service when enabled.
 	// Wiring Codohue into other contexts (post services) is the caller's responsibility.
@@ -94,9 +104,10 @@ func SetupFeedContext(
 		dispatcher:  dispatcher,
 		feedHandler: feedHdlr,
 		cache:       fc,
+		settings:    settings,
 	}, codohueClient
 }
 
 func (ctx *FeedContext) Ports() FeedPorts {
-	return FeedPorts{Cache: ctx.cache, Dispatcher: ctx.dispatcher}
+	return FeedPorts{Cache: ctx.cache, Dispatcher: ctx.dispatcher, Settings: ctx.settings}
 }

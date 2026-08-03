@@ -7,4 +7,10 @@
 // overlap, so legacy keys are never read again and expire via TTL. Writes have
 // two modes: AddPost (ZADD NX, fan-out — never downgrades a refreshed score)
 // and SetPostsBatch (plain upsert, background re-rank).
+//
+// The trim bound and TTL are read from the live feed.Settings snapshot on each
+// write rather than captured when the store is built, so lowering either starts
+// reclaiming memory on the next fanout. Note the asymmetry: a lowered TTL only
+// applies to keys written after the change, because Redis holds one expiry per
+// key and existing timelines keep theirs until something writes to them again.
 package cache

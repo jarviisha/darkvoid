@@ -10,6 +10,15 @@ import (
 	feedentity "github.com/jarviisha/darkvoid/internal/feature/feed/entity"
 )
 
+// settingsWithMaxItems builds the snapshot a refresher reads its entry count
+// from. It is read per refresh rather than captured at construction, so it cannot
+// drift from what the timeline store trims to.
+func settingsWithMaxItems(maxItems int) *Settings {
+	rs := DefaultRuntimeSettings()
+	rs.TimelineMaxItems = maxItems
+	return NewSettings(rs)
+}
+
 type mockRefreshPostReader struct {
 	posts     []*feedentity.Post
 	lastLimit int32
@@ -75,7 +84,7 @@ func TestPreparedTimelineRefresher_WarmTimelinesWritesRankedPackedEntries(t *tes
 	store := &recordingTimelineStore{}
 	followed := uuid.New()
 	ranker := &stubRefreshRanker{scores: map[string]float64{post.ID.String(): 42.5}}
-	refresher := NewPreparedTimelineRefresher(postReader, &mockRefreshFollowReader{ids: []uuid.UUID{followed}}, store, ranker, 1)
+	refresher := NewPreparedTimelineRefresher(postReader, &mockRefreshFollowReader{ids: []uuid.UUID{followed}}, store, ranker, settingsWithMaxItems(1))
 	userA, userB := uuid.New(), uuid.New()
 
 	if err := refresher.WarmTimelines(context.Background(), []uuid.UUID{userA, userB}); err != nil {
@@ -106,7 +115,7 @@ func TestPreparedTimelineRefresher_RankerErrorPropagates(t *testing.T) {
 		&mockRefreshFollowReader{ids: []uuid.UUID{uuid.New()}},
 		&recordingTimelineStore{},
 		&stubRefreshRanker{err: errors.New("ranker down")},
-		10,
+		settingsWithMaxItems(10),
 	)
 	if err := refresher.RefreshTimeline(context.Background(), uuid.New()); err == nil {
 		t.Fatal("expected ranker error to propagate")
@@ -114,7 +123,7 @@ func TestPreparedTimelineRefresher_RankerErrorPropagates(t *testing.T) {
 }
 
 func TestPreparedTimelineRefresher_NilTimelineNoOps(t *testing.T) {
-	refresher := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, nil, &stubRefreshRanker{}, 10)
+	refresher := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, nil, &stubRefreshRanker{}, settingsWithMaxItems(10))
 	if err := refresher.RefreshTimeline(context.Background(), uuid.New()); err != nil {
 		t.Fatalf("RefreshTimeline with nil store should no-op: %v", err)
 	}
@@ -129,7 +138,7 @@ func TestPreparedTimelineRefresher_FollowReaderErrorPropagates(t *testing.T) {
 		&mockRefreshFollowReader{err: errors.New("follow db down")},
 		&recordingTimelineStore{},
 		&stubRefreshRanker{},
-		10,
+		settingsWithMaxItems(10),
 	)
 	if err := refresher.RefreshTimeline(context.Background(), uuid.New()); err == nil {
 		t.Fatal("expected follow reader error to propagate")
@@ -142,7 +151,7 @@ func TestPreparedTimelineRefresher_PostReaderErrorPropagates(t *testing.T) {
 		&mockRefreshFollowReader{ids: []uuid.UUID{uuid.New()}},
 		&recordingTimelineStore{},
 		&stubRefreshRanker{},
-		10,
+		settingsWithMaxItems(10),
 	)
 	if err := refresher.RefreshTimeline(context.Background(), uuid.New()); err == nil {
 		t.Fatal("expected post reader error to propagate")
@@ -156,7 +165,7 @@ func TestPreparedTimelineRefresher_TimelineWriteErrorPropagates(t *testing.T) {
 		&mockRefreshFollowReader{ids: []uuid.UUID{uuid.New()}},
 		&recordingTimelineStore{err: errors.New("redis down")},
 		&stubRefreshRanker{},
-		10,
+		settingsWithMaxItems(10),
 	)
 	if err := refresher.RefreshTimeline(context.Background(), uuid.New()); err == nil {
 		t.Fatal("expected timeline write error to propagate")
@@ -171,7 +180,7 @@ func TestPreparedTimelineRefresher_WarmTimelinesStopsOnFirstError(t *testing.T) 
 		&mockRefreshFollowReader{ids: []uuid.UUID{uuid.New()}},
 		store,
 		&stubRefreshRanker{},
-		10,
+		settingsWithMaxItems(10),
 	)
 	err := refresher.WarmTimelines(context.Background(), []uuid.UUID{uuid.New(), uuid.New()})
 	if err == nil {
@@ -179,13 +188,47 @@ func TestPreparedTimelineRefresher_WarmTimelinesStopsOnFirstError(t *testing.T) 
 	}
 }
 
+// A non-positive stored item count must read as the default, not as zero.
+// Refreshing every timeline into an empty one is the failure that looks like
+// success — SetPostsBatch is called, no error is returned, and the feed simply
+// starts missing.
 func TestPreparedTimelineRefresher_DefaultMaxItems(t *testing.T) {
-	r := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, &recordingTimelineStore{}, &stubRefreshRanker{}, 0)
-	if r.maxItems != 1000 {
-		t.Fatalf("maxItems with 0 input = %d, want default 1000", r.maxItems)
+	for name, settings := range map[string]*Settings{
+		"zero":     settingsWithMaxItems(0),
+		"negative": settingsWithMaxItems(-5),
+		"nil":      nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, &recordingTimelineStore{}, &stubRefreshRanker{}, settings)
+			if got := r.maxItems(); got != 1000 {
+				t.Fatalf("maxItems() = %d, want default 1000", got)
+			}
+		})
 	}
-	r2 := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, &recordingTimelineStore{}, &stubRefreshRanker{}, -5)
-	if r2.maxItems != 1000 {
-		t.Fatalf("maxItems with negative input = %d, want default 1000", r2.maxItems)
+}
+
+// The count is read per refresh, so an operator's edit reaches the next refresh
+// rather than the next restart.
+func TestPreparedTimelineRefresher_MaxItemsFollowsSettingsChange(t *testing.T) {
+	settings := settingsWithMaxItems(50)
+	postReader := &mockRefreshPostReader{}
+	r := NewPreparedTimelineRefresher(postReader, &mockRefreshFollowReader{}, &recordingTimelineStore{}, &stubRefreshRanker{}, settings)
+
+	if err := r.RefreshTimeline(context.Background(), uuid.New()); err != nil {
+		t.Fatalf("RefreshTimeline: %v", err)
+	}
+	if postReader.lastLimit != 50 {
+		t.Fatalf("read limit = %d, want 50", postReader.lastLimit)
+	}
+
+	rs := DefaultRuntimeSettings()
+	rs.TimelineMaxItems = 7
+	settings.Set(rs)
+
+	if err := r.RefreshTimeline(context.Background(), uuid.New()); err != nil {
+		t.Fatalf("RefreshTimeline after settings change: %v", err)
+	}
+	if postReader.lastLimit != 7 {
+		t.Fatalf("read limit after settings change = %d, want 7", postReader.lastLimit)
 	}
 }
