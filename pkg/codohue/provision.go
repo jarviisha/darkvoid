@@ -10,18 +10,25 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/jarviisha/codohue/pkg/codohuetypes"
 )
 
 const maxProvisionErrorBodyBytes = 1 << 20
 
 // Dense-source modes selectable via CODOHUE_DENSE_SOURCE.
+//
+// These alias the constants Codohue exports as of codohuetypes v0.5.0 rather
+// than restating the literals: the wire values are the server's to define, and
+// a local copy is exactly the kind of thing that drifts silently — a renamed
+// mode would keep compiling here and fail at provisioning time.
 const (
 	// DenseSourceBYOE — darkvoid computes TF-IDF vectors locally and pushes
 	// them through the BYOE embedding endpoints.
-	DenseSourceBYOE = "byoe"
+	DenseSourceBYOE = codohuetypes.DenseSourceBYOE
 	// DenseSourceCatalog — darkvoid publishes raw post content to Codohue's
 	// catalog pipeline; the server embeds it asynchronously.
-	DenseSourceCatalog = "catalog"
+	DenseSourceCatalog = codohuetypes.DenseSourceCatalog
 )
 
 // catalogStrategyID/Version pin Codohue's built-in deterministic hashing
@@ -83,8 +90,17 @@ type catalogConfigPayload struct {
 // ProvisionNamespaceConfig upserts Darkvoid's Codohue namespace config through
 // Codohue's admin plane. The admin API is session-authenticated: the admin key
 // is exchanged for a session cookie (POST /api/v1/auth/sessions), which then
-// authorizes the namespace upsert (PUT /api/admin/v1/namespaces/{ns}). The
-// official runtime SDK intentionally does not wrap these operator-facing routes.
+// authorizes the namespace upsert (PUT /api/admin/v1/namespaces/{ns}).
+//
+// Codohue v0.8.0 added two alternatives and darkvoid takes neither yet. Bearer
+// auth on the admin plane would drop the login round trip, but session cookies
+// are still accepted, so switching is a cleanup with no behavior to gain. The
+// new sdk/go/admin package wraps provisioning in one request — but only for
+// catalog mode, and it sends action_weights, alpha and dense_distance only.
+// Adopting it as-is would drop the byoe path entirely and leave lambda, gamma,
+// max_results, seen_items_days and the three trending knobs below at whatever
+// the server defaults to, which is a config regression disguised as a
+// dependency upgrade. Revisit when the admin SDK covers the full payload.
 func ProvisionNamespaceConfig(ctx context.Context, cfg NamespaceProvisionConfig) (*NamespaceProvisionResult, error) {
 	if cfg.AdminBaseURL == "" {
 		return nil, fmt.Errorf("codohue: admin base URL is required")

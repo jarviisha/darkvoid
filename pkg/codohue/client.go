@@ -27,11 +27,24 @@ const (
 	ActionSkip    Action = "SKIP" // negative signal, e.g. unlike
 )
 
-// RankedItem holds an object ID and its CF relevance score returned by /v1/rank.
-// Score is in the range [0, 1]; 0 means no interaction history for the item.
+// RankedItem holds an object ID and its CF relevance score returned by the
+// rankings endpoint.
+//
+// Read Scored before Score. Since Codohue v0.8.0 a returned candidate can mean
+// two different things: Scored true is a real relevance verdict (a low or zero
+// score says the engine looked and found little), Scored false means the item
+// came back unscored so the candidate list stays whole — the subject has no
+// vector, the item was never indexed, or an eligibility filter (recently seen,
+// exclude_authored) took it out. Treating those as score 0 would blend
+// "excluded" and "irrelevant" into the same number.
+//
+// Score is no longer per-request min-max normalized either: v0.8.0 maps it with
+// x/(x+k), which is batch-independent and comparable across calls, but not
+// comparable with values recorded before the upgrade.
 type RankedItem struct {
 	ObjectID string
 	Score    float64
+	Scored   bool
 }
 
 // Client communicates with the Codohue recommendation service.
@@ -137,7 +150,14 @@ func recommendationPageFromResponse(resp *codohuetypes.Response) *feed.Recommend
 	}
 }
 
-// Rank calls POST /rank and returns CF-scored candidates sorted by relevance.
+// Rank calls the rankings endpoint and returns hybrid-scored candidates sorted
+// by relevance.
+//
+// resp.Source is logged rather than returned: "hybrid_rank" means the subject
+// was scored, "no_subject_vector" means it had no vector at all and every item
+// comes back Scored=false in the original request order. Callers that need to
+// tell those apart can read Scored per item, which covers the per-item
+// exclusions (seen, authored) the response source does not.
 func (c *Client) Rank(ctx context.Context, subjectID string, candidates []string) ([]RankedItem, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -150,9 +170,16 @@ func (c *Client) Rank(ctx context.Context, subjectID string, candidates []string
 	}
 
 	ranked := make([]RankedItem, len(resp.Items))
+	scored := 0
 	for i, item := range resp.Items {
-		ranked[i] = RankedItem{ObjectID: item.ObjectID, Score: item.Score}
+		ranked[i] = RankedItem{ObjectID: item.ObjectID, Score: item.Score, Scored: item.Scored}
+		if item.Scored {
+			scored++
+		}
 	}
+
+	logger.Debug(ctx, "codohue rank completed",
+		"source", resp.Source, "candidates", len(candidates), "returned", len(ranked), "scored", scored, "subject_id", subjectID)
 	return ranked, nil
 }
 
