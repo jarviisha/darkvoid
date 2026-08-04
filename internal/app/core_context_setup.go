@@ -5,9 +5,15 @@ import (
 )
 
 func (app *Application) setupUserContext(store storage.Storage, mail *mailInfra) {
-	app.User = SetupUserContext(app.pool, app.jwtService, store, app.cfg.RefreshToken.Expiry, !app.cfg.IsDevelopment(), mail)
+	app.User = SetupUserContext(app.pool, app.jwtService, store, app.cfg.RefreshToken.Expiry, app.cfg.Cookie, mail)
+	// The resolved cookie attributes are logged, not the raw variables: Secure is
+	// derived from ENVIRONMENT unless COOKIE_SECURE overrides it, and a wrong
+	// value shows up as a missing cookie in a browser rather than as an error
+	// here. The boot log is the cheapest place to see what was actually applied.
 	app.log.Info("user context initialized",
-		"secure_cookie", !app.cfg.IsDevelopment(),
+		"cookie_secure", app.cfg.Cookie.Secure,
+		"cookie_samesite", app.cfg.Cookie.SameSite,
+		"cookie_domain", app.cfg.Cookie.Domain,
 		"refresh_token_expiry", app.cfg.RefreshToken.Expiry,
 	)
 }

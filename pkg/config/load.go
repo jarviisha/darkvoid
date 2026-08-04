@@ -1,6 +1,9 @@
 package config
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // loadAppConfig loads application configuration
 func loadAppConfig() AppConfig {
@@ -48,6 +51,23 @@ func loadServerConfig() ServerConfig {
 		AllowedOrigins:    getEnvSlice("CORS_ALLOWED_ORIGINS", []string{"*"}),
 		RateLimitRequests: getEnvInt("RATE_LIMIT_REQUESTS", 100),
 		RateLimitWindow:   getEnvDuration("RATE_LIMIT_WINDOW", 1*time.Minute),
+	}
+}
+
+// loadCookieConfig loads refresh token cookie configuration.
+//
+// secureDefault is a parameter rather than another getEnv call because
+// COOKIE_SECURE is a tri-state: unset means "follow the deployment
+// environment", and only the already-loaded AppConfig knows which that is.
+//
+// SameSite is lowercased and trimmed before Validate sees it, so that Lax and a
+// stray trailing space are accepted rather than rejected as typos. Anything
+// still unrecognised after that is a real mistake and fails the boot.
+func loadCookieConfig(secureDefault bool) CookieConfig {
+	return CookieConfig{
+		SameSite: strings.ToLower(strings.TrimSpace(getEnv("COOKIE_SAMESITE", "lax"))),
+		Domain:   strings.TrimSpace(getEnv("COOKIE_DOMAIN", "")),
+		Secure:   getEnvBool("COOKIE_SECURE", secureDefault),
 	}
 }
 

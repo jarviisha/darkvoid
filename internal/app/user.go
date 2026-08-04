@@ -8,6 +8,7 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/user/repository"
 	"github.com/jarviisha/darkvoid/internal/feature/user/service"
 	"github.com/jarviisha/darkvoid/internal/infrastructure/mailer"
+	"github.com/jarviisha/darkvoid/pkg/config"
 	"github.com/jarviisha/darkvoid/pkg/jwt"
 	"github.com/jarviisha/darkvoid/pkg/storage"
 )
@@ -51,8 +52,10 @@ type UserPorts struct {
 }
 
 // SetupUserContext initializes the User context with all required dependencies.
-// secureCookie controls the Secure flag on the refresh token cookie — set to false in development (HTTP).
-func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage.Storage, refreshTokenExpiry time.Duration, secureCookie bool, mail *mailInfra) *UserContext {
+// cookieCfg supplies the refresh token cookie's Secure, SameSite and Domain
+// attributes; Validate has already rejected any combination a browser would
+// refuse, so the translation below can be a plain mapping.
+func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage.Storage, refreshTokenExpiry time.Duration, cookieCfg config.CookieConfig, mail *mailInfra) *UserContext {
 	// Repositories
 	userRepo := repository.NewUserRepository(pool)
 	refreshTokenRepo := repository.NewRefreshTokenRepository(pool)
@@ -73,7 +76,11 @@ func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage
 
 	// Handlers
 	userHandler := handler.NewUserHandler(userService, userService, store)
-	authHandler := handler.NewAuthHandler(authService, store, secureCookie)
+	authHandler := handler.NewAuthHandler(authService, store, handler.CookieOptions{
+		Secure:   cookieCfg.Secure,
+		SameSite: cookieCfg.SameSiteMode(),
+		Domain:   cookieCfg.Domain,
+	})
 	profileHandler := handler.NewProfileHandler(userService, followService, store)
 	followHandler := handler.NewFollowHandler(followService, userService)
 	emailHandler := handler.NewEmailHandler(accountMailService)

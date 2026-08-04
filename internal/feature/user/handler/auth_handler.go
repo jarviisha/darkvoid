@@ -22,41 +22,54 @@ func isMobileClient(r *http.Request) bool {
 	return r.Header.Get("X-Client-Type") == "mobile"
 }
 
+// CookieOptions carries the deployment-dependent attributes of the refresh
+// token cookie, sourced from config.CookieConfig.
+//
+// Path and HttpOnly are not here on purpose — see the note on that type. They
+// are fixed below, next to the only two places that write the cookie.
+type CookieOptions struct {
+	Secure   bool
+	SameSite http.SameSite
+	Domain   string
+}
+
 // AuthHandler handles HTTP requests for authentication operations.
 type AuthHandler struct {
-	authService  authService
-	storage      storage.Storage
-	secureCookie bool
+	authService authService
+	storage     storage.Storage
+	cookies     CookieOptions
 }
 
 // NewAuthHandler creates a new auth handler.
-// secureCookie should be true in production (HTTPS) and false in development (HTTP).
-func NewAuthHandler(authService *service.AuthService, storage storage.Storage, secureCookie bool) *AuthHandler {
-	return &AuthHandler{authService: authService, storage: storage, secureCookie: secureCookie}
+func NewAuthHandler(authService *service.AuthService, storage storage.Storage, cookies CookieOptions) *AuthHandler {
+	return &AuthHandler{authService: authService, storage: storage, cookies: cookies}
+}
+
+// refreshTokenCookie builds the cookie both writers below share.
+//
+// Sharing it is load-bearing for the clearing case: a browser matches a
+// deletion against the existing cookie's Name, Domain and Path, so a clear that
+// disagrees with the original on any of the three leaves the old cookie in
+// place and logout silently does not log out.
+func (h *AuthHandler) refreshTokenCookie(value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     refreshTokenCookieName,
+		Value:    value,
+		Path:     "/api/v1/auth",
+		Domain:   h.cookies.Domain,
+		HttpOnly: true,
+		Secure:   h.cookies.Secure,
+		SameSite: h.cookies.SameSite,
+		MaxAge:   maxAge,
+	}
 }
 
 func (h *AuthHandler) setRefreshTokenCookie(w http.ResponseWriter, token string, expiry time.Duration) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     refreshTokenCookieName,
-		Value:    token,
-		Path:     "/api/v1/auth",
-		HttpOnly: true,
-		Secure:   h.secureCookie,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(expiry.Seconds()),
-	})
+	http.SetCookie(w, h.refreshTokenCookie(token, int(expiry.Seconds())))
 }
 
 func (h *AuthHandler) clearRefreshTokenCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     refreshTokenCookieName,
-		Value:    "",
-		Path:     "/api/v1/auth",
-		HttpOnly: true,
-		Secure:   h.secureCookie,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
+	http.SetCookie(w, h.refreshTokenCookie("", -1))
 }
 
 // Register godoc

@@ -78,7 +78,10 @@ func (m *mockAuthService) ChangePassword(ctx context.Context, userID uuid.UUID, 
 // --------------------------------------------------------------------------
 
 func newAuthHandler(svc authService) *AuthHandler {
-	return &AuthHandler{authService: svc, storage: nil}
+	// An explicit SameSite rather than the zero CookieOptions: the zero value is
+	// SameSiteDefaultMode, which emits no attribute, so tests would exercise a
+	// cookie no deployment ever serves.
+	return &AuthHandler{authService: svc, storage: nil, cookies: CookieOptions{SameSite: http.SameSiteLaxMode}}
 }
 
 func doPost(t *testing.T, handler http.HandlerFunc, path string, body any) *httptest.ResponseRecorder {

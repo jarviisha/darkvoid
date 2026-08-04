@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -13,6 +15,7 @@ type Config struct {
 	Database     DatabaseConfig
 	Logger       LoggerConfig
 	Server       ServerConfig
+	Cookie       CookieConfig
 	JWT          JWTConfig
 	RefreshToken RefreshTokenConfig
 	Storage      StorageConfig
@@ -216,6 +219,54 @@ type ServerConfig struct {
 	RateLimitWindow   time.Duration // Rate limit: time window
 }
 
+// CookieConfig holds the deployment-dependent attributes of the refresh token
+// cookie.
+//
+// Path and HttpOnly are deliberately absent. Path is coupled to where the auth
+// routes are mounted, not to the deployment, so an environment variable for it
+// would be a second source of truth that can disagree with the router — and it
+// disagrees silently, as a cookie the browser simply never sends back. HttpOnly
+// has only one safe value: a refresh token readable from JavaScript turns any
+// XSS into long-lived session theft, and the clients that legitimately need the
+// token in hand already ask for it with X-Client-Type: mobile.
+type CookieConfig struct {
+	// SameSite is "lax", "strict" or "none".
+	//
+	// Lax is correct while the frontend and the API share a registrable domain.
+	// A frontend on a different domain needs "none": the browser withholds a Lax
+	// cookie on cross-site fetches, so /auth/refresh answers 401 and reads as an
+	// expired session rather than as a misconfiguration. CORS does not save it —
+	// AllowCredentials governs whether the response is readable, not whether the
+	// cookie was attached in the first place.
+	SameSite string
+
+	// Domain empty means a host-only cookie, which is what a single API host
+	// wants. Set it to share the cookie across subdomains.
+	Domain string
+
+	// Secure defaults to "not development" and COOKIE_SECURE overrides it. The
+	// override exists for the staging box that sits behind TLS termination while
+	// still calling itself development, which the derived value gets wrong.
+	Secure bool
+}
+
+// SameSiteMode maps the configured name onto http.SameSite.
+//
+// Validate has already rejected every name this does not recognise, so the
+// fallback arm is unreachable in a running process. That rejection is the point:
+// the zero http.SameSite is SameSiteDefaultMode, which emits no attribute at
+// all, so a typo left to fall through would change behaviour without saying so.
+func (c CookieConfig) SameSiteMode() http.SameSite {
+	switch c.SameSite {
+	case "strict":
+		return http.SameSiteStrictMode
+	case "none":
+		return http.SameSiteNoneMode
+	default:
+		return http.SameSiteLaxMode
+	}
+}
+
 // JWTConfig holds JWT configuration
 type JWTConfig struct {
 	Secret            string
@@ -234,11 +285,16 @@ func Load() (*Config, error) {
 	// Load .env file if it exists — errors are silently ignored (e.g. production)
 	_ = godotenv.Load()
 
+	// App is loaded first because the cookie's Secure default is derived from
+	// the environment name.
+	app := loadAppConfig()
+
 	cfg := &Config{
-		App:          loadAppConfig(),
+		App:          app,
 		Database:     loadDatabaseConfig(),
 		Logger:       loadLoggerConfig(),
 		Server:       loadServerConfig(),
+		Cookie:       loadCookieConfig(!isDevelopmentEnv(app.Environment)),
 		JWT:          loadJWTConfig(),
 		RefreshToken: loadRefreshTokenConfig(),
 		Storage:      loadStorageConfig(),
@@ -304,6 +360,23 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid server port: %d", c.Server.Port)
 	}
 
+	// Validate cookie config
+	validSameSite := map[string]bool{"lax": true, "strict": true, "none": true}
+	if !validSameSite[c.Cookie.SameSite] {
+		return fmt.Errorf("invalid cookie samesite: %s (want lax, strict or none)", c.Cookie.SameSite)
+	}
+	// Browsers reject a SameSite=None cookie that is not also Secure. Left to
+	// runtime this pair does not announce itself — the server sets a cookie, the
+	// browser drops it, and every refresh fails as if the session had expired.
+	if c.Cookie.SameSite == "none" && !c.Cookie.Secure {
+		return fmt.Errorf("cookie samesite=none requires a secure cookie: set COOKIE_SECURE=true (ENVIRONMENT=%s implies false)", c.App.Environment)
+	}
+	// A scheme, port or path in the Domain attribute yields a cookie the browser
+	// discards, so catch the shape here rather than in the network tab.
+	if strings.ContainsAny(c.Cookie.Domain, ":/") {
+		return fmt.Errorf("invalid cookie domain %q: use a bare hostname, without scheme, port or path", c.Cookie.Domain)
+	}
+
 	// Validate JWT config
 	if c.JWT.Secret == "" {
 		return fmt.Errorf("JWT secret is required")
@@ -337,7 +410,15 @@ func (c *Config) Validate() error {
 
 // IsDevelopment checks if running in development environment
 func (c *Config) IsDevelopment() bool {
-	return c.App.Environment == "development"
+	return isDevelopmentEnv(c.App.Environment)
+}
+
+// isDevelopmentEnv is the single definition of what counts as development.
+// loadCookieConfig needs it to derive the Secure default before a Config exists,
+// so it cannot be a method — and duplicating the comparison there would let the
+// cookie disagree with IsDevelopment about which environment this is.
+func isDevelopmentEnv(name string) bool {
+	return name == "development"
 }
 
 // IsProduction checks if running in production environment
