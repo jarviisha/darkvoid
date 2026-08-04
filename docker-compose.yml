@@ -332,17 +332,24 @@ services:
   # nothing. Everything else it needs — interval, personas, topics, model chain —
   # comes from /bot/plan, so this service needs no configuration beyond credentials.
   #
-  # GEMINI_API_KEY, BOT_RUNNER_PASSWORD, and BOT_PASSWORD are read from .env rather
-  # than declared required here: `${VAR:?}` is interpolated for the whole file before
-  # profiles are filtered, so it would break every compose command for people not
-  # running the bot. The bot reports the missing variables itself on startup.
+  # GEMINI_API_KEY, BOT_RUNNER_PASSWORD, and BOT_PASSWORD are read from .env.bot
+  # (falling back to .env) rather than declared required here: `${VAR:?}` is
+  # interpolated for the whole file before profiles are filtered, so it would break
+  # every compose command for people not running the bot. The bot reports the
+  # missing variables itself on startup.
   bot:
     build: .
     profiles: [bot]
     restart: unless-stopped
     entrypoint: ["/app/bot"]
+    # .env.bot second, because a later env_file wins — the same precedence the bot
+    # applies to the two files itself when run outside a container. Neither file is
+    # in the image (.dockerignore excludes .env*), so compose reading them on the
+    # host is the only way their values arrive here.
     env_file:
       - path: .env
+        required: false
+      - path: .env.bot
         required: false
     environment:
       BOT_API_BASE_URL: http://app:8080/api/v1

@@ -21,10 +21,12 @@ vendor/
 # Environment variables
 # .env.* is a blanket rule on purpose: it covers .env.local, .env.production and
 # ad-hoc copies like .env.bak.<date>, any of which holds live credentials that a
-# `git add -A` would otherwise stage. The template is the one exception.
+# `git add -A` would otherwise stage. The templates are the only exceptions —
+# note .env.bot.example needs its own, since it matches .env.* and not .env.example.
 .env
 .env.*
 !.env.example
+!.env.bot.example
 
 # IDE
 .vscode/

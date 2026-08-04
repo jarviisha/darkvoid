@@ -123,7 +123,12 @@ run: ## Run the application
 dev: ## Run in development mode with hot reload (requires air)
 	air
 
-bot: ## Run the Gemini content bot against a running API (usage: make bot BOT_ARGS="--max-posts=1")
+# The bot reads .env.bot itself rather than getting it from the `-include .env`
+# above. Including it here would export its values into every other target too,
+# so `make run` would pick up the bot's LOG_LEVEL; and because that include plus
+# the bare `export` puts .env into the environment before the process starts, the
+# bot overrides with .env.bot on its own to come out the same either way.
+bot: ## Run the Gemini content bot against a running API — config in .env.bot (usage: make bot BOT_ARGS="--max-posts=1")
 	$(GO) run ./cmd/bot $(BOT_ARGS)
 
 ctl: ## Run the operator CLI (usage: make ctl CTL_ARGS="user list")
@@ -165,7 +170,7 @@ docker-up: ## Start Docker containers (PostgreSQL, Redis, app)
 docker-up-app: ## Start only the app container and connect to external/local infra
 	$(DOCKER_COMPOSE) up -d app-external
 
-docker-up-bot: ## Start the content bot container (needs GEMINI_API_KEY + BOT_RUNNER_PASSWORD + BOT_PASSWORD in .env)
+docker-up-bot: ## Start the content bot container (needs GEMINI_API_KEY + BOT_RUNNER_PASSWORD + BOT_PASSWORD in .env.bot)
 	$(DOCKER_COMPOSE) --profile bot up -d bot
 
 docker-down-bot: ## Stop the content bot container

@@ -27,7 +27,10 @@
 //
 // The environment therefore carries only credentials and an address: BOT_API_BASE_URL,
 // BOT_PASSWORD (shared by the persona accounts), BOT_RUNNER_USERNAME/PASSWORD, and
-// GEMINI_API_KEY. See config.go for the full list and main.go for usage.
+// GEMINI_API_KEY. They live in .env.bot rather than the API server's .env — the bot
+// shares none of that process's configuration and may not even run on the same host.
+// .env is still read as a fallback, so an older setup keeps working; see config.go
+// for the precedence and why it is ordered that way, and main.go for usage.
 //
 // # Two kinds of account
 //

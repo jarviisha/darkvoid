@@ -1,20 +1,49 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 )
+
+// botEnvKeys is every variable loadConfig reads.
+var botEnvKeys = []string{
+	"LOG_LEVEL", "BOT_API_BASE_URL", "BOT_PASSWORD",
+	"BOT_RUNNER_USERNAME", "BOT_RUNNER_PASSWORD",
+	"GEMINI_API_KEY", "GEMINI_BASE_URL",
+}
 
 // clearBotEnv unsets everything loadConfig reads, so a variable left over in the
 // developer's own .env cannot make a defaults test pass by accident.
 func clearBotEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{
-		"LOG_LEVEL", "BOT_API_BASE_URL", "BOT_PASSWORD",
-		"BOT_RUNNER_USERNAME", "BOT_RUNNER_PASSWORD",
-		"GEMINI_API_KEY", "GEMINI_BASE_URL",
-	} {
+	for _, key := range botEnvKeys {
 		t.Setenv(key, "")
+	}
+}
+
+// unsetBotEnv removes the variables entirely rather than blanking them. The
+// difference matters only for the dotenv tests: godotenv treats a variable that is
+// set-but-empty as already present, so clearBotEnv would stop the files under test
+// from being applied at all. t.Setenv is called first purely to register the
+// restore — it is what puts the original value back when the test ends.
+func unsetBotEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range botEnvKeys {
+		t.Setenv(key, "")
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+	}
+}
+
+// writeEnvFile drops a dotenv file into the current directory, which the dotenv
+// tests have already pointed at a temp dir via t.Chdir.
+func writeEnvFile(t *testing.T, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(".", name), []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", name, err)
 	}
 }
 
@@ -89,6 +118,59 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 	}
 	if cfg.LogLevel != "debug" {
 		t.Errorf("LogLevel = %q, want debug", cfg.LogLevel)
+	}
+}
+
+// The bot's own file wins over the server's. Both are read, so a deployment that
+// keeps the bot variables in .env keeps working, but a value that appears in both
+// resolves to .env.bot rather than to whichever file happened to load first.
+func TestLoadConfig_BotEnvFileOverridesDotEnv(t *testing.T) {
+	t.Chdir(t.TempDir())
+	unsetBotEnv(t)
+
+	writeEnvFile(t, ".env", "BOT_PASSWORD=from-dot-env\nGEMINI_API_KEY=key-from-dot-env\nBOT_RUNNER_USERNAME=runner_from_dot_env\n")
+	writeEnvFile(t, botEnvFile, "BOT_PASSWORD=from-dot-env-bot\nGEMINI_API_KEY=key-from-dot-env-bot\n")
+
+	cfg := loadConfig()
+
+	if cfg.Password != "from-dot-env-bot" {
+		t.Errorf("Password = %q, want the .env.bot value", cfg.Password)
+	}
+	if cfg.GeminiAPIKey != "key-from-dot-env-bot" {
+		t.Errorf("GeminiAPIKey = %q, want the .env.bot value", cfg.GeminiAPIKey)
+	}
+	// Not named in .env.bot, so .env still supplies it — the bot file overrides,
+	// it does not replace.
+	if cfg.RunnerUsername != "runner_from_dot_env" {
+		t.Errorf("RunnerUsername = %q, want the .env value to fill the gap", cfg.RunnerUsername)
+	}
+}
+
+// .env.bot outranks the inherited environment too, because `make bot` exports
+// .env into the environment before the process starts. Without this, the same two
+// files would resolve differently under `make bot` and `go run ./cmd/bot`.
+func TestLoadConfig_BotEnvFileOverridesInheritedEnvironment(t *testing.T) {
+	t.Chdir(t.TempDir())
+	unsetBotEnv(t)
+	t.Setenv("BOT_PASSWORD", "exported-by-make-from-dot-env")
+
+	writeEnvFile(t, botEnvFile, "BOT_PASSWORD=from-dot-env-bot\n")
+
+	if cfg := loadConfig(); cfg.Password != "from-dot-env-bot" {
+		t.Errorf("Password = %q, want the .env.bot value", cfg.Password)
+	}
+}
+
+// A missing .env.bot is the normal case, and it must not stop .env from loading —
+// the failure godotenv.Load(".env.bot", ".env") would have introduced.
+func TestLoadConfig_DotEnvStillLoadsWithoutBotEnvFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+	unsetBotEnv(t)
+
+	writeEnvFile(t, ".env", "BOT_PASSWORD=from-dot-env\n")
+
+	if cfg := loadConfig(); cfg.Password != "from-dot-env" {
+		t.Errorf("Password = %q, want the .env value", cfg.Password)
 	}
 }
 

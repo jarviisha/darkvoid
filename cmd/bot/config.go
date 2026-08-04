@@ -75,9 +75,16 @@ type config struct {
 	GeminiBaseURL string
 }
 
-// loadConfig reads bot configuration from the environment, loading a .env file
-// first when present (silently ignored otherwise, e.g. in the container, where
-// compose supplies the environment directly).
+// botEnvFile is the bot's own dotenv file. The bot is a separate process from the
+// API and shares none of its configuration, so it gets its own file rather than a
+// section of the server's: the credentials here belong to a component an operator
+// may run on a different host, and LOG_LEVEL is a name both processes read but each
+// wants to set independently.
+const botEnvFile = ".env.bot"
+
+// loadConfig reads bot configuration from the environment, loading .env.bot and
+// then .env when present (both silently ignored otherwise, e.g. in the container,
+// where compose supplies the environment directly).
 //
 //	LOG_LEVEL            (default: "info")
 //	BOT_API_BASE_URL     (default: "http://localhost:8080/api/v1")
@@ -86,7 +93,23 @@ type config struct {
 //	BOT_RUNNER_PASSWORD  (default: "") — required
 //	GEMINI_API_KEY       (default: "") — required
 //	GEMINI_BASE_URL      (default: "https://generativelanguage.googleapis.com")
+//
+// .env.bot wins over both .env and the inherited environment, which is the only
+// precedence that behaves the same in every way the bot is started. `make bot`
+// does `-include .env` followed by a bare `export`, so by the time the process
+// runs, .env's values are already real environment variables; a non-overriding
+// load would make .env.bot authoritative under `go run ./cmd/bot` and silently
+// dead under `make bot`, for the same two files on disk. .env keeps filling in
+// whatever .env.bot does not name, so an existing setup with the bot variables in
+// .env goes on working with no .env.bot at all.
+//
+// Both files are absent in the container (.dockerignore excludes .env*), so this
+// never overrides what compose injects there.
 func loadConfig() config {
+	// Two calls, not godotenv.Load(botEnvFile, ".env"): that form returns at the
+	// first unreadable file, so a missing .env.bot — the normal case — would stop
+	// .env from being read at all.
+	_ = godotenv.Overload(botEnvFile)
 	_ = godotenv.Load()
 
 	return config{
