@@ -92,13 +92,7 @@ func SetupPostContext(pool *pgxpool.Pool, store storage.Storage, userRepo postUs
 
 	ur := &postUserReader{userRepo: userRepo}
 
-	// Hashtag cache — use Redis when available, nop otherwise
-	var hCache postcache.HashtagCache
-	if redis != nil {
-		hCache = postcache.NewRedisHashtagCache(redis)
-	} else {
-		hCache = postcache.NewNopHashtagCache()
-	}
+	hCache := postcache.NewRedisHashtagCache(redis)
 
 	// Services
 	postService := service.NewPostService(pool, postRepo, mediaRepo, ur, hashtagRepo,

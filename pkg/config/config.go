@@ -57,18 +57,34 @@ type CodohueConfig struct {
 	// store, and the notification pub/sub onto a server darkvoid does not own —
 	// so an outage in an integration that is meant to be optional takes core
 	// features down with it.
-	EventsRedis RedisConfig
+	EventsRedis CodohueEventsRedisConfig
 }
 
 // RedisConfig holds Redis connection configuration.
-// When Enabled is false, the feed falls back to pull on-the-fly (no caching).
+//
+// There is no Enabled flag. Redis is a hard dependency of the API: the feed
+// cache, the materialized timeline and the cross-instance notification pub/sub
+// all live in it, so an instance without one does not serve a degraded feed —
+// it serves a different one. The no-op caches that used to stand in made that
+// difference invisible, which is the failure this removal is about.
 type RedisConfig struct {
-	Enabled  bool
 	Host     string
 	Port     int
 	Password string
 	DB       int
 	PoolSize int
+}
+
+// CodohueEventsRedisConfig is the one Redis connection that stays optional, and
+// it is optional in a different sense: absent means "the stream lives on the
+// app's Redis", not "there is no stream".
+type CodohueEventsRedisConfig struct {
+	RedisConfig
+
+	// Enabled reports that a host was named, i.e. that Codohue owns a Redis of
+	// its own. Derived, never read from its own variable — see
+	// loadCodohueEventsRedisConfig.
+	Enabled bool
 }
 
 // FeedFanoutConfig is what is left of the old FEED_* group after the rest moved

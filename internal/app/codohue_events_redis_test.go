@@ -45,16 +45,6 @@ func TestCodohueEventsClient_FallsBackToTheAppRedis(t *testing.T) {
 	}
 }
 
-// Redis off entirely means no producer. Returning a non-nil client here would
-// hand codohue.NewClient something that cannot publish.
-func TestCodohueEventsClient_NilWhenRedisDisabled(t *testing.T) {
-	app := testApp(&config.Config{})
-
-	if got := app.codohueEventsClient(); got != nil {
-		t.Errorf("codohueEventsClient() = %p, want nil when Redis is disabled", got)
-	}
-}
-
 func TestSetupCodohueEventsRedis_NoopWithoutAConfiguredHost(t *testing.T) {
 	app := testApp(&config.Config{
 		Codohue: config.CodohueConfig{Enabled: true},
@@ -72,8 +62,11 @@ func TestSetupCodohueEventsRedis_NoopWithoutAConfiguredHost(t *testing.T) {
 func TestSetupCodohueEventsRedis_SkippedWhenCodohueDisabled(t *testing.T) {
 	app := testApp(&config.Config{
 		Codohue: config.CodohueConfig{
-			Enabled:     false,
-			EventsRedis: config.RedisConfig{Enabled: true, Host: "codohue-redis", Port: 6379, PoolSize: 5},
+			Enabled: false,
+			EventsRedis: config.CodohueEventsRedisConfig{
+				Enabled:     true,
+				RedisConfig: config.RedisConfig{Host: "codohue-redis", Port: 6379, PoolSize: 5},
+			},
 		},
 	})
 
@@ -93,11 +86,13 @@ func TestSetupCodohueEventsRedis_KeepsTheClientWhenUnreachable(t *testing.T) {
 	app := testApp(&config.Config{
 		Codohue: config.CodohueConfig{
 			Enabled: true,
-			EventsRedis: config.RedisConfig{
-				Enabled:  true,
-				Host:     "192.0.2.1",
-				Port:     6379,
-				PoolSize: 5,
+			EventsRedis: config.CodohueEventsRedisConfig{
+				Enabled: true,
+				RedisConfig: config.RedisConfig{
+					Host:     "192.0.2.1",
+					Port:     6379,
+					PoolSize: 5,
+				},
 			},
 		},
 	})

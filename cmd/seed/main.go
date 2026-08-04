@@ -444,10 +444,6 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 	var redisClient *pkgredis.Client
 	cleanup := func() {}
 	if cfg.Codohue.Enabled {
-		if !cfg.Redis.Enabled {
-			return nil, cleanup, fmt.Errorf("CODOHUE_ENABLED=true requires REDIS_ENABLED=true so seed behavior events can be published")
-		}
-
 		result, err := codohue.ProvisionNamespaceConfig(ctx, codohue.NamespaceProvisionConfig{
 			AdminBaseURL: cfg.Codohue.AdminURL,
 			AdminKey:     cfg.Codohue.AdminKey,

@@ -36,7 +36,8 @@ type FeedPorts struct {
 
 // SetupFeedContext initializes the Feed context with all required dependencies.
 // It accepts only the minimal reader ports the feed context actually needs.
-// redisClient may be nil — in that case a no-op cache is used.
+// redisClient is required and must be non-nil; the feed cache and the
+// materialized timeline both live in it.
 //
 // eventsRedisClient is the Redis carrying the codohue:events stream, which is not
 // always redisClient: Codohue's consumer reads that stream from whichever instance
@@ -57,13 +58,7 @@ func SetupFeedContext(
 	feedFanoutCfg config.FeedFanoutConfig,
 	cohodueCfg config.CodohueConfig,
 ) (*FeedContext, *codohue.Client) {
-	// Build cache: Redis when available, no-op otherwise.
-	var fc feedcache.FeedCache
-	if redisClient != nil {
-		fc = feedcache.NewRedisFeedCache(redisClient)
-	} else {
-		fc = feedcache.NewNopFeedCache()
-	}
+	fc := feedcache.NewRedisFeedCache(redisClient)
 
 	// One settings holder shared by the read path, the ranker, the timeline
 	// store, the background refresher and the dispatcher's write-time score, so
@@ -73,12 +68,7 @@ func SetupFeedContext(
 	settings := feed.NewSettings(feed.DefaultRuntimeSettings())
 	ranker := feed.NewLocalRanker(settings)
 	feedSvc := feedservice.NewFeedService(postReader, followReader, likeReader, ranker, fc)
-	var timelineStore feed.TimelineStore
-	if redisClient != nil {
-		timelineStore = feedcache.NewRedisTimelineStore(redisClient, settings)
-	} else {
-		timelineStore = feedcache.NewNopTimelineStore()
-	}
+	timelineStore := feedcache.NewRedisTimelineStore(redisClient, settings)
 	feedSvc.WithTimelineStore(timelineStore)
 	feedSvc.WithSettings(settings)
 	feedSvc.WithTimelineRefresher(feed.NewPreparedTimelineRefresher(postReader, followReader, timelineStore, ranker, settings))

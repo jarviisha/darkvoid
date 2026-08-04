@@ -40,19 +40,14 @@ func (ctx *NotificationContext) Ports() NotificationPorts {
 }
 
 // SetupNotificationContext initializes the Notification context with all required dependencies.
-// redisClient may be nil — in that case a no-op cache is used and SSE operates in-memory only.
+// redisClient is required and must be non-nil: it backs the unread-count cache and
+// the Pub/Sub channel that fans SSE events out across instances.
 // Wiring NotifService into producing services (Post, Like, Comment, Follow) is the caller's
 // responsibility and must be done in app.go after all contexts are initialized.
 func SetupNotificationContext(pool *pgxpool.Pool, store storage.Storage, userReader notificationUserReader, redisClient *pkgredis.Client) *NotificationContext {
 	notifRepo := repository.NewNotificationRepository(pool)
 
-	// Build cache: Redis when available, no-op otherwise
-	var nc notifcache.NotificationCache
-	if redisClient != nil {
-		nc = notifcache.NewRedisNotificationCache(redisClient)
-	} else {
-		nc = notifcache.NewNopNotificationCache()
-	}
+	nc := notifcache.NewRedisNotificationCache(redisClient)
 
 	// Build SSE broker
 	b := broker.NewBroker(redisClient)

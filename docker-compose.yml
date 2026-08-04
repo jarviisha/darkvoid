@@ -194,7 +194,6 @@ services:
       DB_SSLMODE: disable
 
       # Redis — points to the redis container
-      REDIS_ENABLED: "true"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}

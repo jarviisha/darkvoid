@@ -15,6 +15,7 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/config"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
+	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
 )
 
 // Server wraps HTTP server
@@ -23,17 +24,19 @@ type Server struct {
 	router     *chi.Mux
 	cfg        *config.Config
 	log        *logger.Logger
-	pool       *pgxpool.Pool  // Database pool for health checks
-	codohue    *codohueStatus // Recommender state reported by /health; nil when unset
-	startTime  time.Time      // Server start time for uptime calculation
+	pool       *pgxpool.Pool    // Database pool for health checks
+	redis      *pkgredis.Client // Redis client for health checks
+	codohue    *codohueStatus   // Recommender state reported by /health; nil when unset
+	startTime  time.Time        // Server start time for uptime calculation
 }
 
 // NewServer a new HTTP server
-func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, codohue *codohueStatus) *Server {
+func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis *pkgredis.Client, codohue *codohueStatus) *Server {
 	s := &Server{
 		cfg:       cfg,
 		log:       log,
 		pool:      pool,
+		redis:     redis,
 		codohue:   codohue,
 		startTime: time.Now(),
 	}
@@ -126,6 +129,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 type HealthCheckResponse struct {
 	Status   string `json:"status"`
 	Database string `json:"database"`
+	// Redis is "up" or "down". Unlike Codohue, down makes the service unhealthy:
+	// Redis holds the feed cache, the materialized timeline and the notification
+	// Pub/Sub, so an instance that cannot reach it serves a different feed rather
+	// than a slower one, and should be taken out of rotation.
+	Redis string `json:"redis"`
 	// Codohue is "off", "active", or "degraded". Degraded does not make the
 	// service unhealthy — the feed falls back to local scoring and the API is
 	// fully functional — but it has to be reported somewhere a monitor can see,
@@ -141,29 +149,36 @@ func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	response := HealthCheckResponse{
 		Status:   "healthy",
 		Database: "up",
+		Redis:    "up",
 	}
 	if s.codohue != nil {
 		response.Codohue, response.CodohueReason = s.codohue.get()
 	}
 
-	// Check database connection
+	// Both stores are probed before responding, rather than returning on the first
+	// failure: an operator reading a 503 wants to know whether one is down or both.
 	if s.pool != nil {
 		if err := s.pool.Ping(ctx); err != nil {
 			s.log.Error("database health check failed", "error", err)
 			response.Status = "unhealthy"
 			response.Database = "down"
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			if err := json.NewEncoder(w).Encode(response); err != nil {
-				s.log.Error("failed to encode health check response", "error", err)
-			}
-			return
+		}
+	}
+	if s.redis != nil {
+		if err := s.redis.Ping(ctx).Err(); err != nil {
+			s.log.Error("redis health check failed", "error", err)
+			response.Status = "unhealthy"
+			response.Redis = "down"
 		}
 	}
 
-	// All healthy
+	status := http.StatusOK
+	if response.Status != "healthy" {
+		status = http.StatusServiceUnavailable
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		s.log.Error("failed to encode health check response", "error", err)
 	}

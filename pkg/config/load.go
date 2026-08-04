@@ -135,15 +135,17 @@ func loadCodohueConfig() CodohueConfig {
 // PoolSize is deliberately not configurable. This client publishes to one stream
 // and does nothing else, so it needs far fewer connections than the cache — and a
 // knob whose only correct value is "small" is a knob that gets set wrong.
-func loadCodohueEventsRedisConfig() RedisConfig {
+func loadCodohueEventsRedisConfig() CodohueEventsRedisConfig {
 	host := getEnv("CODOHUE_EVENTS_REDIS_HOST", "")
-	return RedisConfig{
-		Enabled:  host != "",
-		Host:     host,
-		Port:     getEnvInt("CODOHUE_EVENTS_REDIS_PORT", 6379),
-		Password: getEnv("CODOHUE_EVENTS_REDIS_PASSWORD", ""),
-		DB:       getEnvInt("CODOHUE_EVENTS_REDIS_DB", 0),
-		PoolSize: 5,
+	return CodohueEventsRedisConfig{
+		Enabled: host != "",
+		RedisConfig: RedisConfig{
+			Host:     host,
+			Port:     getEnvInt("CODOHUE_EVENTS_REDIS_PORT", 6379),
+			Password: getEnv("CODOHUE_EVENTS_REDIS_PASSWORD", ""),
+			DB:       getEnvInt("CODOHUE_EVENTS_REDIS_DB", 0),
+			PoolSize: 5,
+		},
 	}
 }
 
@@ -178,9 +180,11 @@ func loadMailerConfig() MailerConfig {
 }
 
 // loadRedisConfig loads Redis configuration from environment variables.
-// Set REDIS_ENABLED=true to enable caching; all other vars have sensible defaults.
 //
-//	REDIS_ENABLED   (default: false)
+// There is no REDIS_ENABLED. Redis is required — the app refuses to boot without
+// one, the same as with Postgres. The defaults describe a local server so a
+// developer with the compose stack up needs to set nothing.
+//
 //	REDIS_HOST      (default: localhost)
 //	REDIS_PORT      (default: 6379)
 //	REDIS_PASSWORD  (default: "")
@@ -188,7 +192,6 @@ func loadMailerConfig() MailerConfig {
 //	REDIS_POOL_SIZE (default: 10)
 func loadRedisConfig() RedisConfig {
 	return RedisConfig{
-		Enabled:  getEnvBool("REDIS_ENABLED", false),
 		Host:     getEnv("REDIS_HOST", "localhost"),
 		Port:     getEnvInt("REDIS_PORT", 6379),
 		Password: getEnv("REDIS_PASSWORD", ""),

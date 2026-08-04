@@ -33,7 +33,7 @@ type Application struct {
 	cfg   *config.Config
 	log   *logger.Logger
 	pool  *pgxpool.Pool
-	redis *pkgredis.Client // nil when Redis is disabled
+	redis *pkgredis.Client // required; never nil once New returns
 	// codohueEvents carries the codohue:events stream when Codohue owns a Redis
 	// separate from ours. Nil means the stream lives on our own Redis and the
 	// producer shares that client — read it through codohueEventsClient().
@@ -99,7 +99,7 @@ func New(ctx context.Context, cfg *config.Config) (app *Application, err error) 
 		return app, fmt.Errorf("failed to setup database: %w", err)
 	}
 
-	// Setup Redis (optional — skipped when REDIS_ENABLED=false)
+	// Setup Redis (required — boot fails when it is unreachable)
 	if err = app.setupRedis(ctx); err != nil {
 		return app, fmt.Errorf("failed to setup redis: %w", err)
 	}
@@ -205,13 +205,15 @@ func (app *Application) setupDatabase(ctx context.Context) error {
 	return nil
 }
 
-// setupRedis initializes Redis client. Skipped when REDIS_ENABLED=false.
+// setupRedis dials Redis and fails boot if it cannot be reached.
+//
+// Redis is a hard dependency, so this uses pkgredis.New (which pings) rather
+// than NewLazy: refusing to start is the honest outcome. The alternative — boot
+// anyway and let go-redis reconnect — means serving an empty feed cache, an
+// empty timeline and single-instance-only notification fan-out while reporting a
+// healthy startup, which is precisely the ambiguity that removing REDIS_ENABLED
+// was meant to end.
 func (app *Application) setupRedis(ctx context.Context) error {
-	if !app.cfg.Redis.Enabled {
-		app.log.Info("redis disabled (REDIS_ENABLED=false), feed cache will be no-op")
-		return nil
-	}
-
 	app.log.Info("initializing redis connection", "host", app.cfg.Redis.Host, "port", app.cfg.Redis.Port)
 
 	client, err := pkgredis.New(ctx, &pkgredis.Config{
@@ -265,8 +267,7 @@ func (app *Application) setupCodohueEventsRedis(ctx context.Context) {
 }
 
 // codohueEventsClient returns the Redis the behavior-event producer should use:
-// Codohue's own instance when one is configured, otherwise ours. Nil when Redis
-// is disabled entirely, which disables event publishing.
+// Codohue's own instance when one is configured, otherwise ours.
 func (app *Application) codohueEventsClient() *pkgredis.Client {
 	if app.codohueEvents != nil {
 		return app.codohueEvents
@@ -342,7 +343,7 @@ func (app *Application) bootstrapRootUser(ctx context.Context) error {
 func (app *Application) setupServer() {
 	app.log.Info("initializing HTTP server")
 
-	app.server = NewServer(app.cfg, app.log, app.pool, app.codohue)
+	app.server = NewServer(app.cfg, app.log, app.pool, app.redis, app.codohue)
 
 	// Register routes
 	app.registerRoutes()

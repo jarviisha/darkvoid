@@ -32,16 +32,15 @@ func (c *client) close() {
 	c.closeOnce.Do(func() { close(c.ch) })
 }
 
-// Broker manages SSE client connections and dispatches notification events.
-// When Redis is available, it uses Pub/Sub for cross-instance fan-out.
-// When Redis is nil, it operates as an in-memory-only broker (single instance).
+// Broker manages SSE client connections and dispatches notification events,
+// using Redis Pub/Sub for cross-instance fan-out.
 type Broker struct {
 	mu      sync.RWMutex
 	clients map[uuid.UUID]map[*client]struct{} // userID → set of clients
-	redis   *pkgredis.Client                   // nil = in-memory only
+	redis   *pkgredis.Client                   // required
 }
 
-// NewBroker creates a new notification broker.
+// NewBroker creates a new notification broker. redis must be non-nil.
 func NewBroker(redis *pkgredis.Client) *Broker {
 	return &Broker{
 		clients: make(map[uuid.UUID]map[*client]struct{}),
@@ -90,25 +89,22 @@ func (b *Broker) Shutdown() {
 	}
 }
 
-// Publish sends an event to all SSE clients connected for the given userID.
-// If Redis is configured, it publishes to the Pub/Sub channel so other instances
-// can forward the event to their local clients.
+// Publish sends an event to every SSE client connected for the given userID, on
+// this instance and on all the others: it goes out over Pub/Sub and comes back
+// through StartRedisSubscriber, which is what calls deliverLocal.
+//
+// Publishing rather than delivering in-process even for the local clients is
+// deliberate — one path means an event cannot be delivered twice here and not at
+// all next door.
 func (b *Broker) Publish(ctx context.Context, userID uuid.UUID, evt Event) {
-	if b.redis != nil {
-		raw, err := json.Marshal(evt)
-		if err != nil {
-			logger.LogError(ctx, err, "failed to marshal SSE event", "user_id", userID)
-			return
-		}
-		if err := b.redis.Publish(ctx, channelKey(userID), raw).Err(); err != nil {
-			logger.LogError(ctx, err, "failed to publish SSE event to Redis", "user_id", userID)
-		}
-		// Redis subscriber (StartRedisSubscriber) will call deliverLocal.
+	raw, err := json.Marshal(evt)
+	if err != nil {
+		logger.LogError(ctx, err, "failed to marshal SSE event", "user_id", userID)
 		return
 	}
-
-	// No Redis — deliver directly to local clients.
-	b.deliverLocal(userID, evt)
+	if err := b.redis.Publish(ctx, channelKey(userID), raw).Err(); err != nil {
+		logger.LogError(ctx, err, "failed to publish SSE event to Redis", "user_id", userID)
+	}
 }
 
 // deliverLocal fans out an event to all in-memory clients for a user.
@@ -130,10 +126,6 @@ func (b *Broker) deliverLocal(userID uuid.UUID, evt Event) {
 // It dynamically subscribes/unsubscribes based on connected clients.
 // Blocks until ctx is cancelled. Should be run in a goroutine.
 func (b *Broker) StartRedisSubscriber(ctx context.Context) {
-	if b.redis == nil {
-		return
-	}
-
 	// Use pattern subscribe: notif:stream:*
 	pubsub := b.redis.PSubscribe(ctx, "notif:stream:*")
 	defer func() { _ = pubsub.Close() }()
