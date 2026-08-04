@@ -3,9 +3,10 @@
 #
 #   docker compose -f docker-compose.prod.yml -f docker-compose.codohue.yml up -d
 #
-# Not needed when Codohue runs as a profile inside this stack (the local-dev
-# layout in docker-compose.yml). There one Redis serves both sides, one network
-# carries every service, and none of the pinning below applies.
+# Not needed when Codohue is reachable without joining its network — a published
+# port, a shared external network, a hostname on the LAN. Then CODOHUE_BASE_URL
+# and CODOHUE_EVENTS_REDIS_HOST say everything, and none of the pinning below
+# applies. Use this file when the app has to resolve Codohue's *service names*.
 #
 # Why the app joins Codohue's network at all: recommendations and catalog ingest
 # go to Codohue over HTTP, and behavior events go to Codohue's Redis. Both need

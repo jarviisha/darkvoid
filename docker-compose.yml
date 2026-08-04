@@ -5,14 +5,19 @@
 # Override any value by creating a .env file next to this file.
 #
 # Optional profiles (activate with --profile or COMPOSE_PROFILES in .env):
-#   codohue  — CF recommender stack (qdrant + codohue-*): make docker-up-codohue
 #   tools    — seed runner: make docker-seed
 #   bot      — AI content bot: make docker-up-bot
 #   external — app-only mode (app-external service, infra outside this
 #              compose project): make docker-up-app
 #
+# Codohue is deliberately NOT here. This project consumes it over the network —
+# HTTP for recommendations and ingest, a Redis Stream for behavior events — and
+# owns none of its containers, its Qdrant, or its schema. Run it from its own
+# compose project and point CODOHUE_BASE_URL / CODOHUE_ADMIN_URL at it; see
+# docker-compose.codohue.yml for the network-joining case.
+#
 # Port isolation: only the app port is bound to the host by default.
-# Internal services (postgres, redis, qdrant, codohue-api) communicate over
+# Internal services (postgres, redis) communicate over
 # Docker's internal network and do not expose host ports, preventing conflicts
 # with any services already running on your machine.
 #
@@ -26,6 +31,10 @@
 x-app-base: &app-base
   build: .
   restart: unless-stopped
+  # Codohue runs outside this project, so every container that talks to it needs
+  # a route back to the host. Harmless when Codohue is elsewhere entirely.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   ports:
     - "${SERVER_PORT:-8080}:8080"
   healthcheck:
@@ -211,10 +220,16 @@ services:
       # Mailer
       MAILER_PROVIDER: ${MAILER_PROVIDER:-nop}
 
-      # Codohue CF recommender (active only when CODOHUE_ENABLED=true)
+      # Codohue CF recommender (active only when CODOHUE_ENABLED=true).
+      #
+      # Codohue lives outside this compose project, so the URLs are overridden
+      # here rather than inherited from .env: .env answers "where is Codohue"
+      # from the host's point of view, and inside a container localhost is the
+      # container. The default reaches a Codohue published on the host; set
+      # CODOHUE_DOCKER_BASE_URL when it is somewhere else.
       CODOHUE_ENABLED: ${CODOHUE_ENABLED:-false}
-      CODOHUE_BASE_URL: ${CODOHUE_DOCKER_BASE_URL:-http://codohue-api:2001}
-      CODOHUE_ADMIN_URL: ${CODOHUE_DOCKER_ADMIN_URL:-http://codohue-admin:2002}
+      CODOHUE_BASE_URL: ${CODOHUE_DOCKER_BASE_URL:-http://host.docker.internal:2001}
+      CODOHUE_ADMIN_URL: ${CODOHUE_DOCKER_ADMIN_URL:-http://host.docker.internal:2002}
       CODOHUE_NAMESPACE_KEY: ${CODOHUE_NAMESPACE_KEY:-}
       CODOHUE_ADMIN_KEY: ${CODOHUE_ADMIN_KEY:-${CODOHUE_API_KEY:-${CODOHUE_NAMESPACE_KEY:-}}}
       CODOHUE_NAMESPACE: ${CODOHUE_NAMESPACE:-darkvoid_feed}
@@ -235,8 +250,6 @@ services:
   app-external:
     <<: *app-base
     profiles: [external]
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     environment:
       DB_HOST: ${EXTERNAL_DB_HOST:-host.docker.internal}
       DB_PORT: ${EXTERNAL_DB_PORT:-5432}
@@ -258,6 +271,8 @@ services:
         "--likes-per-post=${SEED_LIKES_PER_POST:-40}",
         "--comments-per-post=${SEED_COMMENTS_PER_POST:-5}",
       ]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - path: .env
         required: false
@@ -268,6 +283,11 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       DB_NAME: ${DB_NAME:-darkvoid}
       DB_SSLMODE: disable
+      # Seed provisions the Codohue namespace when CODOHUE_ENABLED=true, so it
+      # needs the same container-side URLs as the app — .env's are written from
+      # the host's point of view.
+      CODOHUE_BASE_URL: ${CODOHUE_DOCKER_BASE_URL:-http://host.docker.internal:2001}
+      CODOHUE_ADMIN_URL: ${CODOHUE_DOCKER_ADMIN_URL:-http://host.docker.internal:2002}
     depends_on:
       postgres:
         condition: service_healthy
@@ -283,6 +303,8 @@ services:
     profiles: [tools]
     restart: "no"
     entrypoint: ["/app/darkvoidctl"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - path: .env
         required: false
@@ -293,6 +315,10 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       DB_NAME: ${DB_NAME:-darkvoid}
       DB_SSLMODE: disable
+      # `codohue reindex` sends posts to Codohue over HTTP, so ctl needs the
+      # container-side URL for the same reason seed and app do.
+      CODOHUE_BASE_URL: ${CODOHUE_DOCKER_BASE_URL:-http://host.docker.internal:2001}
+      CODOHUE_ADMIN_URL: ${CODOHUE_DOCKER_ADMIN_URL:-http://host.docker.internal:2002}
     depends_on:
       postgres:
         condition: service_healthy
@@ -325,115 +351,7 @@ services:
       app:
         condition: service_healthy
 
-  # ---------------------------------------------------------------------------
-  # Codohue profile — start with: make docker-up-codohue
-  # ---------------------------------------------------------------------------
-
-  qdrant:
-    image: qdrant/qdrant:v1.17.1
-    profiles: [codohue]
-    restart: unless-stopped
-    volumes:
-      - qdrant_data:/qdrant/storage
-
-  codohue-migrate:
-    image: jarviisha/codohue-migrate:latest
-    profiles: [codohue]
-    restart: on-failure
-    environment:
-      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  codohue-api:
-    image: jarviisha/codohue-api:latest
-    profiles: [codohue]
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable
-      # Reuses DarkVoid's redis; override CODOHUE_REDIS_URL if redis has a password
-      REDIS_URL: ${CODOHUE_REDIS_URL:-redis://redis:6379}
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: "6334"
-      CODOHUE_ADMIN_API_KEY: ${CODOHUE_ADMIN_KEY:-${CODOHUE_API_KEY:-${CODOHUE_NAMESPACE_KEY:-}}}
-      CODOHUE_LOG_FORMAT: json
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:2001/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    depends_on:
-      codohue-migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_started
-
-  codohue-admin:
-    image: jarviisha/codohue-admin:latest
-    profiles: [codohue]
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable
-      REDIS_URL: ${CODOHUE_REDIS_URL:-redis://redis:6379}
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: "6334"
-      CODOHUE_ADMIN_API_KEY: ${CODOHUE_ADMIN_KEY:-${CODOHUE_API_KEY:-${CODOHUE_NAMESPACE_KEY:-}}}
-      CODOHUE_API_URL: http://codohue-api:2001
-      # Pin so admin sessions survive container restarts; ephemeral when empty.
-      CODOHUE_ADMIN_SESSION_SECRET: ${CODOHUE_ADMIN_SESSION_SECRET:-}
-      CODOHUE_LOG_FORMAT: json
-    depends_on:
-      codohue-migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_started
-
-  # Embedder worker — only does work when CODOHUE_DENSE_SOURCE=catalog
-  # (drains the catalog auto-embedding queue); idle in byoe mode.
-  codohue-embedder:
-    image: jarviisha/codohue-embedder:latest
-    profiles: [codohue]
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable
-      REDIS_URL: ${CODOHUE_REDIS_URL:-redis://redis:6379}
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: "6334"
-      CODOHUE_LOG_FORMAT: json
-    depends_on:
-      codohue-migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_started
-
-  codohue-cron:
-    image: jarviisha/codohue-cron:latest
-    profiles: [codohue]
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable
-      REDIS_URL: ${CODOHUE_REDIS_URL:-redis://redis:6379}
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: "6334"
-      CODOHUE_LOG_FORMAT: json
-      CODOHUE_BATCH_INTERVAL_MINUTES: "5"
-    depends_on:
-      codohue-migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_started
-
 volumes:
   postgres_data:
   redis_data:
   uploads:
-  qdrant_data:
