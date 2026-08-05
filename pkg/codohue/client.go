@@ -77,7 +77,7 @@ const (
 	ActionLike    Action = "LIKE"
 	ActionComment Action = "COMMENT"
 	ActionShare   Action = "SHARE"
-	ActionSkip    Action = "SKIP" // negative signal, e.g. unlike
+	ActionSkip    Action = "SKIP" // negative signal ("saw it, not interested"); darkvoid currently emits none — an unlike is not a dislike
 )
 
 // RankedItem holds an object ID and its CF relevance score returned by the

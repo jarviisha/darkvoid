@@ -60,8 +60,7 @@ func (s *LikeService) Like(ctx context.Context, userID, postID uuid.UUID) error 
 
 // Unlike removes a like from userID to postID
 func (s *LikeService) Unlike(ctx context.Context, userID, postID uuid.UUID) error {
-	p, err := s.postRepo.GetByID(ctx, postID)
-	if err != nil {
+	if _, err := s.postRepo.GetByID(ctx, postID); err != nil {
 		if errors.Is(err, errors.ErrNotFound) {
 			return post.ErrPostNotFound
 		}
@@ -73,7 +72,11 @@ func (s *LikeService) Unlike(ctx context.Context, userID, postID uuid.UUID) erro
 		return errors.NewInternalError(err)
 	}
 	s.deleteLikeNotification(ctx, userID, postID)
-	s.publishBehaviorEvent(ctx, userID, postID, "SKIP", &p.CreatedAt)
+	// No behavior event on unlike: SKIP means "saw it, not interested", while
+	// an unlike is usually a mis-tap or a changed mind — feeding it to the
+	// recommender as a negative signal teaches it a dislike that never
+	// happened. The like it retracts has already been published; the model
+	// simply keeps a signal that is now mildly stale.
 	logger.Info(ctx, "post unliked", "user_id", userID, "post_id", postID)
 	return nil
 }
@@ -105,7 +108,7 @@ func (s *LikeService) Toggle(ctx context.Context, userID, postID uuid.UUID) (boo
 			return false, errors.NewInternalError(err)
 		}
 		s.deleteLikeNotification(ctx, userID, postID)
-		s.publishBehaviorEvent(ctx, userID, postID, "SKIP", &p.CreatedAt)
+		// No behavior event — see Unlike.
 		logger.Info(ctx, "post unliked", "user_id", userID, "post_id", postID)
 		return false, nil
 	}
