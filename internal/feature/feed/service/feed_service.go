@@ -128,7 +128,7 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 		followingSet[id] = true
 	}
 
-	candidates, recOffset, recTotal, trendHasMore, followingFetched, err := s.collectMixedCandidates(ctx, userID, authorIDs, cursor)
+	candidates, recOffset, recTotal, trendingCollected, followingFetched, err := s.collectMixedCandidates(ctx, userID, authorIDs, cursor)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -157,7 +157,7 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 	if len(page) == 0 {
 		return nil, nil, nil
 	}
-	return page, nextMixedCursor(userID, page, cursor, recOffset, recTotal, trendHasMore), nil
+	return page, nextMixedCursor(userID, page, cursor, recOffset, recTotal, trendingCollected), nil
 }
 
 // discoverHandoff converts a following continuation into a discover one. The
@@ -372,19 +372,20 @@ func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UU
 		}
 	}
 
-	trendHasMore := false
+	trendingCollected := false
 	if cursor == nil || cursor.TrendingPosition() != nil {
 		trendingPosts, err := s.getTrending(ctx)
 		if err != nil {
 			logger.LogError(ctx, err, "failed to get trending posts, skipping", "user_id", userID)
 		}
-		trendingPosts, trendHasMore = applyTrendingCursor(trendingPosts, cursor.TrendingPosition(), pageSize+1)
+		trendingPosts = applyTrendingCursor(trendingPosts, cursor.TrendingPosition(), pageSize)
 		for i, p := range trendingPosts {
 			candidates = append(candidates, feedCandidate{post: p, source: feedentity.SourceTrending, sourceRank: i + 1})
 		}
+		trendingCollected = len(trendingPosts) > 0
 	}
 
-	return candidates, recommendationOffset, recommendationTotal, trendHasMore, len(followingPosts) > 0, nil
+	return candidates, recommendationOffset, recommendationTotal, trendingCollected, len(followingPosts) > 0, nil
 }
 
 func (s *FeedService) loadRecommendationCandidates(ctx context.Context, items []feed.RecommendedItem) ([]feedCandidate, error) {
@@ -489,22 +490,30 @@ func sourcePriority(source feedentity.Source) int {
 	}
 }
 
-func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *feed.FeedCursor, recOffset, recTotal int, trendHasMore bool) *feed.FeedCursor {
+func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *feed.FeedCursor, recOffset, recTotal int, trendingCollected bool) *feed.FeedCursor {
 	next := &feed.FeedCursor{TimelineUser: userID.String()}
 	if recTotal > 0 && recOffset < recTotal {
 		next.RecommendationOffset = recOffset
 	}
-	if trendHasMore {
-		for i := len(page) - 1; i >= 0; i-- {
-			item := page[i]
-			if item.Source != feedentity.SourceTrending || item.Post == nil {
-				continue
-			}
-			score := trendScoreFromPost(item.Post)
-			next.TrendingScore = &score
-			next.TrendingPostID = item.Post.ID.String()
-			break
-		}
+	// The trending position advances to the lowest-trend-score item served on
+	// this page — the page is blend-ordered, so the last trending item in page
+	// order is not necessarily the lowest, and any other boundary re-serves the
+	// shown items scoring below it. When no trending item made the page the
+	// incoming position carries over, and on a first page whose trending
+	// candidates were all outranked, a start-of-list sentinel keeps the source
+	// alive — a cursor without a trending position stops injecting trending
+	// for the rest of the scroll.
+	if lowest := lowestTrendingShown(page); lowest != nil {
+		score := trendScoreFromPost(lowest)
+		next.TrendingScore = &score
+		next.TrendingPostID = lowest.ID.String()
+	} else if incoming.TrendingPosition() != nil {
+		next.TrendingScore = incoming.TrendingScore
+		next.TrendingPostID = incoming.TrendingPostID
+	} else if trendingCollected {
+		score := math.MaxFloat64
+		next.TrendingScore = &score
+		next.TrendingPostID = uuid.Max.String()
 	}
 	// The following position advances to the oldest following post served on
 	// this page — the page is score-ordered, so "oldest shown" rather than
@@ -524,6 +533,28 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *fe
 		return nil
 	}
 	return next
+}
+
+// lowestTrendingShown returns the trending-source post on the page with the
+// smallest (trend score, id) — the continuation point matching
+// isAfterTrendCursor's (score DESC, id DESC) ordering.
+func lowestTrendingShown(page []*feedentity.FeedItem) *feedentity.Post {
+	var lowest *feedentity.Post
+	for _, item := range page {
+		if item.Source != feedentity.SourceTrending || item.Post == nil {
+			continue
+		}
+		p := item.Post
+		if lowest == nil {
+			lowest = p
+			continue
+		}
+		ps, ls := trendScoreFromPost(p), trendScoreFromPost(lowest)
+		if ps < ls || (ps == ls && p.ID.String() < lowest.ID.String()) {
+			lowest = p
+		}
+	}
+	return lowest
 }
 
 // oldestFollowingShown returns the following-source post on the page with the
@@ -744,7 +775,7 @@ func filterPublicPosts(posts []*feedentity.Post) []*feedentity.Post {
 	return filtered
 }
 
-func applyTrendingCursor(posts []*feedentity.Post, cursor *feed.TrendPosition, limit int) ([]*feedentity.Post, bool) {
+func applyTrendingCursor(posts []*feedentity.Post, cursor *feed.TrendPosition, limit int) []*feedentity.Post {
 	filtered := make([]*feedentity.Post, 0, len(posts))
 	for _, p := range posts {
 		if p == nil {
@@ -755,11 +786,10 @@ func applyTrendingCursor(posts []*feedentity.Post, cursor *feed.TrendPosition, l
 		}
 		filtered = append(filtered, p)
 	}
-	hasMore := len(filtered) > limit-1
-	if len(filtered) > limit-1 {
-		filtered = filtered[:limit-1]
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
 	}
-	return filtered, hasMore
+	return filtered
 }
 
 func isAfterTrendCursor(p *feedentity.Post, cursor *feed.TrendPosition) bool {

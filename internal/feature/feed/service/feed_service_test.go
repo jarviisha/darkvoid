@@ -197,15 +197,25 @@ func TestGetFeed_MixedFallbackDoesNotEmitSessionCursor(t *testing.T) {
 	}
 
 	svc := newTestService(reader, &mockRanker{scores: scores})
-	page1, cursor, err := svc.GetFeed(context.Background(), uuid.New(), nil)
+	userID := uuid.New()
+	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
 		t.Fatalf("GetFeed page1: %v", err)
 	}
-	if cursor != nil {
-		t.Fatalf("cursor = %+v, want nil without no-version continuation state", cursor)
-	}
 	if len(page1) == 0 {
 		t.Fatal("expected mixed fallback items")
+	}
+	// Trending items were served, so the cursor carries a plain trending
+	// position — continuation state stays flat fields, never session-backed.
+	if cursor == nil || cursor.TrendingScore == nil {
+		t.Fatalf("cursor = %+v, want stateless trending continuation", cursor)
+	}
+	page2, next, err := svc.GetFeed(context.Background(), userID, cursor)
+	if err != nil {
+		t.Fatalf("GetFeed page2: %v", err)
+	}
+	if len(page2) != 0 || next != nil {
+		t.Fatalf("page2 len/cursor = %d/%+v, want exhausted scroll", len(page2), next)
 	}
 }
 
@@ -827,9 +837,6 @@ func TestGetFeed_TrendingContinuationNoDuplicates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFeed page2: %v", err)
 	}
-	if next != nil {
-		t.Fatalf("next cursor = %+v, want exhausted trending", next)
-	}
 	if len(page2) != 5 {
 		t.Fatalf("page2 len = %d, want 5", len(page2))
 	}
@@ -839,6 +846,131 @@ func TestGetFeed_TrendingContinuationNoDuplicates(t *testing.T) {
 			t.Fatalf("duplicate trending post returned: %s", item.Post.ID)
 		}
 		seen[item.Post.ID] = true
+	}
+
+	// Page 2 still served trending, so its position survives; the next request
+	// finds nothing behind it and ends the scroll cleanly.
+	if next == nil || next.TrendingScore == nil {
+		t.Fatalf("next cursor = %+v, want carried trending continuation", next)
+	}
+	page3, tail, err := svc.GetFeed(context.Background(), userID, next)
+	if err != nil {
+		t.Fatalf("GetFeed page3: %v", err)
+	}
+	if len(page3) != 0 || tail != nil {
+		t.Fatalf("page3 len/cursor = %d/%+v, want exhausted scroll", len(page3), tail)
+	}
+}
+
+// TestGetFeed_TrendingCursorUsesLowestShownScore pins the trending boundary to
+// the lowest trend score served, not the last trending item in blend order.
+// With the old boundary, B (5 likes) sat above A and below C in blend order,
+// the cursor took C's 7 likes, and B reappeared on page 2.
+func TestGetFeed_TrendingCursorUsesLowestShownScore(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+
+	likes := []int64{10, 5, 7}
+	blend := []float64{100, 50, 10}
+	posts := make([]*feedentity.Post, 3)
+	for i := range posts {
+		p := testPost(now.Add(-time.Duration(i) * time.Minute))
+		p.LikeCount = likes[i]
+		posts[i] = p
+		reader.trending = append(reader.trending, p)
+		reader.byID[p.ID] = p
+		scores[p.ID] = blend[i]
+	}
+
+	svc := newTestService(reader, &mockRanker{scores: scores})
+	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed page1: %v", err)
+	}
+	if len(page1) != 3 {
+		t.Fatalf("page1 len = %d, want 3", len(page1))
+	}
+	if cursor == nil || cursor.TrendingScore == nil || *cursor.TrendingScore != 5 {
+		t.Fatalf("cursor = %+v, want trending boundary at the lowest shown score 5", cursor)
+	}
+
+	page2, _, err := svc.GetFeed(context.Background(), userID, cursor)
+	if err != nil {
+		t.Fatalf("GetFeed page2: %v", err)
+	}
+	for _, item := range page2 {
+		for _, p := range posts {
+			if item.Post.ID == p.ID {
+				t.Fatalf("trending post re-served on page 2: %s", p.ID)
+			}
+		}
+	}
+}
+
+// TestGetFeed_TrendingSurvivesPageWithNoTrendingShown pins the start-of-list
+// sentinel: when every trending candidate is outranked off page 1, the cursor
+// must still carry a trending position, or the source is dropped for the rest
+// of the scroll.
+func TestGetFeed_TrendingSurvivesPageWithNoTrendingShown(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	followedAuthor := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+
+	total := pageSize + 10
+	for i := 0; i < total; i++ {
+		p := testPost(now.Add(-time.Duration(i) * time.Minute))
+		p.AuthorID = followedAuthor
+		reader.following = append(reader.following, p)
+		reader.byID[p.ID] = p
+		scores[p.ID] = float64(1000 - i)
+	}
+	trendingIDs := make(map[uuid.UUID]bool, 3)
+	for i := 0; i < 3; i++ {
+		p := testPost(now.Add(-time.Duration(i+200) * time.Minute))
+		p.LikeCount = int64(i + 1)
+		reader.trending = append(reader.trending, p)
+		reader.byID[p.ID] = p
+		trendingIDs[p.ID] = true
+		scores[p.ID] = float64(i + 1)
+	}
+
+	svc := NewFeedService(
+		reader,
+		&mockFollowReader{ids: []uuid.UUID{followedAuthor}},
+		&mockLikeReader{},
+		&mockRanker{scores: scores},
+		feedcache.NewNopFeedCache(),
+	)
+
+	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed page1: %v", err)
+	}
+	for _, item := range page1 {
+		if trendingIDs[item.Post.ID] {
+			t.Fatalf("fixture broken: trending post made page 1")
+		}
+	}
+	if cursor == nil || cursor.TrendingScore == nil {
+		t.Fatalf("cursor = %+v, want sentinel trending position despite none shown", cursor)
+	}
+
+	page2, _, err := svc.GetFeed(context.Background(), userID, cursor)
+	if err != nil {
+		t.Fatalf("GetFeed page2: %v", err)
+	}
+	served := 0
+	for _, item := range page2 {
+		if trendingIDs[item.Post.ID] {
+			served++
+		}
+	}
+	if served != len(trendingIDs) {
+		t.Fatalf("trending posts on page 2 = %d, want %d", served, len(trendingIDs))
 	}
 }
 
