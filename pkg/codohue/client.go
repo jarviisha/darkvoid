@@ -52,6 +52,15 @@ type cappedXAdder struct {
 	maxLen int64
 }
 
+// countIndexErr counts a failed index-maintenance call and passes the error
+// through, so the four call sites stay one-liners.
+func countIndexErr(err error) error {
+	if err != nil {
+		countIndexError()
+	}
+	return err
+}
+
 func (c cappedXAdder) XAdd(ctx context.Context, a *redis.XAddArgs) *redis.StringCmd {
 	if a.MaxLen == 0 && a.MinID == "" {
 		a.MaxLen = c.maxLen
@@ -266,9 +275,9 @@ func (c *Client) UpsertObjectEmbedding(ctx context.Context, objectID string, vec
 		opts = append(opts, sdk.WithObjectCreatedAt(createdAt.UTC()))
 	}
 
-	return guardErr(c, func() error {
+	return countIndexErr(guardErr(c, func() error {
 		return c.ns.StoreObjectEmbedding(reqCtx, objectID, converted, opts...)
-	})
+	}))
 }
 
 // UpsertSubjectEmbedding pushes a dense embedding vector for a user (subject) to Codohue.
@@ -281,9 +290,9 @@ func (c *Client) UpsertSubjectEmbedding(ctx context.Context, subjectID string, v
 		converted[i] = float32(v)
 	}
 
-	return guardErr(c, func() error {
+	return countIndexErr(guardErr(c, func() error {
 		return c.ns.StoreSubjectEmbedding(reqCtx, subjectID, converted)
-	})
+	}))
 }
 
 // IngestCatalogItem publishes post content to Codohue's catalog auto-embedding
@@ -293,13 +302,13 @@ func (c *Client) IngestCatalogItem(ctx context.Context, objectID, content, autho
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	return guardErr(c, func() error {
+	return countIndexErr(guardErr(c, func() error {
 		return c.ns.IngestCatalog(reqCtx, codohuetypes.CatalogIngestRequest{
 			ObjectID:        objectID,
 			Content:         content,
 			AuthorSubjectID: authorSubjectID,
 		})
-	})
+	}))
 }
 
 // DeleteObject removes an item from the recommendation index.
@@ -307,9 +316,9 @@ func (c *Client) DeleteObject(ctx context.Context, objectID string) error {
 	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	return guardErr(c, func() error {
+	return countIndexErr(guardErr(c, func() error {
 		return c.ns.DeleteObject(reqCtx, objectID)
-	})
+	}))
 }
 
 // PublishBehaviorEvent publishes a user behavior event to the codohue:events Redis Stream.
@@ -332,6 +341,7 @@ func (c *Client) PublishBehaviorEvent(ctx context.Context, subjectID, objectID, 
 	}
 
 	if _, err := c.producer.Publish(ctx, event); err != nil {
+		countEventPublishError()
 		logger.LogError(ctx, err, "codohue: failed to publish event",
 			"action", action, "subject", subjectID, "object", objectID)
 		return err

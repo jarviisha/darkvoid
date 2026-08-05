@@ -498,7 +498,17 @@ func filterEligibleCandidates(userID uuid.UUID, followingSet map[uuid.UUID]bool,
 			if isEligibleTimelinePost(userID, followingSet, candidate.post) {
 				filtered = append(filtered, candidate)
 			}
-		case feedentity.SourceRecommendation, feedentity.SourceTrending, feedentity.SourceDiscover:
+		case feedentity.SourceRecommendation:
+			// A user's own post must never come back to them labeled
+			// "recommended". Codohue is expected to exclude authored objects
+			// upstream, but the guarantee belongs on this side of the trust
+			// boundary too — a provider config change must not be able to put
+			// a user's post in their own suggestions. (Own posts remain fine
+			// as trending: the badge claims popularity, not discovery.)
+			if candidate.post.Visibility == "public" && candidate.post.AuthorID != userID {
+				filtered = append(filtered, candidate)
+			}
+		case feedentity.SourceTrending, feedentity.SourceDiscover:
 			if candidate.post.Visibility == "public" {
 				filtered = append(filtered, candidate)
 			}

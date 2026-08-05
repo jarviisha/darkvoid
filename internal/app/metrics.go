@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
+	"github.com/jarviisha/darkvoid/pkg/codohue"
 	"github.com/jarviisha/darkvoid/pkg/database"
 )
 
@@ -16,6 +17,10 @@ type MetricsResponse struct {
 	Runtime  RuntimeMetrics  `json:"runtime"`
 	Database DatabaseMetrics `json:"database"`
 	Feed     FeedMetrics     `json:"feed"`
+	// Codohue counts the integration's silent-degradation paths (index
+	// maintenance failures, dropped behavior events). Always present — zeros
+	// when the integration is disabled.
+	Codohue codohue.MetricsSnapshot `json:"codohue"`
 }
 
 // ServiceMetrics represents service-level metrics
@@ -102,5 +107,6 @@ func (s *Server) collectMetrics() MetricsResponse {
 		Runtime:  runtimeMetrics,
 		Database: dbMetrics,
 		Feed:     feed.SnapshotMetrics(),
+		Codohue:  codohue.SnapshotMetrics(),
 	}
 }

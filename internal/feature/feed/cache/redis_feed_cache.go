@@ -13,7 +13,15 @@ import (
 )
 
 const (
-	trendingKey = "trending:posts"
+	// trendingKey is versioned because the value is fully serialized Post
+	// bodies: any change to the entity's serialized shape is a cache
+	// invalidation event whether or not anyone remembers that, and an
+	// unversioned key would serve up-to-15-minutes of silently misdecoded
+	// posts across a deploy. Bump the version together with the entity change
+	// — TestTrendingCache_SerializedSchemaPinned fails to force exactly that —
+	// and the previous key retires the same way the timeline keys did: never
+	// read again, gone when its TTL expires.
+	trendingKey = "trending:posts:v2"
 )
 
 func followingIDsKey(userID uuid.UUID) string {

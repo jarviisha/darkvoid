@@ -1269,6 +1269,32 @@ func TestGetFeed_InvalidProviderItemsAreFiltered(t *testing.T) {
 	}
 }
 
+// TestGetFeed_OwnPostsNotServedAsRecommendations pins the app-side authored
+// exclusion: even if the provider returns the viewer's own post, it must not
+// reach them labeled "recommended".
+func TestGetFeed_OwnPostsNotServedAsRecommendations(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	own := testPost(now)
+	own.AuthorID = userID
+	other := testPost(now.Add(-time.Minute))
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{own.ID: own, other.ID: other}}
+
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	svc.WithRecommender(&mockRecommender{items: []feed.RecommendedItem{
+		{ObjectID: own.ID.String(), Score: 1, Rank: 1},
+		{ObjectID: other.ID.String(), Score: 1, Rank: 2},
+	}})
+
+	page, _, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != 1 || page[0].Post.ID != other.ID {
+		t.Fatalf("page = %+v, want only the other author's recommendation", page)
+	}
+}
+
 func TestGetFeed_CodohueUnavailableFallsBackLocal(t *testing.T) {
 	now := time.Now().UTC()
 	userID := uuid.New()

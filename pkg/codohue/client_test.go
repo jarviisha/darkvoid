@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jarviisha/codohue/pkg/codohuetypes"
+	"github.com/jarviisha/codohue/sdk/go/redistream"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -48,6 +49,52 @@ func TestCappedXAdder_RespectsExplicitTrim(t *testing.T) {
 	_ = capped.XAdd(context.Background(), &redis.XAddArgs{Stream: "s", MaxLen: 5}).Err()
 	if inner.lastArgs.MaxLen != 5 || inner.lastArgs.Approx {
 		t.Fatalf("explicit MaxLen overridden: %+v", inner.lastArgs)
+	}
+}
+
+type failingXAdder struct{}
+
+func (failingXAdder) XAdd(_ context.Context, _ *redis.XAddArgs) *redis.StringCmd {
+	return redis.NewStringResult("", context.DeadlineExceeded)
+}
+
+// The two counters below are the whole point of the silent-degradation
+// metrics: every failure they observe is logged-and-continued by design, so
+// without them nothing measurable says the index is drifting or events are
+// being dropped.
+
+func TestPublishBehaviorEvent_CountsDroppedEvents(t *testing.T) {
+	client := &Client{
+		namespace: "ns",
+		producer:  redistream.NewProducer(failingXAdder{}),
+	}
+
+	before := SnapshotMetrics().EventPublishErrors
+	if err := client.PublishBehaviorEvent(context.Background(), "user", "post", "LIKE", nil); err == nil {
+		t.Fatal("expected publish error")
+	}
+	if got := SnapshotMetrics().EventPublishErrors - before; got != 1 {
+		t.Fatalf("event publish errors delta = %d, want 1", got)
+	}
+}
+
+func TestDeleteObject_CountsIndexErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "key", "ns", nil)
+	if client == nil {
+		t.Fatal("NewClient returned nil")
+	}
+
+	before := SnapshotMetrics().IndexErrors
+	if err := client.DeleteObject(context.Background(), "post-1"); err == nil {
+		t.Fatal("expected delete error")
+	}
+	if got := SnapshotMetrics().IndexErrors - before; got != 1 {
+		t.Fatalf("index errors delta = %d, want 1", got)
 	}
 }
 
