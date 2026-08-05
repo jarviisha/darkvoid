@@ -3,7 +3,6 @@ package feed
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -59,8 +58,14 @@ type EventDispatcher struct {
 	settings *Settings
 	jobs     chan Event
 	handler  EventHandler
-	closed   atomic.Bool
-	wg       sync.WaitGroup
+	// mu guards closed and, on the read side, spans the closed check and the
+	// channel send in Dispatch. Close closes the channel under the write lock,
+	// so no sender can sit between its check and its send when the channel
+	// closes — with a bare atomic flag that window is a send-on-closed-channel
+	// panic on any request racing a shutdown.
+	mu     sync.RWMutex
+	closed bool
+	wg     sync.WaitGroup
 }
 
 func NewEventDispatcher(settings *Settings, workers int, queueSize int, handler EventHandler) *EventDispatcher {
@@ -99,7 +104,12 @@ func (d *EventDispatcher) writeScore() float64 {
 }
 
 func (d *EventDispatcher) Dispatch(ctx context.Context, event Event) bool {
-	if d == nil || d.handler == nil || d.closed.Load() || !d.settings.Get().FanoutEnabled {
+	if d == nil || d.handler == nil || !d.settings.Get().FanoutEnabled {
+		return false
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.closed {
 		return false
 	}
 	select {
@@ -114,11 +124,21 @@ func (d *EventDispatcher) Dispatch(ctx context.Context, event Event) bool {
 	}
 }
 
+// Close stops intake and blocks until every already-queued event has been
+// handled. Call it before closing the stores the handlers write to, or the
+// drain fails every remaining write.
 func (d *EventDispatcher) Close() {
-	if d == nil || d.closed.Swap(true) {
+	if d == nil {
 		return
 	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return
+	}
+	d.closed = true
 	close(d.jobs)
+	d.mu.Unlock()
 	d.wg.Wait()
 }
 

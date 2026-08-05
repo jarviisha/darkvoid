@@ -461,6 +461,16 @@ func (app *Application) Shutdown(ctx context.Context) error {
 		}
 	}
 
+	// Drain the feed event queue after the HTTP server stops accepting
+	// requests and before Redis goes away: queued fan-out events are timeline
+	// writes, and closing Redis first would fail every one of them — posts
+	// already acknowledged to their authors would silently never reach
+	// followers' timelines.
+	if app.Feed != nil {
+		app.log.Info("draining feed event dispatcher")
+		app.Feed.Ports().Dispatcher.Close()
+	}
+
 	// Close Redis connection
 	if app.redis != nil {
 		app.log.Info("closing redis connection")

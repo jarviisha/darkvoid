@@ -3,6 +3,7 @@ package feed
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -217,4 +218,38 @@ func TestEventDispatcher_DispatchAfterCloseReturnsFalse(t *testing.T) {
 	if dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
 		t.Fatal("expected dispatch after Close to return false")
 	}
+}
+
+// TestEventDispatcher_ConcurrentDispatchAndClose races producers against Close.
+// The old check-then-send on an atomic flag panicked with "send on closed
+// channel" here under -race; the lock now makes the pair atomic.
+func TestEventDispatcher_ConcurrentDispatchAndClose(t *testing.T) {
+	dispatcher := NewEventDispatcher(NewSettings(DefaultRuntimeSettings()), 2, 4, &recordingEventHandler{})
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated})
+				}
+			}
+		}()
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	dispatcher.Close()
+	close(stop)
+	wg.Wait()
+
+	if dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
+		t.Fatal("expected dispatch after Close to return false")
+	}
+	dispatcher.Close() // second Close must be a no-op, not a second channel close
 }
