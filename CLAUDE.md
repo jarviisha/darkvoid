@@ -95,6 +95,10 @@ Every package should have a `docs.go` stating its purpose. Update it in the same
 
 Respect `.golangci.yml` — all production and test code must pass `make lint` before committing. If a linter fires, fix the root cause rather than silencing it. Only suppress with a **targeted** `//nolint:<linter> // <reason>` on the specific line, with a real reason. Do **not** add blanket `//nolint` directives, and do **not** relax `.golangci.yml` to clear a failure unless the rule itself is genuinely wrong for this codebase — in which case justify it in the commit message.
 
+## Commits
+
+A commit message describes **only the change in that commit** — what it does and why, in terms of the code itself. Do **not** reference specs, plans, task ids, or docs paths (`specs/006-…`, `plan.md`, `T-042`, "per the spec"): those live outside the history and rot independently of it, so a reader six months out follows the pointer to a file that has moved, changed meaning, or is no longer there. Anything the reader needs in order to understand the change belongs in the message body, spelled out.
+
 ## Configuration
 
 Config splits in two. `pkg/config` loads from `.env` everything a process needs before it can reach anything else — the database, the port, the signing keys, the mail and storage providers. Everything an operator changes while watching a graph lives in the database instead; see **Runtime settings** below and the **Bot control plane**. Update `.env.example` whenever a new variable is added. Keys of note:
