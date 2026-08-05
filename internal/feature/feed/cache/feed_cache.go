@@ -36,6 +36,9 @@ type FeedCache interface {
 	// SetTrending stores the global trending post list.
 	SetTrending(ctx context.Context, posts []*feedentity.Post) error
 	// InvalidateTrending removes the trending post cache.
-	// Called when a like/unlike changes post scores.
+	// Called when a post's stored content or visibility changes, since the
+	// cache holds fully serialized posts. Engagement counts are left to go
+	// stale until the TTL — evicting on every like kept the cache permanently
+	// cold.
 	InvalidateTrending(ctx context.Context) error
 }
