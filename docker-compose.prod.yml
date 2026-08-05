@@ -214,6 +214,20 @@ services:
       migrate-notification:
         condition: service_completed_successfully
 
+  migrate-settings:
+    <<: *migrate
+    command:
+      [
+        "-path",
+        "/migrations/settings",
+        "-database",
+        "postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_settings",
+        "up",
+      ]
+    depends_on:
+      migrate-bot:
+        condition: service_completed_successfully
+
   app:
     image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}:${APP_TAG:-latest}
     restart: unless-stopped
@@ -286,7 +300,7 @@ services:
       # app's own requirement rather than inheriting it from a migration detail.
       postgres:
         condition: service_healthy
-      migrate-bot:
+      migrate-settings:
         condition: service_completed_successfully
       redis:
         condition: service_healthy

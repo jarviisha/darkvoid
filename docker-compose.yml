@@ -188,6 +188,25 @@ services:
       migrate-notification:
         condition: service_completed_successfully
 
+  migrate-settings:
+    image: migrate/migrate:4
+    restart: on-failure
+    volumes:
+      - ./migrations:/migrations:ro
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:-postgres}
+    command:
+      [
+        "-path",
+        "/migrations/settings",
+        "-database",
+        "postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_settings",
+        "up",
+      ]
+    depends_on:
+      migrate-bot:
+        condition: service_completed_successfully
+
   app:
     <<: *app-base
     environment:
@@ -238,7 +257,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      migrate-bot:
+      migrate-settings:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -291,7 +310,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      migrate-bot:
+      migrate-settings:
         condition: service_completed_successfully
 
   # Operator CLI — run one-off admin commands inside the compose network so the
