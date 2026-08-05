@@ -14,7 +14,51 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
+	"github.com/redis/go-redis/v9"
 )
+
+const (
+	// recommendTimeout caps one recommendations call. It sits far below the
+	// SDK's 5s transport timeout on purpose: GetRecommendations runs
+	// synchronously inside every mixed feed page and the feed has a complete
+	// local fallback, so this deadline is the worst case a slow Codohue may
+	// impose on a feed request. It is also what makes the circuit breaker
+	// latency-aware — the breaker counts failures, and a Codohue answering in
+	// 2.9s under a 3s deadline never fails, taxing every page forever, while
+	// under this deadline it times out and three timeouts open the circuit.
+	recommendTimeout = 800 * time.Millisecond
+	// trendingTimeout stays looser: trending sits behind a 15-minute shared
+	// cache and a single-flight rebuild, so per cache window exactly one
+	// caller pays this worst case rather than every request.
+	trendingTimeout = 3 * time.Second
+
+	// eventsStreamMaxLen bounds the behavior-events stream at the producer
+	// (XADD MAXLEN ~, approximate so it costs nothing per publish). The
+	// consumer is Codohue's; when it stops or lags, an uncapped stream grows
+	// without limit on a Redis that may also hold the feed cache, the prepared
+	// timelines and the notification pub/sub — and an optional integration's
+	// backlog must never be able to evict core state or stop core writes.
+	// Events beyond the cap drop oldest-first, which is this integration's
+	// documented trade: behavior events are lossy whenever the bus is
+	// unhealthy. At roughly 300 bytes per event the stream stays near 30 MB.
+	eventsStreamMaxLen = 100_000
+)
+
+// cappedXAdder injects the MAXLEN bound into every stream publish. It wraps
+// the Redis client handed to the events producer only — catalog ingest goes
+// over HTTP, so no producer-trimmed-catalog concern applies here.
+type cappedXAdder struct {
+	inner  redistream.XAdder
+	maxLen int64
+}
+
+func (c cappedXAdder) XAdd(ctx context.Context, a *redis.XAddArgs) *redis.StringCmd {
+	if a.MaxLen == 0 && a.MinID == "" {
+		a.MaxLen = c.maxLen
+		a.Approx = true
+	}
+	return c.inner.XAdd(ctx, a)
+}
 
 // Action represents a user behavior action recognized by Codohue.
 type Action string
@@ -75,7 +119,7 @@ func NewClient(baseURL, nsKey, namespace string, redisClient *pkgredis.Client) *
 
 	var producer *redistream.Producer
 	if redisClient != nil {
-		producer = redistream.NewProducer(redisClient)
+		producer = redistream.NewProducer(cappedXAdder{inner: redisClient, maxLen: eventsStreamMaxLen})
 	}
 
 	return &Client{
@@ -122,7 +166,7 @@ func (c *Client) CircuitOpen() bool {
 
 // GetRecommendations returns ordered post IDs.
 func (c *Client) GetRecommendations(ctx context.Context, userID string, limit int, offset int) (*feed.RecommendationPage, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, recommendTimeout)
 	defer cancel()
 
 	resp, err := guard(c, func() (*codohuetypes.Response, error) {
@@ -185,7 +229,7 @@ func (c *Client) Rank(ctx context.Context, subjectID string, candidates []string
 
 // GetTrending returns trending object IDs.
 func (c *Client) GetTrending(ctx context.Context, limit int, offset int) (*feed.TrendingPage, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, trendingTimeout)
 	defer cancel()
 
 	resp, err := guard(c, func() (*codohuetypes.TrendingResponse, error) {

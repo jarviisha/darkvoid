@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +26,11 @@ type mockPostReader struct {
 	// ordering guarantee in production (WHERE id = ANY), and tests use this to
 	// prove the service does not depend on hydrate order.
 	returnOrder []uuid.UUID
+	// trendingCalls counts GetTrendingPosts calls (atomically) and
+	// trendingGate, when set, blocks each call until closed — used by the
+	// single-flight collapse tests.
+	trendingCalls atomic.Int32
+	trendingGate  chan struct{}
 }
 
 func (m *mockPostReader) GetFollowingPostsWithCursor(_ context.Context, _ []uuid.UUID, cursor *feed.FollowingCursor, limit int32) ([]*feedentity.Post, error) {
@@ -31,6 +38,10 @@ func (m *mockPostReader) GetFollowingPostsWithCursor(_ context.Context, _ []uuid
 }
 
 func (m *mockPostReader) GetTrendingPosts(_ context.Context, limit int32) ([]*feedentity.Post, error) {
+	m.trendingCalls.Add(1)
+	if m.trendingGate != nil {
+		<-m.trendingGate
+	}
 	if m.trendingErr != nil {
 		return nil, m.trendingErr
 	}
@@ -1105,6 +1116,119 @@ func TestGetFeed_FollowingExhaustionHandsOffToDiscoverBelowLastServed(t *testing
 	}
 	if next != nil {
 		t.Fatalf("next cursor = %+v, want exhausted discover", next)
+	}
+}
+
+// emptyTimelineStore always reads back an empty page. Stateless on purpose:
+// the concurrency tests hit it from many goroutines.
+type emptyTimelineStore struct{}
+
+func (emptyTimelineStore) AddPost(_ context.Context, _ uuid.UUID, _ feed.TimelineEntry) error {
+	return nil
+}
+func (emptyTimelineStore) SetPostsBatch(_ context.Context, _ uuid.UUID, _ []feed.TimelineEntry) error {
+	return nil
+}
+func (emptyTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *feed.TimelinePosition, _ int) (*feed.TimelinePage, error) {
+	return &feed.TimelinePage{}, nil
+}
+func (emptyTimelineStore) Trim(_ context.Context, _ uuid.UUID) error { return nil }
+func (emptyTimelineStore) RemovePostBestEffort(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
+	return nil
+}
+
+// gatedRefresher counts RefreshTimeline calls atomically and blocks each one
+// until the gate closes.
+type gatedRefresher struct {
+	calls atomic.Int32
+	gate  chan struct{}
+}
+
+func (r *gatedRefresher) RefreshTimeline(_ context.Context, _ uuid.UUID) error {
+	r.calls.Add(1)
+	if r.gate != nil {
+		<-r.gate
+	}
+	return nil
+}
+
+// waitUntil polls cond until it holds or the deadline passes.
+func waitUntil(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not reached within deadline")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestGetFeed_ConcurrentTrendingMissesCollapseToOneRebuild pins the
+// single-flight around the trending source: the cache key is global with one
+// hard TTL, so its expiry is a synchronized miss across every in-flight
+// page-1 request — without collapsing, each would run the provider fetch and
+// the DB aggregate.
+func TestGetFeed_ConcurrentTrendingMissesCollapseToOneRebuild(t *testing.T) {
+	now := time.Now().UTC()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}, trendingGate: make(chan struct{})}
+	for i := 0; i < 3; i++ {
+		p := testPost(now.Add(-time.Duration(i) * time.Minute))
+		reader.trending = append(reader.trending, p)
+		reader.byID[p.ID] = p
+	}
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+
+	const callers = 8
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, _ = svc.GetFeed(context.Background(), uuid.New(), nil)
+		}()
+	}
+	// Let the leader enter the fetch, give the others time to queue up behind
+	// the flight, then release everyone at once.
+	waitUntil(t, func() bool { return reader.trendingCalls.Load() >= 1 })
+	time.Sleep(50 * time.Millisecond)
+	close(reader.trendingGate)
+	wg.Wait()
+
+	if got := reader.trendingCalls.Load(); got != 1 {
+		t.Fatalf("trending fetches = %d, want 1 shared rebuild", got)
+	}
+}
+
+// TestGetFeed_ConcurrentTimelineMissesCollapseToOneRefresh pins the per-user
+// single-flight around refresh-on-miss: a rebuild reads the whole following
+// set and re-ranks up to timeline_max_items posts, so parallel requests from
+// one cold user must share one rebuild instead of running one each.
+func TestGetFeed_ConcurrentTimelineMissesCollapseToOneRefresh(t *testing.T) {
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	svc.WithTimelineStore(emptyTimelineStore{})
+	refresher := &gatedRefresher{gate: make(chan struct{})}
+	svc.WithTimelineRefresher(refresher)
+	svc.WithSettings(timelineSettings(true, 100, true))
+
+	const callers = 8
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, _ = svc.GetFeed(context.Background(), userID, nil)
+		}()
+	}
+	waitUntil(t, func() bool { return refresher.calls.Load() >= 1 })
+	time.Sleep(50 * time.Millisecond)
+	close(refresher.gate)
+	wg.Wait()
+
+	if got := refresher.calls.Load(); got != 1 {
+		t.Fatalf("timeline refreshes = %d, want 1 shared rebuild", got)
 	}
 }
 

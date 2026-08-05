@@ -13,6 +13,7 @@ import (
 	feedentity "github.com/jarviisha/darkvoid/internal/feature/feed/entity"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
+	"golang.org/x/sync/singleflight"
 )
 
 const scoreEpsilon = 1e-9
@@ -21,6 +22,12 @@ const (
 	pageSize           = 20
 	fetchMultiplier    = 3
 	trendingFetchLimit = 100
+	// sharedRebuildTimeout bounds the single-flight rebuilds (trending fetch,
+	// timeline refresh-on-miss). They run detached from the leader's request
+	// context — a leader disconnecting must not fail every waiter — so they
+	// need their own deadline or a hung provider call would pin the flight
+	// open indefinitely.
+	sharedRebuildTimeout = 10 * time.Second
 )
 
 // FeedService handles feed business logic.
@@ -39,6 +46,11 @@ type FeedService struct {
 	// checks below test the pointer rather than calling Get and reading a default
 	// that would gate them off.
 	settings *feed.Settings
+	// flight collapses concurrent expensive rebuilds: the global trending
+	// fetch (whose cache expiry is a synchronized miss across every in-flight
+	// page-1 request) and per-user timeline refresh-on-miss. Per instance
+	// only — siblings may still rebuild once each, which is the cheap 90%.
+	flight singleflight.Group
 }
 
 // NewFeedService creates a new FeedService.
@@ -224,7 +236,7 @@ func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID,
 	if (page == nil || len(page.Entries) == 0) && s.refresher != nil && s.refreshOnMissAllowed() {
 		feed.CountLazyRefresh()
 		logger.Info(ctx, "timeline refresh on miss started", "user_id", userID)
-		if refreshErr := s.refresher.RefreshTimeline(ctx, userID); refreshErr != nil {
+		if refreshErr := s.refreshTimelineShared(ctx, userID); refreshErr != nil {
 			logger.LogError(ctx, refreshErr, "timeline refresh on miss failed", "user_id", userID)
 		} else {
 			logger.Info(ctx, "timeline refresh on miss completed", "user_id", userID)
@@ -310,6 +322,21 @@ func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID,
 		}
 	}
 	return items, next, nil
+}
+
+// refreshTimelineShared collapses concurrent on-miss rebuilds of one user's
+// timeline. A rebuild reads the whole following set and re-ranks up to
+// timeline_max_items posts, so N parallel requests from one cold user — a
+// refresh-spamming client, or the first page after a Redis flush — must not
+// run it N times. Detached from the leader's cancellation and bounded by its
+// own deadline, for the same reasons as the trending rebuild.
+func (s *FeedService) refreshTimelineShared(ctx context.Context, userID uuid.UUID) error {
+	_, err, _ := s.flight.Do("timeline-refresh:"+userID.String(), func() (any, error) {
+		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedRebuildTimeout)
+		defer cancel()
+		return nil, s.refresher.RefreshTimeline(refreshCtx, userID)
+	})
+	return err
 }
 
 func isEligibleTimelinePost(userID uuid.UUID, followingSet map[uuid.UUID]bool, p *feedentity.Post) bool {
@@ -730,6 +757,44 @@ func (s *FeedService) getTrending(ctx context.Context) ([]*feedentity.Post, erro
 		return cached, nil
 	}
 
+	// One flight rebuilds, the rest share the result: the trending key is
+	// global with one hard TTL, so its expiry is a synchronized miss across
+	// every in-flight page-1 request on this instance, each otherwise paying
+	// the provider fetch plus the DB aggregate. The rebuild detaches from the
+	// leader's cancellation (with its own deadline) so a leader disconnecting
+	// mid-fetch does not fail every waiter.
+	posts, err, _ := s.flight.Do("trending", func() (any, error) {
+		rebuildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedRebuildTimeout)
+		defer cancel()
+		return s.rebuildTrending(rebuildCtx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	shared, _ := posts.([]*feedentity.Post)
+	return copyPosts(shared), nil
+}
+
+// copyPosts returns per-caller copies of a shared post slice. Every caller of
+// a collapsed rebuild receives the same underlying posts, but downstream
+// enrichment writes viewer-specific fields (IsLiked, IsFollowingAuthor) onto
+// them — served shared, one viewer's flags would race into another's response.
+// A shallow copy is enough: enrichment only writes scalars, and Media/Author
+// are read-only past this point. The cache-hit path needs none of this, since
+// each request unmarshals its own instance from Redis.
+func copyPosts(shared []*feedentity.Post) []*feedentity.Post {
+	out := make([]*feedentity.Post, len(shared))
+	for i, p := range shared {
+		if p == nil {
+			continue
+		}
+		cp := *p
+		out[i] = &cp
+	}
+	return out
+}
+
+func (s *FeedService) rebuildTrending(ctx context.Context) ([]*feedentity.Post, error) {
 	var posts []*feedentity.Post
 
 	if s.trendingFetcher != nil {

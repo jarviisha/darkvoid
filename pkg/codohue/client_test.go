@@ -6,9 +6,78 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/jarviisha/codohue/pkg/codohuetypes"
+	"github.com/redis/go-redis/v9"
 )
+
+// recordingXAdder captures the args of the last XAdd call.
+type recordingXAdder struct {
+	lastArgs *redis.XAddArgs
+}
+
+func (r *recordingXAdder) XAdd(_ context.Context, a *redis.XAddArgs) *redis.StringCmd {
+	r.lastArgs = a
+	return redis.NewStringResult("1-1", nil)
+}
+
+// TestCappedXAdder_BoundsTheStream pins the producer-side MAXLEN: without it a
+// stalled Codohue consumer grows the events stream without limit on a Redis
+// that also holds the feed cache and prepared timelines.
+func TestCappedXAdder_BoundsTheStream(t *testing.T) {
+	inner := &recordingXAdder{}
+	capped := cappedXAdder{inner: inner, maxLen: eventsStreamMaxLen}
+
+	if err := capped.XAdd(context.Background(), &redis.XAddArgs{Stream: "codohue:events"}).Err(); err != nil {
+		t.Fatalf("XAdd: %v", err)
+	}
+	if inner.lastArgs == nil {
+		t.Fatal("inner XAdd not called")
+	}
+	if inner.lastArgs.MaxLen != eventsStreamMaxLen || !inner.lastArgs.Approx {
+		t.Fatalf("args = MaxLen %d, Approx %v — want approximate cap at %d",
+			inner.lastArgs.MaxLen, inner.lastArgs.Approx, int64(eventsStreamMaxLen))
+	}
+}
+
+func TestCappedXAdder_RespectsExplicitTrim(t *testing.T) {
+	inner := &recordingXAdder{}
+	capped := cappedXAdder{inner: inner, maxLen: eventsStreamMaxLen}
+
+	_ = capped.XAdd(context.Background(), &redis.XAddArgs{Stream: "s", MaxLen: 5}).Err()
+	if inner.lastArgs.MaxLen != 5 || inner.lastArgs.Approx {
+		t.Fatalf("explicit MaxLen overridden: %+v", inner.lastArgs)
+	}
+}
+
+// TestGetRecommendations_SlowProviderFailsFast pins the per-call deadline: a
+// Codohue that is slow but alive must turn into a fast failure (which the
+// breaker counts), not a tax on every feed page.
+func TestGetRecommendations_SlowProviderFailsFast(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done(): // client gave up — return so Close() does not hang
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "key", "ns", nil)
+	if client == nil {
+		t.Fatal("NewClient returned nil")
+	}
+
+	start := time.Now()
+	_, err := client.GetRecommendations(context.Background(), "user-1", 20, 0)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout error from a hanging provider")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("call took %v, want it bounded near recommendTimeout (%v)", elapsed, recommendTimeout)
+	}
+}
 
 func TestRecommendationPageFromResponse_MapsPaginatedItems(t *testing.T) {
 	page := recommendationPageFromResponse(&codohuetypes.Response{
