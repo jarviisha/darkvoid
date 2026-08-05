@@ -160,6 +160,17 @@ func (m *mockLikeRepo) GetLikedPostIDs(ctx context.Context, userID uuid.UUID, po
 	return nil, nil
 }
 
+// mockTrendingInvalidator records InvalidateTrending calls.
+type mockTrendingInvalidator struct {
+	calls int
+	err   error
+}
+
+func (m *mockTrendingInvalidator) InvalidateTrending(_ context.Context) error {
+	m.calls++
+	return m.err
+}
+
 // --------------------------------------------------------------------------
 // Helper functions
 // --------------------------------------------------------------------------

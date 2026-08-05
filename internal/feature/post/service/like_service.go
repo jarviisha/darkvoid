@@ -14,21 +14,15 @@ import (
 
 // LikeService handles like/unlike business logic
 type LikeService struct {
-	likeRepo            likeRepo
-	postRepo            postRepo
-	trendingInvalidator TrendingInvalidator     // optional, nil = no-op
-	notifEmitter        LikeNotificationEmitter // optional, nil = no-op
-	eventPublisher      BehaviorEventPublisher  // optional, nil = no-op
+	likeRepo       likeRepo
+	postRepo       postRepo
+	notifEmitter   LikeNotificationEmitter // optional, nil = no-op
+	eventPublisher BehaviorEventPublisher  // optional, nil = no-op
 }
 
 // NewLikeService creates a new LikeService
 func NewLikeService(likeRepo *repository.LikeRepository, postRepo *repository.PostRepository) *LikeService {
 	return &LikeService{likeRepo: likeRepo, postRepo: &postRepoTxable{postRepo}}
-}
-
-// WithTrendingInvalidator attaches a trending cache invalidator. Called at wire-up time.
-func (s *LikeService) WithTrendingInvalidator(inv TrendingInvalidator) {
-	s.trendingInvalidator = inv
 }
 
 // WithNotificationEmitter attaches a notification emitter. Called at wire-up time.
@@ -39,15 +33,6 @@ func (s *LikeService) WithNotificationEmitter(e LikeNotificationEmitter) {
 // WithBehaviorEventPublisher attaches a behavior event publisher. Called at wire-up time.
 func (s *LikeService) WithBehaviorEventPublisher(p BehaviorEventPublisher) {
 	s.eventPublisher = p
-}
-
-func (s *LikeService) invalidateTrending(ctx context.Context) {
-	if s.trendingInvalidator == nil {
-		return
-	}
-	if err := s.trendingInvalidator.InvalidateTrending(ctx); err != nil {
-		logger.LogError(ctx, err, "failed to invalidate trending cache")
-	}
 }
 
 // Like adds a like from userID to postID
@@ -67,7 +52,6 @@ func (s *LikeService) Like(ctx context.Context, userID, postID uuid.UUID) error 
 		logger.LogError(ctx, err, "failed to like post", "user_id", userID, "post_id", postID)
 		return errors.NewInternalError(err)
 	}
-	s.invalidateTrending(ctx)
 	s.emitLikeNotification(ctx, userID, p.AuthorID, postID)
 	s.publishBehaviorEvent(ctx, userID, postID, "LIKE", &p.CreatedAt)
 	logger.Info(ctx, "post liked", "user_id", userID, "post_id", postID)
@@ -88,7 +72,6 @@ func (s *LikeService) Unlike(ctx context.Context, userID, postID uuid.UUID) erro
 		logger.LogError(ctx, err, "failed to unlike post", "user_id", userID, "post_id", postID)
 		return errors.NewInternalError(err)
 	}
-	s.invalidateTrending(ctx)
 	s.deleteLikeNotification(ctx, userID, postID)
 	s.publishBehaviorEvent(ctx, userID, postID, "SKIP", &p.CreatedAt)
 	logger.Info(ctx, "post unliked", "user_id", userID, "post_id", postID)
@@ -121,7 +104,6 @@ func (s *LikeService) Toggle(ctx context.Context, userID, postID uuid.UUID) (boo
 			logger.LogError(ctx, err, "failed to unlike post", "user_id", userID, "post_id", postID)
 			return false, errors.NewInternalError(err)
 		}
-		s.invalidateTrending(ctx)
 		s.deleteLikeNotification(ctx, userID, postID)
 		s.publishBehaviorEvent(ctx, userID, postID, "SKIP", &p.CreatedAt)
 		logger.Info(ctx, "post unliked", "user_id", userID, "post_id", postID)
@@ -132,7 +114,6 @@ func (s *LikeService) Toggle(ctx context.Context, userID, postID uuid.UUID) (boo
 		logger.LogError(ctx, err, "failed to like post", "user_id", userID, "post_id", postID)
 		return false, errors.NewInternalError(err)
 	}
-	s.invalidateTrending(ctx)
 	s.emitLikeNotification(ctx, userID, p.AuthorID, postID)
 	s.publishBehaviorEvent(ctx, userID, postID, "LIKE", &p.CreatedAt)
 	logger.Info(ctx, "post liked", "user_id", userID, "post_id", postID)

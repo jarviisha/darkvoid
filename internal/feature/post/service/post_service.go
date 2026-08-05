@@ -45,6 +45,12 @@ func (s *PostService) WithFeedEventEmitter(e FeedEventEmitter) {
 	s.feedEmitter = e
 }
 
+// WithTrendingInvalidator wires a cross-context trending cache invalidator after construction.
+// Called by the app layer once the feed cache is ready.
+func (s *PostService) WithTrendingInvalidator(inv TrendingInvalidator) {
+	s.trendingInvalidator = inv
+}
+
 // WithObjectDeleter attaches a Codohue object deleter. Called at wire-up time.
 // When set, DeletePost will remove the post from the recommendation index after successful deletion.
 func (s *PostService) WithObjectDeleter(d ObjectDeleter) {
@@ -77,12 +83,13 @@ type PostService struct {
 	hashtagRepo   hashtagRepo
 	mentionRepo   mentionRepo // optional: nil → mentions skipped
 
-	notifEmitter      notificationEmitter // optional: nil → notifications skipped
-	feedEmitter       FeedEventEmitter    // optional: nil → feed propagation skipped
-	objectDeleter     ObjectDeleter       // optional: nil → no recommendation index cleanup on delete
-	embeddingProvider EmbeddingProvider   // optional: nil → no BYOE embeddings
-	objectEmbedder    ObjectEmbedder      // optional: nil → no BYOE embeddings
-	catalogIngester   CatalogIngester     // optional: non-nil → catalog mode, overrides the BYOE pair
+	notifEmitter        notificationEmitter // optional: nil → notifications skipped
+	feedEmitter         FeedEventEmitter    // optional: nil → feed propagation skipped
+	trendingInvalidator TrendingInvalidator // optional: nil → no-op
+	objectDeleter       ObjectDeleter       // optional: nil → no recommendation index cleanup on delete
+	embeddingProvider   EmbeddingProvider   // optional: nil → no BYOE embeddings
+	objectEmbedder      ObjectEmbedder      // optional: nil → no BYOE embeddings
+	catalogIngester     CatalogIngester     // optional: non-nil → catalog mode, overrides the BYOE pair
 }
 
 // NewPostService creates a new PostService. Required dependencies are passed as positional
@@ -177,6 +184,19 @@ func (s *PostService) CreatePost(ctx context.Context, authorID uuid.UUID, conten
 
 	logger.Info(ctx, "post created", "post_id", p.ID, "author_id", authorID)
 	return p, nil
+}
+
+// invalidateTrending evicts the trending cache. The cache holds fully
+// serialized posts served straight into feeds, so it is evicted when a post's
+// stored content or visibility changes — not on engagement, whose freshness is
+// bounded by the cache TTL instead.
+func (s *PostService) invalidateTrending(ctx context.Context) {
+	if s.trendingInvalidator == nil {
+		return
+	}
+	if err := s.trendingInvalidator.InvalidateTrending(ctx); err != nil {
+		logger.LogError(ctx, err, "failed to invalidate trending cache after post change")
+	}
 }
 
 func (s *PostService) emitPostCreatedFeedEvent(ctx context.Context, p *entity.Post) {
@@ -318,6 +338,10 @@ func (s *PostService) UpdatePost(ctx context.Context, postID, userID uuid.UUID, 
 	// Enrich mentions and fire notifications AFTER commit (non-fatal)
 	updated.Mentions = s.enrichMentionsAfterCommit(ctx, postID, userID, persistedMentionIDs)
 
+	// The trending cache may hold this post's old content or visibility;
+	// without eviction a post edited private keeps serving publicly until TTL.
+	s.invalidateTrending(ctx)
+
 	s.enrichBatch(ctx, []*entity.Post{updated}, &userID)
 	s.enrichAuthors(ctx, []*entity.Post{updated})
 	s.enrichTags(ctx, []*entity.Post{updated})
@@ -345,6 +369,10 @@ func (s *PostService) DeletePost(ctx context.Context, postID, userID uuid.UUID) 
 		logger.LogError(ctx, err, "failed to delete post", "post_id", postID)
 		return errors.NewInternalError(err)
 	}
+
+	// The trending cache serves full posts without re-checking the DB, so a
+	// deleted post would keep appearing in feeds until TTL without eviction.
+	s.invalidateTrending(ctx)
 
 	// Remove the post from the recommendation index so it no longer appears in suggestions.
 	// Fire-and-forget — a failure here does not roll back the deletion.

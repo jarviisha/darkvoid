@@ -41,12 +41,6 @@ func WithCommentLikeRepo(r commentLikeRepo) CommentServiceOption {
 	return func(s *CommentService) { s.commentLikeRepo = r }
 }
 
-// WithTrendingInvalidator wires a cross-context trending cache invalidator after construction.
-// Called by the app layer once the feed cache is ready.
-func (s *CommentService) WithTrendingInvalidator(inv TrendingInvalidator) {
-	s.trendingInvalidator = inv
-}
-
 // WithNotificationEmitter wires a cross-context notification emitter after construction.
 // Called by the app layer once the notification context is ready.
 func (s *CommentService) WithNotificationEmitter(e CommentNotificationEmitter) {
@@ -65,16 +59,15 @@ func WithCommentMentionRepo(r commentMentionRepo) CommentServiceOption {
 
 // CommentService handles comment business logic
 type CommentService struct {
-	pool                txBeginner
-	commentRepo         commentRepo
-	commentMediaRepo    commentMediaRepo
-	postRepo            postRepo
-	userReader          userReader
-	commentLikeRepo     commentLikeRepo            // optional: nil → is-liked skipped
-	trendingInvalidator TrendingInvalidator        // optional: nil → no-op
-	notifEmitter        CommentNotificationEmitter // optional: nil → no-op
-	commentMentionRepo  commentMentionRepo         // optional: nil → mentions skipped
-	eventPublisher      BehaviorEventPublisher     // optional: nil → no-op
+	pool               txBeginner
+	commentRepo        commentRepo
+	commentMediaRepo   commentMediaRepo
+	postRepo           postRepo
+	userReader         userReader
+	commentLikeRepo    commentLikeRepo            // optional: nil → is-liked skipped
+	notifEmitter       CommentNotificationEmitter // optional: nil → no-op
+	commentMentionRepo commentMentionRepo         // optional: nil → mentions skipped
+	eventPublisher     BehaviorEventPublisher     // optional: nil → no-op
 }
 
 // NewCommentService creates a new CommentService. Required dependencies are passed as positional
@@ -98,15 +91,6 @@ func NewCommentService(
 		opt(s)
 	}
 	return s
-}
-
-func (s *CommentService) invalidateTrending(ctx context.Context) {
-	if s.trendingInvalidator == nil {
-		return
-	}
-	if err := s.trendingInvalidator.InvalidateTrending(ctx); err != nil {
-		logger.LogError(ctx, err, "failed to invalidate trending cache after comment change")
-	}
 }
 
 func (s *CommentService) publishBehaviorEvent(ctx context.Context, userID, postID uuid.UUID, action string, objectCreatedAt *time.Time) {
@@ -175,7 +159,6 @@ func (s *CommentService) CreateComment(ctx context.Context, postID, authorID uui
 	}
 
 	s.enrichAuthors(ctx, []*entity.Comment{c})
-	s.invalidateTrending(ctx)
 	s.publishBehaviorEvent(ctx, authorID, postID, "COMMENT", &p.CreatedAt)
 
 	// Persist mentions — non-fatal side-effect
@@ -508,7 +491,6 @@ func (s *CommentService) DeleteComment(ctx context.Context, commentID, userID uu
 		logger.LogError(ctx, err, "failed to delete comment", "comment_id", commentID)
 		return errors.NewInternalError(err)
 	}
-	s.invalidateTrending(ctx)
 	logger.Info(ctx, "comment deleted", "comment_id", commentID)
 	return nil
 }

@@ -141,9 +141,13 @@ func (ctx *PostContext) WireFollowChecker(followService postFollowService) {
 	ctx.postService.WithFollowChecker(&postFollowChecker{followService: followService})
 }
 
+// WireFeedCacheInvalidator wires trending cache eviction into the post service.
+// Only content-changing mutations (update, delete) evict: the cache serves fully
+// serialized posts, so stale content or visibility must not outlive the change,
+// while engagement counts may go stale until the cache TTL — evicting on every
+// like/comment kept the cache permanently cold under load.
 func (ctx *PostContext) WireFeedCacheInvalidator(inv service.TrendingInvalidator) {
-	ctx.likeService.WithTrendingInvalidator(inv)
-	ctx.commentService.WithTrendingInvalidator(inv)
+	ctx.postService.WithTrendingInvalidator(inv)
 }
 
 func (ctx *PostContext) WireFeedEventEmitter(e service.FeedEventEmitter) {

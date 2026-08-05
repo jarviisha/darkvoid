@@ -366,6 +366,52 @@ func TestUpdatePost_Success(t *testing.T) {
 	}
 }
 
+func TestUpdatePost_InvalidatesTrending(t *testing.T) {
+	authorID := uuid.New()
+	postID := uuid.New()
+	pr := &mockPostRepo{
+		getByID: func(_ context.Context, _ uuid.UUID) (*entity.Post, error) {
+			p := samplePost(authorID)
+			p.ID = postID
+			return p, nil
+		},
+		update: func(_ context.Context, _ uuid.UUID, content string, v entity.Visibility) (*entity.Post, error) {
+			return &entity.Post{ID: postID, AuthorID: authorID, Content: content, Visibility: v, CreatedAt: time.Now(), UpdatedAt: time.Now()}, nil
+		},
+	}
+	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
+	inv := &mockTrendingInvalidator{}
+	svc.WithTrendingInvalidator(inv)
+
+	if _, err := svc.UpdatePost(context.Background(), postID, authorID, "updated", entity.VisibilityPrivate, nil, nil); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if inv.calls != 1 {
+		t.Errorf("expected trending invalidated once, got %d calls", inv.calls)
+	}
+}
+
+func TestUpdatePost_TrendingInvalidatorFailureDoesNotFailUpdate(t *testing.T) {
+	authorID := uuid.New()
+	postID := uuid.New()
+	pr := &mockPostRepo{
+		getByID: func(_ context.Context, _ uuid.UUID) (*entity.Post, error) {
+			p := samplePost(authorID)
+			p.ID = postID
+			return p, nil
+		},
+		update: func(_ context.Context, _ uuid.UUID, content string, v entity.Visibility) (*entity.Post, error) {
+			return &entity.Post{ID: postID, AuthorID: authorID, Content: content, Visibility: v, CreatedAt: time.Now(), UpdatedAt: time.Now()}, nil
+		},
+	}
+	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
+	svc.WithTrendingInvalidator(&mockTrendingInvalidator{err: pkgerrors.ErrNotFound})
+
+	if _, err := svc.UpdatePost(context.Background(), postID, authorID, "updated", entity.VisibilityPublic, nil, nil); err != nil {
+		t.Fatalf("update must succeed despite invalidator failure, got %v", err)
+	}
+}
+
 func TestUpdatePost_NotFound(t *testing.T) {
 	pr := &mockPostRepo{
 		getByID: func(_ context.Context, _ uuid.UUID) (*entity.Post, error) {
@@ -438,6 +484,26 @@ func TestDeletePost_Success(t *testing.T) {
 	}
 	if !deleteCalled {
 		t.Error("expected Delete to be called")
+	}
+}
+
+func TestDeletePost_InvalidatesTrending(t *testing.T) {
+	authorID := uuid.New()
+	pr := &mockPostRepo{
+		getByID: func(_ context.Context, _ uuid.UUID) (*entity.Post, error) {
+			return samplePost(authorID), nil
+		},
+		delete: func(_ context.Context, _ uuid.UUID) error { return nil },
+	}
+	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
+	inv := &mockTrendingInvalidator{}
+	svc.WithTrendingInvalidator(inv)
+
+	if err := svc.DeletePost(context.Background(), uuid.New(), authorID); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if inv.calls != 1 {
+		t.Errorf("expected trending invalidated once, got %d calls", inv.calls)
 	}
 }
 
