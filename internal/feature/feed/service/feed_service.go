@@ -281,7 +281,14 @@ func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID,
 			break
 		}
 	}
-	feed.CountStaleFiltered(len(page.Entries) - len(items))
+	// Stale = entries examined but not served. On a full page only entries up
+	// to the last kept one were examined; counting the whole read window would
+	// report healthy beyond-the-page entries as stale.
+	considered := len(page.Entries)
+	if len(items) == pageSize {
+		considered = entryOrder[items[len(items)-1].Post.ID] + 1
+	}
+	feed.CountStaleFiltered(considered - len(items))
 	s.enrichIsLiked(ctx, userID, items)
 	s.enrichIsFollowingAuthor(items, followingSet)
 

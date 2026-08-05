@@ -176,14 +176,15 @@ func TestFanoutWorker_MaxFollowersFollowsSettingsChange(t *testing.T) {
 		followers[i] = uuid.New()
 	}
 	store := &recordingTimelineStore{}
-	worker := NewFanoutWorker(&mockFollowerReader{ids: followers}, store, settings)
+	worker := NewFanoutWorker(&mockFollowerReader{ids: followers}, store, nil, settings)
 
 	event := Event{Type: EventPostCreated, PostID: uuid.New(), AuthorID: uuid.New(), Score: 1}
 	if err := worker.HandleFeedEvent(context.Background(), event); err != nil {
 		t.Fatalf("HandleFeedEvent: %v", err)
 	}
-	if got := countTimelineWrites(store); got != 3 {
-		t.Fatalf("writes = %d, want 3", got)
+	// The cap bounds followers only; the author's own write rides outside it.
+	if got := countTimelineWrites(store); got != 4 {
+		t.Fatalf("writes = %d, want capped 3 followers + author", got)
 	}
 
 	rs := DefaultRuntimeSettings()
@@ -194,8 +195,8 @@ func TestFanoutWorker_MaxFollowersFollowsSettingsChange(t *testing.T) {
 	if err := worker.HandleFeedEvent(context.Background(), event); err != nil {
 		t.Fatalf("HandleFeedEvent after settings change: %v", err)
 	}
-	if got := countTimelineWrites(store); got != 1 {
-		t.Fatalf("writes after lowering the cap = %d, want 1", got)
+	if got := countTimelineWrites(store); got != 2 {
+		t.Fatalf("writes after lowering the cap = %d, want 1 follower + author", got)
 	}
 }
 
@@ -208,7 +209,7 @@ func TestFanoutWorker_NonPositiveCapReadsAsDefault(t *testing.T) {
 		"nil":      nil,
 	} {
 		t.Run(name, func(t *testing.T) {
-			w := NewFanoutWorker(&mockFollowerReader{}, &recordingTimelineStore{}, settings)
+			w := NewFanoutWorker(&mockFollowerReader{}, &recordingTimelineStore{}, nil, settings)
 			if got := w.maxFollowers(); got != DefaultRuntimeSettings().FanoutMaxFollowers {
 				t.Fatalf("maxFollowers() = %d, want the default", got)
 			}

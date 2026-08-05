@@ -71,8 +71,11 @@ func SetupFeedContext(
 	timelineStore := feedcache.NewRedisTimelineStore(redisClient, settings)
 	feedSvc.WithTimelineStore(timelineStore)
 	feedSvc.WithSettings(settings)
-	feedSvc.WithTimelineRefresher(feed.NewPreparedTimelineRefresher(postReader, followReader, timelineStore, ranker, settings))
-	fanoutWorker := feed.NewFanoutWorker(followReader, timelineStore, settings)
+	// One refresher serves both consumers: the read path's refresh-on-miss and
+	// the fanout worker's follow-change rebuild.
+	refresher := feed.NewPreparedTimelineRefresher(postReader, followReader, timelineStore, ranker, settings)
+	feedSvc.WithTimelineRefresher(refresher)
+	fanoutWorker := feed.NewFanoutWorker(followReader, timelineStore, refresher, settings)
 	// Workers and queue size stay environment-fed: they allocate a goroutine pool
 	// and a channel here, so a stored value could not take effect without
 	// rebuilding the dispatcher. See migrations/settings/000002.

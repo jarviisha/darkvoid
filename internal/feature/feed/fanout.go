@@ -9,7 +9,9 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
 
-// FanoutWorker writes post-created events into followers' prepared timelines.
+// FanoutWorker maintains prepared timelines from feed events: post-created
+// events are written into the author's and followers' timelines, and follow
+// changes rebuild the follower's timeline from their current follow graph.
 //
 // The follower cap is read from settings per event rather than captured here, so
 // lowering it takes effect on the next post instead of the next restart — which
@@ -18,13 +20,15 @@ import (
 type FanoutWorker struct {
 	followerReader FollowerReader
 	timeline       TimelineStore
+	refresher      TimelineRefresher // optional: nil → follow changes are ignored
 	settings       *Settings
 }
 
-func NewFanoutWorker(followerReader FollowerReader, timeline TimelineStore, settings *Settings) *FanoutWorker {
+func NewFanoutWorker(followerReader FollowerReader, timeline TimelineStore, refresher TimelineRefresher, settings *Settings) *FanoutWorker {
 	return &FanoutWorker{
 		followerReader: followerReader,
 		timeline:       timeline,
+		refresher:      refresher,
 		settings:       settings,
 	}
 }
@@ -47,12 +51,38 @@ func (w *FanoutWorker) HandleFeedEvent(ctx context.Context, event Event) error {
 	switch event.Type {
 	case EventPostCreated:
 		return w.handlePostCreated(ctx, event)
+	case EventFollowCreated, EventFollowDeleted:
+		return w.handleFollowChanged(ctx, event)
 	default:
 		return nil
 	}
 }
 
+// handleFollowChanged rebuilds the actor's prepared timeline from their
+// current follow graph. A new follow needs the followee's existing posts
+// backfilled — fan-out only covers posts created after the follow. Unfollowed
+// authors' entries are upserted around rather than deleted: read-side
+// eligibility filtering already hides them, and a delete-and-rewrite would
+// lose fan-out writes landing between the rebuild's DB read and its store
+// write.
+func (w *FanoutWorker) handleFollowChanged(ctx context.Context, event Event) error {
+	if w.refresher == nil || event.ActorID == uuid.Nil {
+		return nil
+	}
+	if err := w.refresher.RefreshTimeline(ctx, event.ActorID); err != nil {
+		CountFanoutError()
+		return fmt.Errorf("refresh timeline after follow change: %w", err)
+	}
+	return nil
+}
+
 func (w *FanoutWorker) handlePostCreated(ctx context.Context, event Event) error {
+	// A private post never hydrates on the read path (the batch post query
+	// filters it out), so writing it anywhere would only plant entries that
+	// read as permanently stale.
+	if event.Visibility == "private" {
+		return nil
+	}
 	start := time.Now()
 	followers, err := w.followerReader.GetFollowerIDs(ctx, event.AuthorID)
 	if err != nil {
@@ -66,11 +96,18 @@ func (w *FanoutWorker) handlePostCreated(ctx context.Context, event Event) error
 		CountFanoutCapped()
 		logger.Info(ctx, "fanout follower list capped", "post_id", event.PostID, "author_id", event.AuthorID, "followers", originalFollowerCount, "cap", followerCap)
 	}
+	// The author reads their own feed from this same prepared timeline, and
+	// fan-out is the only writer of fresh posts into it — without the author
+	// as a recipient, they are the one user who never sees their own post.
+	// Prepended after the cap so a capped follower list cannot squeeze them out.
+	recipients := make([]uuid.UUID, 0, len(followers)+1)
+	recipients = append(recipients, event.AuthorID)
+	recipients = append(recipients, followers...)
 	entry := TimelineEntry{PostID: event.PostID, Score: event.Score}
 	var attempted, succeeded, failed int
 	var lastErr error
-	for _, followerID := range followers {
-		if followerID == uuid.Nil {
+	for _, recipientID := range recipients {
+		if recipientID == uuid.Nil {
 			continue
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -78,11 +115,11 @@ func (w *FanoutWorker) handlePostCreated(ctx context.Context, event Event) error
 			break
 		}
 		attempted++
-		if err := w.timeline.AddPost(ctx, followerID, entry); err != nil {
+		if err := w.timeline.AddPost(ctx, recipientID, entry); err != nil {
 			CountFanoutError()
 			failed++
 			lastErr = err
-			logger.LogError(ctx, err, "fanout timeline write failed", "post_id", event.PostID, "follower_id", followerID)
+			logger.LogError(ctx, err, "fanout timeline write failed", "post_id", event.PostID, "recipient_id", recipientID)
 			continue
 		}
 		succeeded++
