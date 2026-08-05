@@ -101,6 +101,38 @@ func TestFeedCursor_Positions(t *testing.T) {
 	}
 }
 
+func TestFeedCursor_FollowingAndDiscoverRoundTrip(t *testing.T) {
+	flTS := time.Now().UTC().Truncate(time.Microsecond)
+	discTS := flTS.Add(-time.Hour)
+	flNano := flTS.UnixNano()
+	discNano := discTS.UnixNano()
+	flPostID := uuid.NewString()
+	discPostID := uuid.NewString()
+
+	encoded := (&FeedCursor{
+		FollowingCreatedAt: &flNano,
+		FollowingPostID:    flPostID,
+		DiscoverCreatedAt:  &discNano,
+		DiscoverPostID:     discPostID,
+	}).Encode()
+	decoded, err := DecodeFeedCursor(encoded)
+	if err != nil {
+		t.Fatalf("DecodeFeedCursor: %v", err)
+	}
+	if !decoded.HasContinuation() {
+		t.Fatalf("expected continuation state: %+v", decoded)
+	}
+
+	following := decoded.FollowingPosition()
+	if following == nil || !following.CreatedAt.Equal(flTS) || following.PostID != flPostID || following.Mode != ModeFollowing {
+		t.Fatalf("following position = %+v, want (%s, %s)", following, flTS, flPostID)
+	}
+	discover := decoded.DiscoverPosition()
+	if discover == nil || !discover.CreatedAt.Equal(discTS) || discover.PostID != discPostID {
+		t.Fatalf("discover position = %+v, want (%s, %s)", discover, discTS, discPostID)
+	}
+}
+
 func TestDecodeFeedCursor_RejectsObsoletePayloads(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -145,6 +177,12 @@ func TestFeedCursor_RejectsInvalidFields(t *testing.T) {
 		{name: "trending post ID without score", cursor: &FeedCursor{TrendingPostID: uuid.NewString()}},
 		{name: "invalid trending post ID", cursor: &FeedCursor{TrendingScore: &validTrend, TrendingPostID: "not-a-uuid"}},
 		{name: "invalid timeline user", cursor: &FeedCursor{TimelineUser: "not-a-uuid"}},
+		{name: "following timestamp missing post ID", cursor: &FeedCursor{FollowingCreatedAt: &validTimeline}},
+		{name: "following post ID without timestamp", cursor: &FeedCursor{FollowingPostID: uuid.NewString()}},
+		{name: "invalid following post ID", cursor: &FeedCursor{FollowingCreatedAt: &validTimeline, FollowingPostID: "not-a-uuid"}},
+		{name: "discover timestamp missing post ID", cursor: &FeedCursor{DiscoverCreatedAt: &validTimeline}},
+		{name: "discover post ID without timestamp", cursor: &FeedCursor{DiscoverPostID: uuid.NewString()}},
+		{name: "invalid discover post ID", cursor: &FeedCursor{DiscoverCreatedAt: &validTimeline, DiscoverPostID: "not-a-uuid"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -169,6 +207,8 @@ func TestFeedCursor_ValidateForUser(t *testing.T) {
 func TestFeedCursor_FieldNames(t *testing.T) {
 	tlScore := int64(1)
 	trendScore := 2.0
+	flTS := int64(4)
+	discTS := int64(5)
 	raw, err := base64.RawURLEncoding.DecodeString((&FeedCursor{
 		TimelineScore:        &tlScore,
 		TimelinePostID:       uuid.NewString(),
@@ -176,11 +216,15 @@ func TestFeedCursor_FieldNames(t *testing.T) {
 		RecommendationOffset: 3,
 		TrendingScore:        &trendScore,
 		TrendingPostID:       uuid.NewString(),
+		FollowingCreatedAt:   &flTS,
+		FollowingPostID:      uuid.NewString(),
+		DiscoverCreatedAt:    &discTS,
+		DiscoverPostID:       uuid.NewString(),
 	}).Encode())
 	if err != nil {
 		t.Fatalf("decode cursor: %v", err)
 	}
-	for _, field := range []string{"tl_score", "tl_post_id", "tl_user", "rec_offset", "trend_score", "trend_post_id"} {
+	for _, field := range []string{"tl_score", "tl_post_id", "tl_user", "rec_offset", "trend_score", "trend_post_id", "fl_ts", "fl_post_id", "disc_ts", "disc_post_id"} {
 		if !json.Valid(raw) {
 			t.Fatalf("cursor is not JSON: %s", raw)
 		}

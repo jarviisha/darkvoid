@@ -36,6 +36,14 @@ type TrendPosition struct {
 }
 
 // FeedCursor is the opaque continuation token for GET /feed.
+//
+// Following and Discover carry (created_at unix-nano, post_id) DB positions.
+// Following advances the mixed path through followed authors' posts; Discover
+// marks that the feed has handed off to the public discover stream and where
+// to resume it. The two are deliberately shaped alike: when the following
+// source runs dry mid-scroll, its position becomes the discover position, so
+// the feed continues chronologically below the last following post served
+// instead of restarting from the top.
 type FeedCursor struct {
 	TimelineScore        *int64   `json:"tl_score,omitempty"`
 	TimelinePostID       string   `json:"tl_post_id,omitempty"`
@@ -43,6 +51,10 @@ type FeedCursor struct {
 	RecommendationOffset int      `json:"rec_offset,omitempty"`
 	TrendingScore        *float64 `json:"trend_score,omitempty"`
 	TrendingPostID       string   `json:"trend_post_id,omitempty"`
+	FollowingCreatedAt   *int64   `json:"fl_ts,omitempty"`
+	FollowingPostID      string   `json:"fl_post_id,omitempty"`
+	DiscoverCreatedAt    *int64   `json:"disc_ts,omitempty"`
+	DiscoverPostID       string   `json:"disc_post_id,omitempty"`
 }
 
 // Encode returns the base64 JSON representation of the feed cursor.
@@ -113,6 +125,20 @@ func (c *FeedCursor) Validate() error {
 	} else if c.TrendingPostID != "" {
 		return fmt.Errorf("trending post_id without trending score")
 	}
+	if c.FollowingCreatedAt != nil {
+		if _, err := uuid.Parse(c.FollowingPostID); err != nil {
+			return fmt.Errorf("invalid following cursor post_id")
+		}
+	} else if c.FollowingPostID != "" {
+		return fmt.Errorf("following post_id without following timestamp")
+	}
+	if c.DiscoverCreatedAt != nil {
+		if _, err := uuid.Parse(c.DiscoverPostID); err != nil {
+			return fmt.Errorf("invalid discover cursor post_id")
+		}
+	} else if c.DiscoverPostID != "" {
+		return fmt.Errorf("discover post_id without discover timestamp")
+	}
 	if c.TimelineUser != "" {
 		if _, err := uuid.Parse(c.TimelineUser); err != nil {
 			return fmt.Errorf("invalid timeline cursor user")
@@ -151,9 +177,26 @@ func (c *FeedCursor) TrendingPosition() *TrendPosition {
 	return &TrendPosition{Score: *c.TrendingScore, PostID: c.TrendingPostID}
 }
 
+// FollowingPosition returns the following source continuation point.
+func (c *FeedCursor) FollowingPosition() *FollowingCursor {
+	if c == nil || c.FollowingCreatedAt == nil {
+		return nil
+	}
+	return &FollowingCursor{Mode: ModeFollowing, CreatedAt: time.Unix(0, *c.FollowingCreatedAt).UTC(), PostID: c.FollowingPostID}
+}
+
+// DiscoverPosition returns the discover stream continuation point.
+func (c *FeedCursor) DiscoverPosition() *DiscoverCursor {
+	if c == nil || c.DiscoverCreatedAt == nil {
+		return nil
+	}
+	return &DiscoverCursor{CreatedAt: time.Unix(0, *c.DiscoverCreatedAt).UTC(), PostID: c.DiscoverPostID}
+}
+
 // HasContinuation reports whether any source has remaining cursor state.
 func (c *FeedCursor) HasContinuation() bool {
-	return c != nil && (c.TimelineScore != nil || c.RecommendationOffset > 0 || c.TrendingScore != nil)
+	return c != nil && (c.TimelineScore != nil || c.RecommendationOffset > 0 || c.TrendingScore != nil ||
+		c.FollowingCreatedAt != nil || c.DiscoverCreatedAt != nil)
 }
 
 // DiscoverCursor is a composite pagination cursor (created_at, post_id) for the discover feed.

@@ -2293,7 +2293,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Get a scored, cursor-paginated feed from the prepared timeline, with timeline/recommendation/trending positions encoded in a no-version opaque cursor. Versioned, nested timeline, and session-backed feed cursors are rejected.",
+                "description": "Get a scored, cursor-paginated feed from the prepared timeline, with timeline/following/recommendation/trending/discover positions encoded in a no-version opaque cursor. Versioned, nested timeline, and session-backed feed cursors are rejected.",
                 "produces": [
                     "application/json"
                 ],

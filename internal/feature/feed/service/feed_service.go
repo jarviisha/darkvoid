@@ -88,7 +88,18 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 			return nil, nil, errors.NewBadRequestError("invalid cursor")
 		}
 	}
-	if s.timelineReadAllowed(userID) {
+	// Once the feed has handed off to the discover stream it stays there:
+	// the mixed sources are already exhausted for this scroll, so re-collecting
+	// them would only re-serve posts the earlier pages showed.
+	if pos := cursor.DiscoverPosition(); pos != nil {
+		return s.discoverFallback(ctx, userID, pos)
+	}
+	// The prepared timeline serves fresh reads and its own continuations. A
+	// cursor holding mixed-path state (following/trending/recommendation) means
+	// this scroll started on the mixed path — switching to the timeline
+	// mid-scroll would restart from its top and duplicate what the mixed pages
+	// already served.
+	if s.timelineReadAllowed(userID) && (cursor == nil || cursor.TimelinePosition() != nil) {
 		items, next, err := s.getFeedFromTimeline(ctx, userID, cursor)
 		if err == nil && len(items) > 0 {
 			feed.CountTimelineHit()
@@ -125,7 +136,10 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 	if len(candidates) == 0 && !followingFetched {
 		feed.CountFallback()
 		logger.Info(ctx, "feed fallback entered", "user_id", userID)
-		return s.discoverFallback(ctx, userID, nil)
+		// Hand off at the following position when there is one: the discover
+		// stream then continues chronologically below the last following post
+		// served, instead of restarting from the newest public post.
+		return s.discoverFallback(ctx, userID, discoverHandoff(cursor))
 	}
 
 	now := time.Now().UTC()
@@ -143,7 +157,18 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 	if len(page) == 0 {
 		return nil, nil, nil
 	}
-	return page, nextMixedCursor(userID, page, recOffset, recTotal, trendHasMore), nil
+	return page, nextMixedCursor(userID, page, cursor, recOffset, recTotal, trendHasMore), nil
+}
+
+// discoverHandoff converts a following continuation into a discover one. The
+// two cursors share (created_at, post_id) semantics, which is what makes the
+// hand-off seamless: discover resumes exactly where following ran dry.
+func discoverHandoff(cursor *feed.FeedCursor) *feed.DiscoverCursor {
+	pos := cursor.FollowingPosition()
+	if pos == nil {
+		return nil
+	}
+	return &feed.DiscoverCursor{CreatedAt: pos.CreatedAt, PostID: pos.PostID}
 }
 
 func (s *FeedService) timelineReadAllowed(userID uuid.UUID) bool {
@@ -322,7 +347,7 @@ func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UU
 	recommendationOffset := recommendationOffset(cursor)
 	candidates := make([]feedCandidate, 0, pageSize*fetchMultiplier)
 
-	followingPosts, err := s.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, nil, pageSize*fetchMultiplier)
+	followingPosts, err := s.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, cursor.FollowingPosition(), pageSize*fetchMultiplier)
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get following posts", "user_id", userID)
 		return nil, recommendationOffset, 0, false, false, errors.NewInternalError(err)
@@ -464,7 +489,7 @@ func sourcePriority(source feedentity.Source) int {
 	}
 }
 
-func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, recOffset, recTotal int, trendHasMore bool) *feed.FeedCursor {
+func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *feed.FeedCursor, recOffset, recTotal int, trendHasMore bool) *feed.FeedCursor {
 	next := &feed.FeedCursor{TimelineUser: userID.String()}
 	if recTotal > 0 && recOffset < recTotal {
 		next.RecommendationOffset = recOffset
@@ -481,10 +506,43 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, recOffset, r
 			break
 		}
 	}
+	// The following position advances to the oldest following post served on
+	// this page — the page is score-ordered, so "oldest shown" rather than
+	// "last shown" is what keeps the DB scan monotone. Fetched-but-unshown
+	// posts older than it get refetched next page and keep their chance; when
+	// no following post made the page, the incoming position carries over
+	// unchanged so nothing already served is refetched from the top.
+	if oldest := oldestFollowingShown(page); oldest != nil {
+		ts := oldest.CreatedAt.UnixNano()
+		next.FollowingCreatedAt = &ts
+		next.FollowingPostID = oldest.ID.String()
+	} else if incoming != nil && incoming.FollowingCreatedAt != nil {
+		next.FollowingCreatedAt = incoming.FollowingCreatedAt
+		next.FollowingPostID = incoming.FollowingPostID
+	}
 	if !next.HasContinuation() {
 		return nil
 	}
 	return next
+}
+
+// oldestFollowingShown returns the following-source post on the page with the
+// smallest (created_at, id) — the continuation point for the next DB scan,
+// matching GetFollowingPostsWithCursor's (created_at, id) < (ts, id) ordering.
+func oldestFollowingShown(page []*feedentity.FeedItem) *feedentity.Post {
+	var oldest *feedentity.Post
+	for _, item := range page {
+		if item.Source != feedentity.SourceFollowing || item.Post == nil {
+			continue
+		}
+		p := item.Post
+		if oldest == nil ||
+			p.CreatedAt.Before(oldest.CreatedAt) ||
+			(p.CreatedAt.Equal(oldest.CreatedAt) && p.ID.String() < oldest.ID.String()) {
+			oldest = p
+		}
+	}
+	return oldest
 }
 
 func (s *FeedService) rankCandidates(ctx context.Context, candidates []feedCandidate, followingSet map[uuid.UUID]bool, now time.Time) []*feedentity.FeedItem {
@@ -554,10 +612,15 @@ func (s *FeedService) getFollowingIDs(ctx context.Context, userID uuid.UUID) ([]
 }
 
 func (s *FeedService) discoverFallback(ctx context.Context, userID uuid.UUID, cursor *feed.DiscoverCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
-	posts, err := s.postReader.GetDiscoverWithCursor(ctx, cursor, pageSize, nil)
+	// Fetch one extra to detect whether a next page exists.
+	posts, err := s.postReader.GetDiscoverWithCursor(ctx, cursor, pageSize+1, nil)
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get discover fallback", "user_id", userID)
 		return nil, nil, errors.NewInternalError(err)
+	}
+	hasMore := len(posts) > pageSize
+	if hasMore {
+		posts = posts[:pageSize]
 	}
 
 	now := time.Now().UTC()
@@ -566,6 +629,9 @@ func (s *FeedService) discoverFallback(ctx context.Context, userID uuid.UUID, cu
 		logger.LogError(ctx, rankErr, "ranker failed in discover fallback", "user_id", userID)
 		scores = make(map[string]float64)
 	}
+	// Items keep DB (created_at, id) order — the order the cursor paginates in.
+	// Scores are attached for observability only; re-sorting by them here would
+	// desync the served order from the continuation point.
 	items := make([]*feedentity.FeedItem, 0, len(posts))
 	for _, p := range posts {
 		items = append(items, &feedentity.FeedItem{
@@ -577,7 +643,18 @@ func (s *FeedService) discoverFallback(ctx context.Context, userID uuid.UUID, cu
 
 	s.enrichIsLiked(ctx, userID, items)
 	s.enrichIsFollowingAuthorFromDB(ctx, userID, items)
-	return items, nil, nil
+
+	var next *feed.FeedCursor
+	if hasMore && len(posts) > 0 {
+		last := posts[len(posts)-1]
+		ts := last.CreatedAt.UnixNano()
+		next = &feed.FeedCursor{
+			TimelineUser:      userID.String(),
+			DiscoverCreatedAt: &ts,
+			DiscoverPostID:    last.ID.String(),
+		}
+	}
+	return items, next, nil
 }
 
 // enrichIsLiked batch-fetches like status for the viewer and sets Post.IsLiked.

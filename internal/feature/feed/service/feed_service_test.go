@@ -642,16 +642,29 @@ func TestGetFeed_SupplementalProviderFailuresReturnValidFeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFeed: %v", err)
 	}
-	if cursor != nil {
-		t.Fatalf("cursor = %+v, want nil when supplemental providers fail and local page is exhausted", cursor)
-	}
 	if len(page) != 1 || page[0].Post.ID != local.ID {
 		t.Fatalf("expected local feed item despite supplemental failures, got %+v", page)
 	}
+	// The page served a following post, so the cursor must carry the following
+	// continuation — provider failures do not end the scroll.
+	if cursor == nil || cursor.FollowingCreatedAt == nil || cursor.FollowingPostID != local.ID.String() {
+		t.Fatalf("cursor = %+v, want following continuation at the served post", cursor)
+	}
+
+	// The continuation drains cleanly: no more following posts and no discover
+	// content behind them means an empty final page with no cursor.
+	page2, next, err := svc.GetFeed(context.Background(), userID, cursor)
+	if err != nil {
+		t.Fatalf("GetFeed page2: %v", err)
+	}
+	if len(page2) != 0 || next != nil {
+		t.Fatalf("page2 len/cursor = %d/%+v, want exhausted scroll", len(page2), next)
+	}
 }
 
-func TestGetFeed_DiscoverFallbackDoesNotEmitFeedCursor(t *testing.T) {
+func TestGetFeed_DiscoverFallbackPaginatesWithoutDuplicates(t *testing.T) {
 	now := time.Now().UTC()
+	userID := uuid.New()
 	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
 	posts := make([]*feedentity.Post, 0, pageSize+2)
 	for i := 0; i < pageSize+2; i++ {
@@ -662,12 +675,36 @@ func TestGetFeed_DiscoverFallbackDoesNotEmitFeedCursor(t *testing.T) {
 	reader.discover = posts
 
 	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	page1, cursor, err := svc.GetFeed(context.Background(), uuid.New(), nil)
+	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
 		t.Fatalf("GetFeed page1: %v", err)
 	}
-	if len(page1) != pageSize || cursor != nil {
-		t.Fatalf("page1 len/cursor = %d/%+v, want first fallback page without feed cursor", len(page1), cursor)
+	if len(page1) != pageSize || cursor == nil || cursor.DiscoverCreatedAt == nil {
+		t.Fatalf("page1 len/cursor = %d/%+v, want full page with discover continuation", len(page1), cursor)
+	}
+
+	page2, next, err := svc.GetFeed(context.Background(), userID, cursor)
+	if err != nil {
+		t.Fatalf("GetFeed page2: %v", err)
+	}
+	if len(page2) != 2 {
+		t.Fatalf("page2 len = %d, want 2", len(page2))
+	}
+	if next != nil {
+		t.Fatalf("next cursor = %+v, want exhausted discover", next)
+	}
+	seen := make(map[uuid.UUID]bool)
+	for _, item := range append(page1, page2...) {
+		if item.Source != feedentity.SourceDiscover {
+			t.Fatalf("source = %s, want discover", item.Source)
+		}
+		if seen[item.Post.ID] {
+			t.Fatalf("duplicate discover post returned: %s", item.Post.ID)
+		}
+		seen[item.Post.ID] = true
+	}
+	if len(seen) != pageSize+2 {
+		t.Fatalf("total unique posts = %d, want %d", len(seen), pageSize+2)
 	}
 }
 
@@ -802,6 +839,140 @@ func TestGetFeed_TrendingContinuationNoDuplicates(t *testing.T) {
 			t.Fatalf("duplicate trending post returned: %s", item.Post.ID)
 		}
 		seen[item.Post.ID] = true
+	}
+}
+
+func TestGetFeed_FollowingContinuationNoDuplicates(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	followedAuthor := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+	total := pageSize + 10
+	for i := 0; i < total; i++ {
+		p := testPost(now.Add(-time.Duration(i) * time.Minute))
+		p.AuthorID = followedAuthor
+		reader.following = append(reader.following, p)
+		reader.byID[p.ID] = p
+		// Newest scores highest so the served order matches DB order and the
+		// page boundary is deterministic.
+		scores[p.ID] = float64(total - i)
+	}
+
+	svc := NewFeedService(
+		reader,
+		&mockFollowReader{ids: []uuid.UUID{followedAuthor}},
+		&mockLikeReader{},
+		&mockRanker{scores: scores},
+		feedcache.NewNopFeedCache(),
+	)
+
+	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed page1: %v", err)
+	}
+	if len(page1) != pageSize || cursor == nil || cursor.FollowingCreatedAt == nil {
+		t.Fatalf("page1 len/cursor = %d/%+v, want full page with following continuation", len(page1), cursor)
+	}
+
+	page2, next, err := svc.GetFeed(context.Background(), userID, cursor)
+	if err != nil {
+		t.Fatalf("GetFeed page2: %v", err)
+	}
+	if len(page2) != total-pageSize {
+		t.Fatalf("page2 len = %d, want %d", len(page2), total-pageSize)
+	}
+	seen := make(map[uuid.UUID]bool)
+	for _, item := range append(page1, page2...) {
+		if seen[item.Post.ID] {
+			t.Fatalf("duplicate following post returned: %s", item.Post.ID)
+		}
+		seen[item.Post.ID] = true
+	}
+	if len(seen) != total {
+		t.Fatalf("total unique posts = %d, want %d", len(seen), total)
+	}
+
+	// Page 2 still served following posts, so the continuation survives; the
+	// next request finds nothing behind it and ends the scroll cleanly.
+	if next == nil || next.FollowingCreatedAt == nil {
+		t.Fatalf("next cursor = %+v, want carried following continuation", next)
+	}
+	page3, tail, err := svc.GetFeed(context.Background(), userID, next)
+	if err != nil {
+		t.Fatalf("GetFeed page3: %v", err)
+	}
+	if len(page3) != 0 || tail != nil {
+		t.Fatalf("page3 len/cursor = %d/%+v, want exhausted scroll", len(page3), tail)
+	}
+}
+
+func TestGetFeed_FollowingExhaustionHandsOffToDiscoverBelowLastServed(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	followedAuthor := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+
+	followingPosts := make([]*feedentity.Post, 0, 5)
+	for i := 0; i < 5; i++ {
+		p := testPost(now.Add(-time.Duration(i+1) * time.Minute))
+		p.AuthorID = followedAuthor
+		followingPosts = append(followingPosts, p)
+		reader.following = append(reader.following, p)
+		reader.byID[p.ID] = p
+		scores[p.ID] = float64(10 - i)
+	}
+	// The discover stream contains the same following posts (public posts show
+	// up there too) plus strictly older public posts.
+	reader.discover = append(reader.discover, followingPosts...)
+	olderPublic := make([]*feedentity.Post, 0, 10)
+	for i := 0; i < 10; i++ {
+		p := testPost(now.Add(-time.Duration(i+60) * time.Minute))
+		olderPublic = append(olderPublic, p)
+		reader.discover = append(reader.discover, p)
+		reader.byID[p.ID] = p
+	}
+
+	svc := NewFeedService(
+		reader,
+		&mockFollowReader{ids: []uuid.UUID{followedAuthor}},
+		&mockLikeReader{},
+		&mockRanker{scores: scores},
+		feedcache.NewNopFeedCache(),
+	)
+
+	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed page1: %v", err)
+	}
+	if len(page1) != 5 || cursor == nil || cursor.FollowingCreatedAt == nil {
+		t.Fatalf("page1 len/cursor = %d/%+v, want following page with continuation", len(page1), cursor)
+	}
+
+	// Following is exhausted; the feed hands off to discover below the last
+	// served post, so page 1's posts are not re-served from the top.
+	page2, next, err := svc.GetFeed(context.Background(), userID, cursor)
+	if err != nil {
+		t.Fatalf("GetFeed page2: %v", err)
+	}
+	if len(page2) != len(olderPublic) {
+		t.Fatalf("page2 len = %d, want %d", len(page2), len(olderPublic))
+	}
+	page1IDs := make(map[uuid.UUID]bool, len(page1))
+	for _, item := range page1 {
+		page1IDs[item.Post.ID] = true
+	}
+	for _, item := range page2 {
+		if item.Source != feedentity.SourceDiscover {
+			t.Fatalf("page2 source = %s, want discover", item.Source)
+		}
+		if page1IDs[item.Post.ID] {
+			t.Fatalf("post re-served after discover hand-off: %s", item.Post.ID)
+		}
+	}
+	if next != nil {
+		t.Fatalf("next cursor = %+v, want exhausted discover", next)
 	}
 }
 
