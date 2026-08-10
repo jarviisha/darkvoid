@@ -6,7 +6,6 @@
 #
 # Optional profiles (activate with --profile or COMPOSE_PROFILES in .env):
 #   tools    — seed runner: make docker-seed
-#   bot      — AI content bot: make docker-up-bot
 #   external — app-only mode (app-external service, infra outside this
 #              compose project): make docker-up-app
 #
@@ -339,41 +338,6 @@ services:
       CODOHUE_ADMIN_URL: ${CODOHUE_DOCKER_ADMIN_URL:-http://host.docker.internal:2002}
     depends_on:
       postgres:
-        condition: service_healthy
-
-  # Content bot — opt-in, so a plain `docker compose up` never starts posting.
-  #   make docker-up-bot        (or: docker compose --profile bot up -d bot)
-  #   make docker-logs-bot
-  #
-  # BOT_API_BASE_URL must name the app service, not localhost: inside a container
-  # localhost is the container itself, so the default would make the bot dial
-  # nothing. Everything else it needs — interval, personas, topics, model chain —
-  # comes from /bot/plan, so this service needs no configuration beyond credentials.
-  #
-  # GEMINI_API_KEY, BOT_RUNNER_PASSWORD, and BOT_PASSWORD are read from .env.bot
-  # (falling back to .env) rather than declared required here: `${VAR:?}` is
-  # interpolated for the whole file before profiles are filtered, so it would break
-  # every compose command for people not running the bot. The bot reports the
-  # missing variables itself on startup.
-  bot:
-    build: .
-    profiles: [bot]
-    restart: unless-stopped
-    entrypoint: ["/app/bot"]
-    # .env.bot second, because a later env_file wins — the same precedence the bot
-    # applies to the two files itself when run outside a container. Neither file is
-    # in the image (.dockerignore excludes .env*), so compose reading them on the
-    # host is the only way their values arrive here.
-    env_file:
-      - path: .env
-        required: false
-      - path: .env.bot
-        required: false
-    environment:
-      BOT_API_BASE_URL: http://app:8080/api/v1
-      BOT_RUNNER_USERNAME: ${BOT_RUNNER_USERNAME:-bot_runner}
-    depends_on:
-      app:
         condition: service_healthy
 
 volumes:

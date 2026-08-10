@@ -23,9 +23,10 @@
 // path so a backfill cannot index posts under different text than new ones get.
 //
 // grant-role/revoke-role replace the earlier admin-only promote/demote pair, which
-// could not reach the bot role that the content bot's runner account needs. An
-// unknown role name is rejected before it reaches the database, where it would fail
-// the CHECK constraint as an opaque error.
+// could reach only the admin role. This is the only way to assign the bot role,
+// which marks a machine account and has no API endpoint behind it. An unknown role
+// name is rejected before it reaches the database, where it would fail the CHECK
+// constraint as an opaque error.
 //
 // Passwords are never accepted as flags (argv is world-readable via /proc and
 // persists in shell history). reset-password and create prompt interactively

@@ -54,35 +54,14 @@ sql:
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
 
-  # Bot Module - schema: bot
-  #
-  # Unlike post and notification this needs no other module's schema: the bot
-  # tables carry usr.users and post.posts ids as plain UUIDs without foreign keys,
-  # and the queries never join across schemas — the admin activity log resolves
-  # post ids through the post service instead.
-  - name: "bot"
-    engine: "postgresql"
-    queries:
-      - "internal/feature/bot/sql/bot_queries.sql"
-    schema: "migrations/bot/*.up.sql"
-    gen:
-      go:
-        package: "db"
-        out: "internal/feature/bot/db"
-        sql_package: "pgx/v5"
-        emit_json_tags: true
-        emit_interface: true
-        emit_empty_slices: true
-        emit_pointers_for_null_types: true
-        overrides:
-          - db_type: "uuid"
-            go_type: "github.com/google/uuid.UUID"
-
   # Settings Module - schema: settings
   #
-  # Needs no other module's schema for the same reason as bot: settings.feed holds
-  # usr.users(id) in updated_by as a plain UUID with no foreign key, and the two
-  # queries never join across schemas.
+  # Unlike post and notification this needs no other module's schema: settings.feed
+  # holds usr.users(id) in updated_by as a plain UUID with no foreign key, and the
+  # two queries never join across schemas.
+  #
+  # There is no bot generator any more. migrations/bot still exists only to carry
+  # 000009, which drops the schema — the bot moved to a project of its own.
   - name: "settings"
     engine: "postgresql"
     queries:

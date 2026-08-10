@@ -15,7 +15,6 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/darkvoid ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/seed ./cmd/seed
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/darkvoidctl ./cmd/darkvoidctl
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/bot ./cmd/bot
 
 FROM alpine:${ALPINE_VERSION}
 
@@ -30,7 +29,6 @@ RUN apk add --no-cache ca-certificates tzdata wget \
 COPY --from=builder --chown=darkvoid:darkvoid /out/darkvoid /app/darkvoid
 COPY --from=builder --chown=darkvoid:darkvoid /out/seed /app/seed
 COPY --from=builder --chown=darkvoid:darkvoid /out/darkvoidctl /app/darkvoidctl
-COPY --from=builder --chown=darkvoid:darkvoid /out/bot /app/bot
 
 USER darkvoid
 

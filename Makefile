@@ -3,10 +3,10 @@ SHELL := /bin/bash
 
 .PHONY: help \
 	sqlc-generate sqlc-clean swagger-init swagger-generate swagger-serve generate \
-	build run dev bot ctl clean \
+	build run dev ctl clean \
 	test test-v test-cover test-cover-html test-feature lint deps \
-	docker-up docker-up-app docker-up-bot docker-seed docker-seed-reset \
-	docker-down docker-down-app docker-down-bot docker-logs docker-logs-app docker-logs-bot \
+	docker-up docker-up-app docker-seed docker-seed-reset \
+	docker-down docker-down-app docker-logs docker-logs-app \
 	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-up-bot migrate-up-settings migrate-down-notification migrate-create migrate-status migrate-force \
 	db-reset install-tools
 
@@ -54,9 +54,14 @@ export PGSSLMODE  := $(DB_SSLMODE)
 
 # migrate-up walks MIGRATION_MODULES forward and migrate-down walks the reversed
 # list, so the two must stay mirror images — adding a module means editing both.
+#
+# `bot` is retained with no Go code behind it: the content bot moved to its own
+# project and migrations/bot/000009 drops the schema. Dropping the module from
+# these lists before every environment has run that migration would strand the
+# schema in each deployed database with nothing left here to clean it up.
 MIGRATION_MODULES          := user post notification bot settings
 MIGRATION_MODULES_REVERSED := settings bot notification post user
-SQLC_DB_DIRS := internal/feature/user/db internal/feature/post/db internal/feature/notification/db internal/feature/bot/db internal/feature/settings/db
+SQLC_DB_DIRS := internal/feature/user/db internal/feature/post/db internal/feature/notification/db internal/feature/settings/db
 
 # Tests the variable through the recipe's environment ($${NAME}) rather than
 # expanding its value into the shell command ($(NAME)). Same result for the
@@ -123,14 +128,6 @@ run: ## Run the application
 dev: ## Run in development mode with hot reload (requires air)
 	air
 
-# The bot reads .env.bot itself rather than getting it from the `-include .env`
-# above. Including it here would export its values into every other target too,
-# so `make run` would pick up the bot's LOG_LEVEL; and because that include plus
-# the bare `export` puts .env into the environment before the process starts, the
-# bot overrides with .env.bot on its own to come out the same either way.
-bot: ## Run the Gemini content bot against a running API — config in .env.bot (usage: make bot BOT_ARGS="--max-posts=1")
-	$(GO) run ./cmd/bot $(BOT_ARGS)
-
 ctl: ## Run the operator CLI (usage: make ctl CTL_ARGS="user list")
 	$(GO) run ./cmd/darkvoidctl $(CTL_ARGS)
 
@@ -170,15 +167,6 @@ docker-up: ## Start Docker containers (PostgreSQL, Redis, app)
 docker-up-app: ## Start only the app container and connect to external/local infra
 	$(DOCKER_COMPOSE) up -d app-external
 
-docker-up-bot: ## Start the content bot container (needs GEMINI_API_KEY + BOT_RUNNER_PASSWORD + BOT_PASSWORD in .env.bot)
-	$(DOCKER_COMPOSE) --profile bot up -d bot
-
-docker-down-bot: ## Stop the content bot container
-	$(DOCKER_COMPOSE) --profile bot down bot
-
-docker-logs-bot: ## View content bot logs
-	$(DOCKER_COMPOSE) --profile bot logs -f bot
-
 docker-seed: ## Seed data inside Docker (usage: make docker-seed SEED_POSTS=500)
 	$(DOCKER_COMPOSE) --profile tools run --rm seed
 
@@ -186,7 +174,7 @@ docker-seed-reset: ## Reset seeded data and seed again inside Docker
 	$(DOCKER_COMPOSE) --profile tools run --rm seed --reset --posts=$${SEED_POSTS:-500} --likes-per-post=$${SEED_LIKES_PER_POST:-40} --comments-per-post=$${SEED_COMMENTS_PER_POST:-5}
 
 docker-down: ## Stop Docker containers (all profiles)
-	$(DOCKER_COMPOSE) --profile external --profile bot down
+	$(DOCKER_COMPOSE) --profile external down
 
 docker-down-app: ## Stop the app-only container
 	$(DOCKER_COMPOSE) --profile external down app-external
@@ -256,7 +244,7 @@ db-reset: ## Reset dockerized database volumes after confirmation
 	@echo "WARNING: This will delete Docker volumes and all local data."
 	@read -r -p "Are you sure? [y/N] " reply; \
 	if [[ "$$reply" =~ ^[Yy]$$ ]]; then \
-		$(DOCKER_COMPOSE) --profile external --profile bot down -v; \
+		$(DOCKER_COMPOSE) --profile external down -v; \
 		$(DOCKER_COMPOSE) up -d; \
 	else \
 		echo "Aborted."; \

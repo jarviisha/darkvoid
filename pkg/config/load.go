@@ -181,9 +181,9 @@ func loadCodohueEventsRedisConfig() CodohueEventsRedisConfig {
 //	MAILER_FROM     (default: "noreply@darkvoid.app")
 //	MAILER_BASE_URL (default: "http://localhost:3000")
 //
-// RESEND_API_KEY keeps the vendor's own name rather than a MAILER_ prefix, the
-// same way GEMINI_API_KEY does — it is pasted straight from the provider's
-// dashboard, and renaming it only makes that harder to match up.
+// RESEND_API_KEY keeps the vendor's own name rather than a MAILER_ prefix: it is
+// pasted straight from the provider's dashboard, and renaming it only makes that
+// harder to match up.
 func loadMailerConfig() MailerConfig {
 	return MailerConfig{
 		Provider:      getEnv("MAILER_PROVIDER", "nop"),

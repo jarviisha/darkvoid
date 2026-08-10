@@ -29,9 +29,47 @@ func TestSettingsRegisterAdminRoutes_MountsFeedSettings(t *testing.T) {
 	})
 }
 
-// The same property BotContext.registerAdminRoutes is pinned for, and for a
-// sharper reason: this surface rewrites the feed's ranking weights and rollout
-// percent. Registered as a sibling of /admin the paths still resolve, the
+// Every operator route has to sit behind the /admin group's guard. This exercises
+// a replica router; the companion below exercises the production call site, and
+// TestAdminRoutes_SiblingRegistrationWouldBypassTheGuard pins what the alternative
+// registration would cost.
+func TestSettingsAdminRoutes_InheritTheAdminGroupGuard(t *testing.T) {
+	var guardReached bool
+	router := chi.NewRouter()
+	router.Route("/admin", func(r chi.Router) {
+		r.Use(denyAll(&guardReached))
+		newRouteTestSettingsContext().registerAdminRoutes(r)
+	})
+
+	for _, tt := range []struct{ method, target string }{
+		{http.MethodGet, "/admin/settings/feed"},
+		{http.MethodPatch, "/admin/settings/feed"},
+	} {
+		guardReached = false
+		w := httptest.NewRecorder()
+		req, err := http.NewRequestWithContext(t.Context(), tt.method, tt.target, nil)
+		if err != nil {
+			t.Fatalf("failed to build request: %v", err)
+		}
+		router.ServeHTTP(w, req)
+
+		if !guardReached {
+			t.Errorf("%s %s bypassed the admin guard entirely", tt.method, tt.target)
+		}
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s %s status = %d, want 403 from the guard", tt.method, tt.target, w.Code)
+		}
+	}
+}
+
+// The guard tests above pin chi's semantics on replica routers; this one pins the
+// production call site. AdminContext.RegisterRoutes is exercised for real — a zero
+// AdminContext works because handler method values are captured at registration and
+// only dereferenced on dispatch, which the denying auth middleware never reaches.
+//
+// The reason this matters more here than for any other admin surface: it rewrites
+// the feed's ranking weights and rollout percent. If settings.registerAdminRoutes
+// ever moves out of the r.Route("/admin", ...) closure the paths still resolve, the
 // subrouter inherits none of the group's middleware, and anyone can change how
 // every user's feed is ordered.
 func TestAdminRegisterRoutes_PutsSettingsRoutesBehindTheGroupGuard(t *testing.T) {
@@ -42,7 +80,7 @@ func TestAdminRegisterRoutes_PutsSettingsRoutesBehindTheGroupGuard(t *testing.T)
 	}
 
 	router := chi.NewRouter()
-	(&AdminContext{}).RegisterRoutes(router, auth, newRouteTestBotContext(), newRouteTestSettingsContext())
+	(&AdminContext{}).RegisterRoutes(router, auth, newRouteTestSettingsContext())
 
 	for _, tt := range []struct{ method, target string }{
 		{http.MethodGet, "/admin/settings/feed"},

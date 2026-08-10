@@ -3,8 +3,8 @@ package dto
 // FeedSettingsResponse is the feed's current runtime configuration.
 //
 // Durations are carried as whole seconds rather than a Go duration string, matching
-// bot.ConfigResponse and the column that stores them: the consumers of this API
-// are an admin UI and curl, and "604800" needs no parser on either side.
+// the column that stores them: the consumers of this API are an admin UI and curl,
+// and "604800" needs no parser on either side.
 type FeedSettingsResponse struct {
 	TimelineEnabled        bool  `json:"timeline_enabled"          example:"false"`
 	TimelineRolloutPercent int32 `json:"timeline_rollout_percent"  example:"0"`

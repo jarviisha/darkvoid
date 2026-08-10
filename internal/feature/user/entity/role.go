@@ -18,9 +18,10 @@ const (
 	// RoleModerator is reserved for content moderation. It can be assigned, but no
 	// route enforces it yet.
 	RoleModerator Role = "moderator"
-	// RoleBot grants access to the /api/v1/bot agent plane, which the content bot
-	// (cmd/bot) polls for its desired state and reports run results to. It grants
-	// no admin access — the bot posts as an ordinary user.
+	// RoleBot marks a machine account. The content bot itself lives in a separate
+	// project and drives this API as an ordinary authenticated user, so no route
+	// here enforces this role — it exists so an operator, and any future
+	// bot-aware behaviour, can tell a machine account from a person's.
 	RoleBot Role = "bot"
 )
 
@@ -30,7 +31,7 @@ const (
 var roleDescriptions = map[Role]string{
 	RoleAdmin:     "Full access to the admin API",
 	RoleModerator: "Reserved for content moderation",
-	RoleBot:       "Allows a machine account to drive the content bot",
+	RoleBot:       "Marks an account as a machine account",
 }
 
 // AllRoles lists every role the system recognises, ordered by name.

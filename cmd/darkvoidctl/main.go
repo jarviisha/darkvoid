@@ -317,8 +317,9 @@ func cmdList(args []string) error {
 }
 
 // cmdSetRole grants or revokes any role the application recognises. It replaces the
-// earlier admin-only promote/demote pair, which could not reach the bot role the
-// content bot's runner account needs.
+// earlier admin-only promote/demote pair, which could reach only one of them — the
+// bot role, for instance, is assignable from nowhere else, since no API endpoint
+// hands it out.
 func cmdSetRole(args []string, grant bool) error {
 	name := "user revoke-role"
 	if grant {

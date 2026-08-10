@@ -6,11 +6,9 @@
 // staged rollout percent: the restart is exactly the risk the staged rollout is
 // there to avoid.
 //
-// The shape is the same as the bot control plane's: a single-row table per
-// settings group, a partial-update admin endpoint, and consumers that read a
-// snapshot rather than a value captured at construction. Where it differs is the
-// delivery — the bot polls GET /bot/plan over HTTP because it is a separate
-// process, while these settings are consumed in-process, so the service pushes
+// The shape is a single-row table per settings group, a partial-update admin
+// endpoint, and consumers that read a snapshot rather than a value captured at
+// construction. These settings are consumed in-process, so the service pushes
 // each new snapshot into the feed's holder and a background refresh loop repeats
 // the read for instances that did not serve the write.
 //

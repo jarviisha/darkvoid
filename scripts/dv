@@ -26,8 +26,8 @@
 #
 #   dv up -d                  # the whole stack, correctly composed
 #   dv ps
-#   dv logs -f bot
-#   dv --profile bot up -d bot
+#   dv logs -f app
+#   dv --profile backup run --rm pg-backup
 set -euo pipefail
 
 cd "${DARKVOID_DIR:-/opt/darkvoid-dev}"

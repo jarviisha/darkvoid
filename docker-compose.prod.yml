@@ -330,40 +330,6 @@ services:
       postgres:
         condition: service_healthy
 
-  # Content bot — opt-in, so a deploy never starts posting by accident:
-  #   docker compose -f docker-compose.prod.yml --profile bot up -d bot
-  #   docker compose -f docker-compose.prod.yml logs -f bot
-  #
-  # This is the only supported way to run it in production, so GEMINI_API_KEY,
-  # BOT_RUNNER_PASSWORD, and BOT_PASSWORD live in this stack's .env — keep that file
-  # readable only by the deploy user, since the app and the bot now share it.
-  #
-  # BOT_API_BASE_URL must name the app service: inside a container localhost is the
-  # container itself. Credentials come from .env and are not declared required here —
-  # `${VAR:?}` is interpolated for the whole file before profiles are filtered, so it
-  # would break every compose command for a deployment that does not run the bot. The
-  # bot reports the missing variables itself on startup.
-  bot:
-    image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}:${APP_TAG:-latest}
-    profiles: [bot]
-    restart: unless-stopped
-    logging: *logging
-    <<: *hardening
-    entrypoint: ["/app/bot"]
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      BOT_API_BASE_URL: http://app:8080/api/v1
-      BOT_RUNNER_USERNAME: ${BOT_RUNNER_USERNAME:-bot_runner}
-    deploy:
-      resources:
-        limits:
-          memory: ${BOT_MEMORY_LIMIT:-256m}
-    depends_on:
-      app:
-        condition: service_healthy
-
   # Postgres backup — opt-in one-shot, never runs as part of a deploy:
   #   dv --profile backup run --rm pg-backup
   # Cron it on the host for a schedule. Uses the same image as the server so
