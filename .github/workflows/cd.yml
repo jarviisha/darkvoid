@@ -105,8 +105,12 @@ jobs:
 
             $COMPOSE pull app
 
-            # Migrations run automatically: the migrate-user → migrate-post →
-            # migrate-notification chain gates the app via depends_on.
+            # Migrations run automatically: app depends_on the tail of the
+            # migrate-* chain with service_completed_successfully, so it only
+            # starts once every module has migrated. Deliberately not naming the
+            # modules — this comment listed three of them long after there were
+            # five, and a deploy step that describes the wrong chain is worse
+            # than one that describes the mechanism.
             $COMPOSE up -d
 
             # Install the operator wrappers system-wide so they stay in sync with
