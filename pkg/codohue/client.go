@@ -259,44 +259,9 @@ func trendingPageFromResponse(resp *codohuetypes.TrendingResponse) *feed.Trendin
 	return &feed.TrendingPage{Items: items, Limit: resp.Limit, Offset: resp.Offset, Total: resp.Total}
 }
 
-// UpsertObjectEmbedding pushes a dense embedding vector for an item (post) to Codohue.
-// A non-zero createdAt feeds Codohue's γ-based object-freshness rerank for BYOE vectors.
-func (c *Client) UpsertObjectEmbedding(ctx context.Context, objectID string, vector []float64, createdAt time.Time) error {
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	converted := make([]float32, len(vector))
-	for i, v := range vector {
-		converted[i] = float32(v)
-	}
-
-	var opts []sdk.EmbeddingOption
-	if !createdAt.IsZero() {
-		opts = append(opts, sdk.WithObjectCreatedAt(createdAt.UTC()))
-	}
-
-	return countIndexErr(guardErr(c, func() error {
-		return c.ns.StoreObjectEmbedding(reqCtx, objectID, converted, opts...)
-	}))
-}
-
-// UpsertSubjectEmbedding pushes a dense embedding vector for a user (subject) to Codohue.
-func (c *Client) UpsertSubjectEmbedding(ctx context.Context, subjectID string, vector []float64) error {
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	converted := make([]float32, len(vector))
-	for i, v := range vector {
-		converted[i] = float32(v)
-	}
-
-	return countIndexErr(guardErr(c, func() error {
-		return c.ns.StoreSubjectEmbedding(reqCtx, subjectID, converted)
-	}))
-}
-
 // IngestCatalogItem publishes post content to Codohue's catalog auto-embedding
-// pipeline (dense_source "catalog"). The server embeds the content
+// pipeline (dense_source "catalog"), which is the only way vectors enter the
+// index: darkvoid computes none of its own. The server embeds the content
 // asynchronously; authorSubjectID is stored as ownership metadata only.
 func (c *Client) IngestCatalogItem(ctx context.Context, objectID, content, authorSubjectID string) error {
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

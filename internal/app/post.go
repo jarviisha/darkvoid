@@ -12,7 +12,6 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/codohue"
 	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
 	"github.com/jarviisha/darkvoid/pkg/storage"
-	"github.com/jarviisha/darkvoid/pkg/tfidf"
 )
 
 // PostContext represents the Post bounded context with all its dependencies
@@ -161,13 +160,9 @@ func (ctx *PostContext) WireNotificationEmitter(notif *NotificationContext) {
 	ctx.commentLikeService.WithNotificationEmitter(notif.notifService)
 }
 
-func (ctx *PostContext) WireCodohue(client *codohue.Client, embeddingDim int, denseSource string) {
+func (ctx *PostContext) WireCodohue(client *codohue.Client) {
 	ctx.likeService.WithBehaviorEventPublisher(client)
 	ctx.commentService.WithBehaviorEventPublisher(client)
 	ctx.postService.WithObjectDeleter(client)
-	if denseSource == codohue.DenseSourceCatalog {
-		ctx.postService.WithCatalogIngester(client)
-		return
-	}
-	ctx.postService.WithEmbedding(tfidf.New(embeddingDim), client)
+	ctx.postService.WithCatalogIngester(client)
 }

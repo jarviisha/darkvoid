@@ -10,26 +10,9 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/jarviisha/codohue/pkg/codohuetypes"
 )
 
 const maxProvisionErrorBodyBytes = 1 << 20
-
-// Dense-source modes selectable via CODOHUE_DENSE_SOURCE.
-//
-// These alias the constants Codohue exports as of codohuetypes v0.5.0 rather
-// than restating the literals: the wire values are the server's to define, and
-// a local copy is exactly the kind of thing that drifts silently — a renamed
-// mode would keep compiling here and fail at provisioning time.
-const (
-	// DenseSourceBYOE — darkvoid computes TF-IDF vectors locally and pushes
-	// them through the BYOE embedding endpoints.
-	DenseSourceBYOE = codohuetypes.DenseSourceBYOE
-	// DenseSourceCatalog — darkvoid publishes raw post content to Codohue's
-	// catalog pipeline; the server embeds it asynchronously.
-	DenseSourceCatalog = codohuetypes.DenseSourceCatalog
-)
 
 // catalogStrategyID/Version pin Codohue's built-in deterministic hashing
 // n-grams embedder. Its dim param must equal the namespace embedding_dim
@@ -44,14 +27,15 @@ var provisionHTTPClient = http.DefaultClient
 // NamespaceProvisionConfig contains the admin-plane configuration sent to Codohue.
 // AdminBaseURL points at the Codohue admin server (cmd/admin, default port 2002) —
 // a separate binary from the data-plane API the runtime SDK talks to.
-// DenseSource selects who produces object vectors: DenseSourceBYOE (default
-// when empty) or DenseSourceCatalog.
+//
+// There is no dense-source choice: Codohue produces every object vector from the
+// content darkvoid ingests. EmbeddingDim is still ours to declare because it must
+// match the catalog strategy's dim, which the server validates.
 type NamespaceProvisionConfig struct {
 	AdminBaseURL string
 	AdminKey     string
 	Namespace    string
 	EmbeddingDim int
-	DenseSource  string
 }
 
 // NamespaceProvisionResult contains the relevant response fields from Codohue.
@@ -68,10 +52,10 @@ type namespaceProvisionPayload struct {
 	MaxResults    int                `json:"max_results"`
 	SeenItemsDays int                `json:"seen_items_days"`
 	Alpha         float64            `json:"alpha"`
-	// DenseSource is omitted in catalog mode: "catalog" is rejected by the
-	// namespace upsert route (it must be set via the catalog endpoint), and
-	// an omitted field leaves the current value untouched (PATCH semantics).
-	DenseSource    string  `json:"dense_source,omitempty"`
+	// dense_source is deliberately absent from this payload: "catalog" is
+	// rejected by the namespace upsert route — it is set by the catalog
+	// endpoint below — and an omitted field leaves the current value
+	// untouched (PATCH semantics).
 	EmbeddingDim   int     `json:"embedding_dim"`
 	DenseDistance  string  `json:"dense_distance"`
 	TrendingWindow int     `json:"trending_window"`
@@ -92,15 +76,18 @@ type catalogConfigPayload struct {
 // is exchanged for a session cookie (POST /api/v1/auth/sessions), which then
 // authorizes the namespace upsert (PUT /api/admin/v1/namespaces/{ns}).
 //
+// It always provisions catalog auto-embedding: darkvoid ships raw post content
+// and Codohue embeds it. Two requests rather than one, because the namespace
+// upsert refuses dense_source "catalog" — only the catalog endpoint may set it.
+//
 // Codohue v0.8.0 added two alternatives and darkvoid takes neither yet. Bearer
 // auth on the admin plane would drop the login round trip, but session cookies
 // are still accepted, so switching is a cleanup with no behavior to gain. The
-// new sdk/go/admin package wraps provisioning in one request — but only for
-// catalog mode, and it sends action_weights, alpha and dense_distance only.
-// Adopting it as-is would drop the byoe path entirely and leave lambda, gamma,
-// max_results, seen_items_days and the three trending knobs below at whatever
-// the server defaults to, which is a config regression disguised as a
-// dependency upgrade. Revisit when the admin SDK covers the full payload.
+// new sdk/go/admin package wraps provisioning in one request, but it sends
+// action_weights, alpha and dense_distance only — adopting it as-is would leave
+// lambda, gamma, max_results, seen_items_days and the three trending knobs below
+// at whatever the server defaults to, which is a config regression disguised as
+// a dependency upgrade. Revisit when the admin SDK covers the full payload.
 func ProvisionNamespaceConfig(ctx context.Context, cfg NamespaceProvisionConfig) (*NamespaceProvisionResult, error) {
 	if cfg.AdminBaseURL == "" {
 		return nil, fmt.Errorf("codohue: admin base URL is required")
@@ -114,14 +101,6 @@ func ProvisionNamespaceConfig(ctx context.Context, cfg NamespaceProvisionConfig)
 	if cfg.EmbeddingDim <= 0 {
 		return nil, fmt.Errorf("codohue: embedding dimension must be positive")
 	}
-	denseSource := cfg.DenseSource
-	if denseSource == "" {
-		denseSource = DenseSourceBYOE
-	}
-	if denseSource != DenseSourceBYOE && denseSource != DenseSourceCatalog {
-		return nil, fmt.Errorf("codohue: dense source must be %q or %q, got %q", DenseSourceBYOE, DenseSourceCatalog, cfg.DenseSource)
-	}
-
 	base := strings.TrimRight(cfg.AdminBaseURL, "/")
 
 	session, err := createAdminSession(ctx, base, cfg.AdminKey)
@@ -129,11 +108,7 @@ func ProvisionNamespaceConfig(ctx context.Context, cfg NamespaceProvisionConfig)
 		return nil, err
 	}
 
-	payload := defaultNamespaceProvisionPayload(cfg.EmbeddingDim)
-	if denseSource == DenseSourceCatalog {
-		payload.DenseSource = "" // omitted — set server-side by the catalog endpoint below
-	}
-	body, err := json.Marshal(payload)
+	body, err := json.Marshal(defaultNamespaceProvisionPayload(cfg.EmbeddingDim))
 	if err != nil {
 		return nil, fmt.Errorf("codohue: marshal namespace config: %w", err)
 	}
@@ -167,10 +142,8 @@ func ProvisionNamespaceConfig(ctx context.Context, cfg NamespaceProvisionConfig)
 		return nil, fmt.Errorf("codohue: namespace config response namespace %q does not match %q", result.Namespace, cfg.Namespace)
 	}
 
-	if denseSource == DenseSourceCatalog {
-		if err := enableCatalogAutoEmbedding(ctx, base, session, cfg.Namespace, cfg.EmbeddingDim); err != nil {
-			return nil, err
-		}
+	if err := enableCatalogAutoEmbedding(ctx, base, session, cfg.Namespace, cfg.EmbeddingDim); err != nil {
+		return nil, err
 	}
 
 	return &result, nil
@@ -261,7 +234,6 @@ func defaultNamespaceProvisionPayload(embeddingDim int) namespaceProvisionPayloa
 		MaxResults:     20,
 		SeenItemsDays:  30,
 		Alpha:          0.7,
-		DenseSource:    "byoe",
 		EmbeddingDim:   embeddingDim,
 		DenseDistance:  "cosine",
 		TrendingWindow: 24,

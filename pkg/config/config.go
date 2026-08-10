@@ -41,9 +41,8 @@ type CodohueConfig struct {
 	AdminURL     string // admin-plane HTTP base URL (cmd/admin), e.g. "http://codohue-host:2002"; required for provisioning
 	NamespaceKey string // namespace key — returned once on namespace creation; used for all API calls
 	AdminKey     string // admin key — only for namespace provisioning, not used in the request path
-	DenseSource  string // "byoe" (local TF-IDF vectors pushed by darkvoid) or "catalog" (Codohue embeds post content server-side)
 	Namespace    string // namespace identifier for this app's events and recommendations
-	EmbeddingDim int    // output dimension for BYOE vectors; must match embedding_dim in namespace config
+	EmbeddingDim int    // dimension Codohue's catalog embedder produces; must be one of 64/128/256/512
 
 	// EventsRedis addresses the Redis that carries the codohue:events stream.
 	// Behavior events are the one part of this integration that does not travel

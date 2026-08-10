@@ -122,8 +122,8 @@ func loadRootConfig() RootConfig {
 //	CODOHUE_ADMIN_URL      (default: "") — admin plane (cmd/admin); required for namespace provisioning
 //	CODOHUE_NAMESPACE_KEY  (default: "") — namespace key from one-time namespace creation
 //	CODOHUE_ADMIN_KEY      (default: CODOHUE_API_KEY) — admin key for namespace provisioning only
-//	CODOHUE_DENSE_SOURCE   (default: "byoe") — "byoe" or "catalog" (server-side auto-embedding)
 //	CODOHUE_NAMESPACE      (default: "darkvoid_feed")
+//	CODOHUE_EMBEDDING_DIM  (default: 64) — dim of Codohue's catalog embedder: 64, 128, 256 or 512
 //
 // The codohue:events stream can live on a Redis other than the app's own. Leave
 // the host unset to publish to the app's Redis — see CodohueConfig.EventsRedis.
@@ -139,7 +139,6 @@ func loadCodohueConfig() CodohueConfig {
 		AdminURL:     getEnv("CODOHUE_ADMIN_URL", ""),
 		NamespaceKey: getEnv("CODOHUE_NAMESPACE_KEY", ""),
 		AdminKey:     getEnv("CODOHUE_ADMIN_KEY", getEnv("CODOHUE_API_KEY", "")),
-		DenseSource:  getEnv("CODOHUE_DENSE_SOURCE", "byoe"),
 		Namespace:    getEnv("CODOHUE_NAMESPACE", "darkvoid_feed"),
 		EmbeddingDim: getEnvInt("CODOHUE_EMBEDDING_DIM", 64),
 		EventsRedis:  loadCodohueEventsRedisConfig(),

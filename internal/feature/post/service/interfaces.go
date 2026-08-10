@@ -150,23 +150,10 @@ type ObjectDeleter interface {
 	DeleteObject(ctx context.Context, objectID string) error
 }
 
-// EmbeddingProvider converts text into a dense float64 vector.
-// Implementations: *tfidf.Vectorizer (local, zero I/O), external embedding API.
-type EmbeddingProvider interface {
-	Embed(ctx context.Context, text string) ([]float64, error)
-}
-
-// ObjectEmbedder pushes a pre-computed dense vector for an item to the recommendation engine.
-// Implementations: *codohue.Client (PUT /v1/namespaces/{ns}/objects/{id}/embedding).
-// A non-zero createdAt lets the engine apply object-freshness decay to the item.
-type ObjectEmbedder interface {
-	UpsertObjectEmbedding(ctx context.Context, objectID string, vector []float64, createdAt time.Time) error
-}
-
 // CatalogIngester publishes raw item content to the recommendation engine's
 // catalog auto-embedding pipeline; the engine embeds it server-side.
 // Implementations: *codohue.Client (POST /v1/namespaces/{ns}/catalog).
-// Alternative to the EmbeddingProvider+ObjectEmbedder pair — see CODOHUE_DENSE_SOURCE.
+// This is the only indexing path — darkvoid produces no vectors of its own.
 type CatalogIngester interface {
 	IngestCatalogItem(ctx context.Context, objectID, content, authorSubjectID string) error
 }

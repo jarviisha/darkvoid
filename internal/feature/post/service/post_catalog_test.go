@@ -21,21 +21,6 @@ func (m *mockCatalogIngester) IngestCatalogItem(_ context.Context, objectID, con
 	return nil
 }
 
-type mockObjectEmbedder struct {
-	calls chan string
-}
-
-func (m *mockObjectEmbedder) UpsertObjectEmbedding(_ context.Context, objectID string, _ []float64, _ time.Time) error {
-	m.calls <- objectID
-	return nil
-}
-
-type mockEmbeddingProvider struct{}
-
-func (mockEmbeddingProvider) Embed(_ context.Context, _ string) ([]float64, error) {
-	return []float64{1, 0}, nil
-}
-
 func waitFor[T any](t *testing.T, ch chan T, what string) T {
 	t.Helper()
 	select {
@@ -47,12 +32,12 @@ func waitFor[T any](t *testing.T, ch chan T, what string) T {
 	}
 }
 
-func TestPushEmbeddingAsync_CatalogMode_SendsContentTagsAndAuthor(t *testing.T) {
+func TestIngestCatalogAsync_SendsContentTagsAndAuthor(t *testing.T) {
 	ingester := &mockCatalogIngester{items: make(chan capturedCatalogItem, 1)}
 	s := &PostService{}
 	s.WithCatalogIngester(ingester)
 
-	s.pushEmbeddingAsync("post-1", "hello world", []string{"go", "backend"}, "author-1", time.Now())
+	s.ingestCatalogAsync("post-1", "hello world", []string{"go", "backend"}, "author-1")
 
 	got := waitFor(t, ingester.items, "catalog ingest")
 	if got.objectID != "post-1" {
@@ -66,39 +51,10 @@ func TestPushEmbeddingAsync_CatalogMode_SendsContentTagsAndAuthor(t *testing.T) 
 	}
 }
 
-func TestPushEmbeddingAsync_CatalogMode_OverridesBYOEPair(t *testing.T) {
-	ingester := &mockCatalogIngester{items: make(chan capturedCatalogItem, 1)}
-	embedder := &mockObjectEmbedder{calls: make(chan string, 1)}
+func TestIngestCatalogAsync_NothingWired_NoOp(t *testing.T) {
 	s := &PostService{}
-	s.WithEmbedding(mockEmbeddingProvider{}, embedder)
-	s.WithCatalogIngester(ingester)
-
-	s.pushEmbeddingAsync("post-2", "content", nil, "author-2", time.Now())
-
-	waitFor(t, ingester.items, "catalog ingest")
-	select {
-	case id := <-embedder.calls:
-		t.Fatalf("BYOE embedder was called for %q, want catalog path only", id)
-	default:
-	}
-}
-
-func TestPushEmbeddingAsync_BYOEMode_PushesVector(t *testing.T) {
-	embedder := &mockObjectEmbedder{calls: make(chan string, 1)}
-	s := &PostService{}
-	s.WithEmbedding(mockEmbeddingProvider{}, embedder)
-
-	s.pushEmbeddingAsync("post-3", "content", nil, "author-3", time.Now())
-
-	if id := waitFor(t, embedder.calls, "BYOE embedding upsert"); id != "post-3" {
-		t.Fatalf("objectID = %q, want post-3", id)
-	}
-}
-
-func TestPushEmbeddingAsync_NothingWired_NoOp(t *testing.T) {
-	s := &PostService{}
-	// Must not panic or spawn work when neither path is wired.
-	s.pushEmbeddingAsync("post-4", "content", nil, "author-4", time.Now())
+	// Must not panic or spawn work when no ingester is wired.
+	s.ingestCatalogAsync("post-4", "content", nil, "author-4")
 }
 
 // IndexText is exported so the reindex command in cmd/darkvoidctl produces byte
@@ -128,13 +84,13 @@ func TestIndexText(t *testing.T) {
 }
 
 // The live path must go through IndexText, or exporting it achieves nothing.
-func TestPushEmbeddingAsync_UsesIndexText(t *testing.T) {
+func TestIngestCatalogAsync_UsesIndexText(t *testing.T) {
 	ingester := &mockCatalogIngester{items: make(chan capturedCatalogItem, 1)}
 	s := &PostService{}
 	s.WithCatalogIngester(ingester)
 
 	content, tags := "bún chả Hà Nội", []string{"amthuc", "hanoi"}
-	s.pushEmbeddingAsync("post-9", content, tags, "author-9", time.Now())
+	s.ingestCatalogAsync("post-9", content, tags, "author-9")
 
 	got := waitFor(t, ingester.items, "catalog ingest")
 	if want := IndexText(content, tags); got.content != want {

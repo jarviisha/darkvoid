@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -57,17 +56,9 @@ func (s *PostService) WithObjectDeleter(d ObjectDeleter) {
 	s.objectDeleter = d
 }
 
-// WithEmbedding attaches an embedding provider and object embedder. Called at wire-up time.
-// When both are set, CreatePost and UpdatePost push BYOE vectors to Codohue asynchronously.
-// Both must be non-nil to activate embedding; providing only one has no effect.
-func (s *PostService) WithEmbedding(provider EmbeddingProvider, embedder ObjectEmbedder) {
-	s.embeddingProvider = provider
-	s.objectEmbedder = embedder
-}
-
-// WithCatalogIngester attaches a catalog ingester. Called at wire-up time as
-// the alternative to WithEmbedding: post content is sent raw and embedded
-// server-side. When set, it takes precedence over the BYOE pair.
+// WithCatalogIngester attaches a catalog ingester. Called at wire-up time.
+// When set, CreatePost and UpdatePost send the post's content to the
+// recommendation engine, which embeds it server-side.
 func (s *PostService) WithCatalogIngester(ingester CatalogIngester) {
 	s.catalogIngester = ingester
 }
@@ -87,9 +78,7 @@ type PostService struct {
 	feedEmitter         FeedEventEmitter    // optional: nil → feed propagation skipped
 	trendingInvalidator TrendingInvalidator // optional: nil → no-op
 	objectDeleter       ObjectDeleter       // optional: nil → no recommendation index cleanup on delete
-	embeddingProvider   EmbeddingProvider   // optional: nil → no BYOE embeddings
-	objectEmbedder      ObjectEmbedder      // optional: nil → no BYOE embeddings
-	catalogIngester     CatalogIngester     // optional: non-nil → catalog mode, overrides the BYOE pair
+	catalogIngester     CatalogIngester     // optional: nil → posts are not indexed for recommendations
 }
 
 // NewPostService creates a new PostService. Required dependencies are passed as positional
@@ -179,7 +168,7 @@ func (s *PostService) CreatePost(ctx context.Context, authorID uuid.UUID, conten
 	// Enrich mentions and fire notifications AFTER commit (non-fatal)
 	p.Mentions = s.enrichMentionsAfterCommit(ctx, p.ID, authorID, persistedMentionIDs)
 
-	s.pushEmbeddingAsync(p.ID.String(), p.Content, p.Tags, p.AuthorID.String(), p.CreatedAt)
+	s.ingestCatalogAsync(p.ID.String(), p.Content, p.Tags, p.AuthorID.String())
 	s.emitPostCreatedFeedEvent(ctx, p)
 
 	logger.Info(ctx, "post created", "post_id", p.ID, "author_id", authorID)
@@ -347,7 +336,7 @@ func (s *PostService) UpdatePost(ctx context.Context, postID, userID uuid.UUID, 
 	s.enrichTags(ctx, []*entity.Post{updated})
 	s.enrichMentions(ctx, []*entity.Post{updated})
 
-	s.pushEmbeddingAsync(postID.String(), updated.Content, updated.Tags, updated.AuthorID.String(), updated.CreatedAt)
+	s.ingestCatalogAsync(postID.String(), updated.Content, updated.Tags, updated.AuthorID.String())
 
 	logger.Info(ctx, "post updated", "post_id", postID)
 	return updated, nil
@@ -400,38 +389,20 @@ func IndexText(content string, tags []string) string {
 	return content + " " + strings.Join(tags, " ")
 }
 
-// pushEmbeddingAsync ships the post to Codohue's dense index in a background
-// goroutine, using a detached context so it outlives the HTTP request.
-// Catalog mode (catalogIngester set): raw content is sent and embedded
-// server-side. BYOE mode: a TF-IDF vector is computed locally and uploaded;
-// createdAt is forwarded so Codohue can apply object-freshness decay.
-// No-op when neither path is wired.
-func (s *PostService) pushEmbeddingAsync(postID, content string, tags []string, authorID string, createdAt time.Time) {
+// ingestCatalogAsync ships the post's content to Codohue's catalog pipeline in a
+// background goroutine, using a detached context so it outlives the HTTP
+// request. Codohue embeds it server-side — darkvoid computes no vectors — so
+// this is the whole indexing path. No-op when no ingester is wired.
+func (s *PostService) ingestCatalogAsync(postID, content string, tags []string, authorID string) {
+	if s.catalogIngester == nil {
+		return
+	}
 	text := IndexText(content, tags)
-
-	if s.catalogIngester != nil {
-		go func() {
-			ctx := context.Background()
-			if err := s.catalogIngester.IngestCatalogItem(ctx, postID, text, authorID); err != nil {
-				logger.LogError(ctx, err, "codohue: failed to ingest catalog item", "post_id", postID)
-			}
-		}()
-		return
-	}
-
-	if s.embeddingProvider == nil || s.objectEmbedder == nil {
-		return
-	}
 
 	go func() {
 		ctx := context.Background()
-		vec, err := s.embeddingProvider.Embed(ctx, text)
-		if err != nil {
-			logger.LogError(ctx, err, "tfidf: failed to vectorize post", "post_id", postID)
-			return
-		}
-		if err := s.objectEmbedder.UpsertObjectEmbedding(ctx, postID, vec, createdAt); err != nil {
-			logger.LogError(ctx, err, "codohue: failed to push object embedding", "post_id", postID)
+		if err := s.catalogIngester.IngestCatalogItem(ctx, postID, text, authorID); err != nil {
+			logger.LogError(ctx, err, "codohue: failed to ingest catalog item", "post_id", postID)
 		}
 	}()
 }

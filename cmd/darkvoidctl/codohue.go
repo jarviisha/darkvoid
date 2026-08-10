@@ -15,7 +15,6 @@ import (
 	postsvc "github.com/jarviisha/darkvoid/internal/feature/post/service"
 	"github.com/jarviisha/darkvoid/pkg/codohue"
 	"github.com/jarviisha/darkvoid/pkg/config"
-	"github.com/jarviisha/darkvoid/pkg/tfidf"
 )
 
 // reindexPageSize is how many posts are read per database round trip. Ingestion
@@ -96,18 +95,12 @@ func cmdReindex(args []string) error {
 		cutoff = time.Now().Add(-*since)
 	}
 
-	fmt.Printf("reindexing into namespace %q at %s (dense_source=%s)\n",
-		cfg.Codohue.Namespace, cfg.Codohue.BaseURL, cfg.Codohue.DenseSource)
+	fmt.Printf("reindexing into namespace %q at %s\n", cfg.Codohue.Namespace, cfg.Codohue.BaseURL)
 	if *dryRun {
 		fmt.Println("dry run: nothing will be sent")
 	}
 
-	r := &reindexer{
-		client:      client,
-		denseSource: cfg.Codohue.DenseSource,
-		vectorizer:  tfidf.New(cfg.Codohue.EmbeddingDim),
-		dryRun:      *dryRun,
-	}
+	r := &reindexer{client: client, dryRun: *dryRun}
 
 	// Newest first, the same cursor walk the discover feed uses, so it inherits
 	// that query's filters: public posts only, deleted ones excluded.
@@ -144,7 +137,7 @@ func cmdReindex(args []string) error {
 				break
 			}
 
-			if err := r.send(ctx, p.ID.String(), p.Content, tagsByPost[p.ID], p.AuthorID.String(), p.CreatedAt); err != nil {
+			if err := r.send(ctx, p.ID.String(), p.Content, tagsByPost[p.ID], p.AuthorID.String()); err != nil {
 				if errors.Is(err, codohue.ErrUnavailable) {
 					// The breaker opened: Codohue went down mid-run. Everything
 					// after this would "fail" instantly without being attempted,
@@ -181,15 +174,13 @@ func cmdReindex(args []string) error {
 	return nil
 }
 
-// reindexer sends one post through whichever dense path this deployment uses.
+// reindexer sends one post to Codohue's catalog pipeline, which embeds it.
 type reindexer struct {
-	client      *codohue.Client
-	denseSource string
-	vectorizer  *tfidf.Vectorizer
-	dryRun      bool
+	client *codohue.Client
+	dryRun bool
 }
 
-func (r *reindexer) send(ctx context.Context, postID, content string, tags []string, authorID string, createdAt time.Time) error {
+func (r *reindexer) send(ctx context.Context, postID, content string, tags []string, authorID string) error {
 	// Shared with the live ingest path so a backfill cannot index posts under a
 	// different text than new posts get.
 	text := postsvc.IndexText(content, tags)
@@ -198,13 +189,5 @@ func (r *reindexer) send(ctx context.Context, postID, content string, tags []str
 		return nil
 	}
 
-	if r.denseSource == codohue.DenseSourceCatalog {
-		return r.client.IngestCatalogItem(ctx, postID, text, authorID)
-	}
-
-	vec, err := r.vectorizer.Embed(ctx, text)
-	if err != nil {
-		return fmt.Errorf("vectorize: %w", err)
-	}
-	return r.client.UpsertObjectEmbedding(ctx, postID, vec, createdAt)
+	return r.client.IngestCatalogItem(ctx, postID, text, authorID)
 }

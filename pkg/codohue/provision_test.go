@@ -54,6 +54,9 @@ func TestProvisionNamespaceConfig_LogsInThenUpsertsNamespace(t *testing.T) {
 			resp.Header.Add("Set-Cookie", "codohue_admin_session="+sessionToken+"; Path=/api; HttpOnly")
 			return resp, nil
 
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/catalog"):
+			return jsonResponse(t, http.StatusOK, map[string]any{"namespace": namespace}), nil
+
 		case r.Method == http.MethodPut:
 			gotUpsertPath = r.URL.Path
 			if cookie, err := r.Cookie("codohue_admin_session"); err == nil {
@@ -92,9 +95,6 @@ func TestProvisionNamespaceConfig_LogsInThenUpsertsNamespace(t *testing.T) {
 	if gotSessionCookie != sessionToken {
 		t.Fatalf("session cookie = %q, want %q", gotSessionCookie, sessionToken)
 	}
-	if gotPayload.DenseSource != "byoe" {
-		t.Fatalf("dense_source = %q, want byoe", gotPayload.DenseSource)
-	}
 	if gotPayload.EmbeddingDim != 64 {
 		t.Fatalf("embedding_dim = %d, want 64", gotPayload.EmbeddingDim)
 	}
@@ -106,7 +106,10 @@ func TestProvisionNamespaceConfig_LogsInThenUpsertsNamespace(t *testing.T) {
 	}
 }
 
-func TestProvisionNamespaceConfig_CatalogMode(t *testing.T) {
+// Catalog auto-embedding is not optional: it is how vectors get produced at all,
+// so every provisioning run must enable it, and the namespace upsert must leave
+// dense_source out — that route rejects "catalog".
+func TestProvisionNamespaceConfig_EnablesCatalogAutoEmbedding(t *testing.T) {
 	const namespace = "darkvoid_feed"
 
 	var upsertRaw map[string]any
@@ -150,7 +153,6 @@ func TestProvisionNamespaceConfig_CatalogMode(t *testing.T) {
 		AdminKey:     "admin-secret",
 		Namespace:    namespace,
 		EmbeddingDim: 64,
-		DenseSource:  DenseSourceCatalog,
 	})
 	if err != nil {
 		t.Fatalf("ProvisionNamespaceConfig() error = %v", err)
@@ -171,22 +173,6 @@ func TestProvisionNamespaceConfig_CatalogMode(t *testing.T) {
 	}
 	if dim, ok := gotCatalogPayload.Params["dim"].(float64); !ok || int(dim) != 64 {
 		t.Fatalf("catalog params dim = %v, want 64", gotCatalogPayload.Params["dim"])
-	}
-}
-
-func TestProvisionNamespaceConfig_RejectsInvalidDenseSource(t *testing.T) {
-	_, err := ProvisionNamespaceConfig(context.Background(), NamespaceProvisionConfig{
-		AdminBaseURL: "http://codohue-admin.test",
-		AdminKey:     "admin-secret",
-		Namespace:    "darkvoid_feed",
-		EmbeddingDim: 64,
-		DenseSource:  "item2vec",
-	})
-	if err == nil {
-		t.Fatal("expected error for unsupported dense source")
-	}
-	if !strings.Contains(err.Error(), "dense source must be") {
-		t.Fatalf("error = %v, want dense source validation", err)
 	}
 }
 

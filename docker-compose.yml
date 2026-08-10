@@ -253,7 +253,6 @@ services:
       CODOHUE_ADMIN_KEY: ${CODOHUE_ADMIN_KEY:-${CODOHUE_API_KEY:-${CODOHUE_NAMESPACE_KEY:-}}}
       CODOHUE_NAMESPACE: ${CODOHUE_NAMESPACE:-darkvoid_feed}
       CODOHUE_EMBEDDING_DIM: ${CODOHUE_EMBEDDING_DIM:-64}
-      CODOHUE_DENSE_SOURCE: ${CODOHUE_DENSE_SOURCE:-byoe}
     depends_on:
       postgres:
         condition: service_healthy

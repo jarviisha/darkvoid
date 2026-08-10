@@ -1,14 +1,15 @@
 // Package codohue provides the client integration with Codohue services.
 //
 // Darkvoid targets Codohue v0.8.0 through the Codohue Go SDK modules at
-// v0.5.0. Runtime traffic (recommendations, rank, trending, embeddings,
+// v0.5.0. Runtime traffic (recommendations, rank, trending, catalog ingest,
 // events) goes to the data-plane API (cmd/api); one-time namespace
 // provisioning authenticates against the separate admin plane (cmd/admin)
 // via session login — see ProvisionNamespaceConfig for why it has not moved to
 // v0.8.0's bearer auth or its sdk/go/admin wrapper.
-// Object vectors come from one of two selectable sources
-// (CODOHUE_DENSE_SOURCE): "byoe" pushes locally computed TF-IDF vectors,
-// "catalog" ships raw post content for server-side auto-embedding.
+// Object vectors are Codohue's to produce: darkvoid ships raw post content to
+// the catalog pipeline (dense_source "catalog") and the server embeds it. There
+// is no local vectorizer and no bring-your-own-embedding path, so nothing here
+// has to keep a text representation in step with an embedding model.
 // The feed integration expects paginated recommendation items with
 // object_id, score, rank, limit, offset, and total metadata.
 //

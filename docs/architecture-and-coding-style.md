@@ -30,7 +30,7 @@ Shared runtime and infrastructure concerns are kept outside feature packages:
 - `internal/infrastructure`: infrastructure adapters such as database and mailer
 - `internal/pagination`, `internal/validation`: shared request utilities
 - `pkg/*`: reusable packages for config, logger, errors, jwt, redis, storage,
-  database, Codohue integration, and local TF-IDF embeddings
+  database, and the Codohue integration
 
 ## Runtime Composition
 

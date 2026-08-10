@@ -29,7 +29,6 @@ func (app *Application) ensureCodohueNamespaceConfig(ctx context.Context) error 
 		AdminKey:     app.cfg.Codohue.AdminKey,
 		Namespace:    app.cfg.Codohue.Namespace,
 		EmbeddingDim: app.cfg.Codohue.EmbeddingDim,
-		DenseSource:  app.cfg.Codohue.DenseSource,
 	})
 	if err != nil {
 		return fmt.Errorf("provision codohue namespace config: %w", err)
@@ -74,11 +73,10 @@ func (app *Application) wireCodohue(ctx context.Context, codohueClient *codohue.
 	// outage the moment real traffic finds it rather than on the next probe.
 	app.codohue.circuitOpen = codohueClient.CircuitOpen
 
-	app.Post.WireCodohue(codohueClient, app.cfg.Codohue.EmbeddingDim, app.cfg.Codohue.DenseSource)
+	app.Post.WireCodohue(codohueClient)
 	app.log.Info("codohue client wired into post services",
 		"namespace", app.cfg.Codohue.Namespace,
 		"embedding_dim", app.cfg.Codohue.EmbeddingDim,
-		"dense_source", app.cfg.Codohue.DenseSource,
 	)
 
 	if err := app.probeCodohue(ctx, codohueClient); err != nil {

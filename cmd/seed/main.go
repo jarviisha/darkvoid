@@ -34,7 +34,6 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/config"
 	"github.com/jarviisha/darkvoid/pkg/database"
 	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
-	"github.com/jarviisha/darkvoid/pkg/tfidf"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -449,7 +448,6 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 			AdminKey:     cfg.Codohue.AdminKey,
 			Namespace:    cfg.Codohue.Namespace,
 			EmbeddingDim: cfg.Codohue.EmbeddingDim,
-			DenseSource:  cfg.Codohue.DenseSource,
 		})
 		if err != nil {
 			return nil, cleanup, fmt.Errorf("provision codohue namespace config: %w", err)
@@ -487,14 +485,10 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 			return nil, func() {}, fmt.Errorf("codohue ping: %w", err)
 		}
 
-		if cfg.Codohue.DenseSource == codohue.DenseSourceCatalog {
-			postSvc.WithCatalogIngester(codohueClient)
-		} else {
-			postSvc.WithEmbedding(tfidf.New(cfg.Codohue.EmbeddingDim), codohueClient)
-		}
+		postSvc.WithCatalogIngester(codohueClient)
 		likeSvc.WithBehaviorEventPublisher(codohueClient)
 		commentSvc.WithBehaviorEventPublisher(codohueClient)
-		log.Printf("codohue wired for seed events and post embeddings (namespace=%s dense_source=%s)", cfg.Codohue.Namespace, cfg.Codohue.DenseSource)
+		log.Printf("codohue wired for seed events and catalog ingest (namespace=%s)", cfg.Codohue.Namespace)
 	}
 
 	return &seedServices{
