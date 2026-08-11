@@ -27,7 +27,8 @@ func WithMentionRepo(r *repository.MentionRepository) PostServiceOption {
 	return func(s *PostService) { s.mentionRepo = &mentionRepoTxable{r} }
 }
 
-// WithFollowChecker attaches a follow checker for is_following_author enrichment.
+// WithFollowChecker attaches the checker used for visibility authorization and
+// is_following_author enrichment.
 // Called by the app layer once the user context is ready.
 func (s *PostService) WithFollowChecker(fc followChecker) {
 	s.followChecker = fc
@@ -199,11 +200,8 @@ func (s *PostService) emitPostCreatedFeedEvent(ctx context.Context, p *entity.Po
 
 // GetPost retrieves a single post by ID, enriched with like count and optional isLiked flag
 func (s *PostService) GetPost(ctx context.Context, postID uuid.UUID, viewerID *uuid.UUID) (*entity.Post, error) {
-	p, err := s.postRepo.GetByID(ctx, postID)
+	p, err := getVisiblePost(ctx, s.postRepo, s.followChecker, postID, viewerID)
 	if err != nil {
-		if errors.Is(err, errors.ErrNotFound) {
-			return nil, post.ErrPostNotFound
-		}
 		return nil, err
 	}
 
@@ -215,8 +213,8 @@ func (s *PostService) GetPost(ctx context.Context, postID uuid.UUID, viewerID *u
 	return p, nil
 }
 
-// GetUserPosts returns cursor-paginated posts for a user, optionally filtered by visibility.
-// cursor nil means start from the latest post. visibility "" means no filter.
+// GetUserPosts returns cursor-paginated posts for a user, constrained to the
+// visibilities the viewer may read. cursor nil means start from the latest post.
 func (s *PostService) GetUserPosts(ctx context.Context, authorID uuid.UUID, viewerID *uuid.UUID, cursor *post.UserPostCursor, visibility string, limit int32) ([]*entity.Post, *post.UserPostCursor, error) {
 	if limit <= 0 {
 		limit = 20
@@ -233,8 +231,20 @@ func (s *PostService) GetUserPosts(ctx context.Context, authorID uuid.UUID, view
 		}
 	}
 
-	// Fetch one extra to detect if there's a next page
-	posts, err := s.postRepo.GetByAuthorWithCursor(ctx, authorID, cursorTS, cursorID, visibility, limit+1)
+	allowed, err := allowedPostVisibilities(ctx, s.followChecker, authorID, viewerID)
+	if err != nil {
+		return nil, nil, err
+	}
+	visibilityFilters, err := requestedPostVisibilities(visibility, allowed)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(visibilityFilters) == 0 {
+		return nil, nil, nil
+	}
+
+	// Fetch one extra to detect if there's a next page.
+	posts, err := s.postRepo.GetByAuthorWithCursor(ctx, authorID, cursorTS, cursorID, visibilityFilters, limit+1)
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get user posts", "author_id", authorID)
 		return nil, nil, errors.NewInternalError(err)

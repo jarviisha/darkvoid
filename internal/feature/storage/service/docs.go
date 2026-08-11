@@ -1,2 +1,2 @@
-// Package service implements media and storage business logic.
+// Package service implements content-sniffed media validation and storage logic.
 package service

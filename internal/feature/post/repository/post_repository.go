@@ -83,12 +83,12 @@ func (r *PostRepository) GetTrendingPosts(ctx context.Context, limit int32) ([]*
 	return rowsToPosts(rows), nil
 }
 
-func (r *PostRepository) GetByAuthorWithCursor(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilter string, limit int32) ([]*entity.Post, error) {
+func (r *PostRepository) GetByAuthorWithCursor(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilters []string, limit int32) ([]*entity.Post, error) {
 	rows, err := r.queries.GetUserPostsWithCursor(ctx, db.GetUserPostsWithCursorParams{
 		AuthorID: authorID,
 		Column2:  cursorCreatedAt,
 		Column3:  cursorPostID,
-		Column4:  visibilityFilter,
+		Column4:  visibilityFilters,
 		Limit:    limit,
 	})
 	if err != nil {

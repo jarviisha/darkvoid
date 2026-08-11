@@ -33,8 +33,8 @@ type profileService interface {
 	GetMyProfile(ctx context.Context, userID uuid.UUID) (*entity.User, error)
 	GetProfileByUserID(ctx context.Context, userID uuid.UUID) (*entity.User, error)
 	UpdateMyProfile(ctx context.Context, userID uuid.UUID, req *dto.UpdateProfileRequest) (*entity.User, error)
-	UploadAvatar(ctx context.Context, userID uuid.UUID, r io.Reader, size int64, contentType string, ext string) (*entity.User, error)
-	UploadCover(ctx context.Context, userID uuid.UUID, r io.Reader, size int64, contentType string, ext string) (*entity.User, error)
+	UploadAvatar(ctx context.Context, userID uuid.UUID, r io.Reader, size int64) (*entity.User, error)
+	UploadCover(ctx context.Context, userID uuid.UUID, r io.Reader, size int64) (*entity.User, error)
 }
 
 // userResolver resolves a path parameter to a user UUID.

@@ -383,7 +383,8 @@ func (app *Application) registerRoutes() {
 	// Static file server for local storage provider
 	if app.cfg.Storage.Provider == "local" {
 		absDir, _ := filepath.Abs(app.cfg.Storage.LocalDir)
-		router.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir(absDir))))
+		fileServer := http.StripPrefix("/static/", http.FileServer(http.Dir(absDir)))
+		router.Handle("/static/*", middleware.UploadedFileHeaders(fileServer))
 		app.log.Info("static file server mounted", "dir", absDir, "path", "/static/")
 	}
 

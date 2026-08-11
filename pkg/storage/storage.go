@@ -15,14 +15,14 @@ type Config struct {
 }
 
 // New creates a Storage from config, selecting the appropriate provider.
-// Supported providers: "local". Falls back to nop for unknown providers.
+// Only "local" is supported. Unknown or unimplemented providers fail closed so
+// an upload can never be reported successful without persisting its bytes.
 func New(cfg Config) (Storage, error) {
 	switch cfg.Provider {
 	case "local":
 		return NewLocal(cfg.LocalDir, cfg.BaseURL)
 	default:
-		// Unknown or empty provider — use nop (URL-only, no real I/O)
-		return NewNop(cfg.BaseURL), nil
+		return nil, fmt.Errorf("storage: unsupported provider %q", cfg.Provider)
 	}
 }
 
@@ -42,14 +42,14 @@ type Storage interface {
 	URL(key string) string
 }
 
-// nopStorage is a no-op placeholder used until a real provider is configured.
+// nopStorage is a test double that performs no I/O.
 // Put and Delete succeed silently; URL builds a URL from baseURL + key.
 type nopStorage struct {
 	baseURL string
 }
 
-// NewNop returns a Storage implementation that performs no real I/O.
-// It is intended as a placeholder until a concrete provider (local, S3, etc.) is wired in.
+// NewNop returns a Storage test double that performs no real I/O. Production
+// configuration must go through New, which never selects this implementation.
 func NewNop(baseURL string) Storage {
 	return &nopStorage{baseURL: strings.TrimRight(baseURL, "/")}
 }

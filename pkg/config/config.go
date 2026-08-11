@@ -135,7 +135,7 @@ type RootConfig struct {
 
 // StorageConfig holds file storage configuration
 type StorageConfig struct {
-	// Provider selects the storage backend: "local" or "s3"
+	// Provider selects the storage backend. Only "local" is currently supported.
 	Provider string
 
 	// BaseURL is the public base URL used to build file URLs from keys.
@@ -144,14 +144,6 @@ type StorageConfig struct {
 
 	// Local provider settings
 	LocalDir string // e.g. "./uploads"
-
-	// S3-compatible provider settings (S3, MinIO, GCS)
-	S3Endpoint  string
-	S3Bucket    string
-	S3Region    string
-	S3AccessKey string
-	S3SecretKey string
-	S3UseSSL    bool
 }
 
 // MailerConfig holds email sending configuration.
@@ -388,6 +380,12 @@ func (c *Config) Validate() error {
 	}
 	if c.RefreshToken.Expiry <= 0 {
 		return fmt.Errorf("refresh token expiry must be positive")
+	}
+	if c.Storage.Provider != "local" {
+		return fmt.Errorf("invalid storage provider %q: only local is currently supported", c.Storage.Provider)
+	}
+	if strings.TrimSpace(c.Storage.LocalDir) == "" {
+		return fmt.Errorf("storage local directory is required")
 	}
 	if c.FeedFanout.Workers < 1 {
 		return fmt.Errorf("feed fanout workers must be at least 1")

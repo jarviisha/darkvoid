@@ -1,6 +1,6 @@
 // Package config loads, validates, and exposes the configuration a process needs
 // before it can reach anything else: the database, the port, the signing keys,
-// the mail and storage providers, and the two knobs that size the feed's fanout
+// the mail provider and fail-closed local storage configuration, and the two knobs that size the feed's fanout
 // worker pool at construction.
 //
 // It is deliberately not where every setting lives. Anything an operator changes

@@ -27,13 +27,17 @@ func (e *AppError) Unwrap() error {
 	return e.Err
 }
 
-// WithDetail adds a detail to the error
+// WithDetail returns a copy of the error with one additional detail.
+// AppError values are shared as package-level sentinels, so this method must
+// never mutate its receiver.
 func (e *AppError) WithDetail(key string, value any) *AppError {
-	if e.Details == nil {
-		e.Details = make(map[string]any)
+	clone := *e
+	clone.Details = make(map[string]any, len(e.Details)+1)
+	for detailKey, detailValue := range e.Details {
+		clone.Details[detailKey] = detailValue
 	}
-	e.Details[key] = value
-	return e
+	clone.Details[key] = value
+	return &clone
 }
 
 // New creates a new AppError

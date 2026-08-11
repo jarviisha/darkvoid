@@ -313,7 +313,7 @@ func TestGetReplies_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := newCommentService(cr, &mockPostRepo{})
+	svc := newCommentService(cr, postExists(uuid.New()))
 
 	replies, _, err := svc.GetReplies(context.Background(), commentID, nil, pagination.PaginationRequest{Limit: 20})
 	if err != nil {

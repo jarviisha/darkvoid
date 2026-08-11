@@ -22,6 +22,10 @@ var (
 
 	// Password errors
 	ErrWeakPassword = errors.New("WEAK_PASSWORD", "Password too weak", http.StatusBadRequest)
+	// ErrUnsupportedImageType is returned when avatar or cover bytes are not a
+	// supported JPEG or PNG image, regardless of the client-supplied filename.
+	ErrUnsupportedImageType = errors.New("UNSUPPORTED_MEDIA_TYPE", "profile image must be JPEG or PNG", http.StatusUnsupportedMediaType)
+	ErrProfileImageTooLarge = errors.New("FILE_TOO_LARGE", "profile image exceeds 10 MB", http.StatusRequestEntityTooLarge)
 
 	// Role errors
 	ErrRoleNotFound = errors.New("ROLE_NOT_FOUND", "Role not found", http.StatusNotFound)

@@ -3,6 +3,9 @@ package errors
 import (
 	"encoding/json"
 	"net/http"
+	"runtime/debug"
+
+	"github.com/jarviisha/darkvoid/pkg/logger"
 )
 
 // ErrorResponse represents the JSON error response structure
@@ -54,9 +57,9 @@ func WriteJSON(w http.ResponseWriter, err error) {
 func ErrorHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
-			if err := recover(); err != nil {
-				appErr := ErrInternal.WithDetail("panic", err)
-				appErr.WriteHTTP(w)
+			if recovered := recover(); recovered != nil {
+				logger.Error(r.Context(), "panic recovered", "panic", recovered, "stack", string(debug.Stack()))
+				ErrInternal.WriteHTTP(w)
 			}
 		}()
 		next.ServeHTTP(w, r)

@@ -453,7 +453,7 @@ const getUserPostsWithCursor = `-- name: GetUserPostsWithCursor :many
 SELECT id, author_id, content, visibility, created_at, updated_at, deleted_at, like_count, comment_count, search_vector FROM post.posts
 WHERE author_id = $1
   AND deleted_at IS NULL
-  AND ($4::text = '' OR visibility = $4::text)
+  AND visibility = ANY($4::text[])
   AND (created_at, id) < ($2::timestamptz, $3::uuid)
 ORDER BY created_at DESC, id DESC
 LIMIT $5
@@ -463,7 +463,7 @@ type GetUserPostsWithCursorParams struct {
 	AuthorID uuid.UUID          `json:"author_id"`
 	Column2  pgtype.Timestamptz `json:"column_2"`
 	Column3  uuid.UUID          `json:"column_3"`
-	Column4  string             `json:"column_4"`
+	Column4  []string           `json:"column_4"`
 	Limit    int32              `json:"limit"`
 }
 

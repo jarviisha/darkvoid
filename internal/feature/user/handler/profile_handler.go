@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"path/filepath"
 
 	"github.com/jarviisha/darkvoid/internal/feature/user/dto"
 	"github.com/jarviisha/darkvoid/internal/feature/user/service"
@@ -185,7 +184,7 @@ func (h *ProfileHandler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = file.Close() }()
 
-	u, err := h.profileService.UploadAvatar(ctx, *userID, file, header.Size, header.Header.Get("Content-Type"), filepath.Ext(header.Filename))
+	u, err := h.profileService.UploadAvatar(ctx, *userID, file, header.Size)
 	if err != nil {
 		errors.WriteJSON(w, err)
 		return
@@ -233,7 +232,7 @@ func (h *ProfileHandler) UploadCover(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = file.Close() }()
 
-	u, err := h.profileService.UploadCover(ctx, *userID, file, header.Size, header.Header.Get("Content-Type"), filepath.Ext(header.Filename))
+	u, err := h.profileService.UploadCover(ctx, *userID, file, header.Size)
 	if err != nil {
 		errors.WriteJSON(w, err)
 		return

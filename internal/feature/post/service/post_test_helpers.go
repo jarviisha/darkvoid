@@ -58,7 +58,7 @@ func (m *mockTxBeginner) Begin(ctx context.Context) (pgx.Tx, error) { return &mo
 type mockPostRepo struct {
 	create                func(ctx context.Context, authorID uuid.UUID, content string, visibility entity.Visibility) (*entity.Post, error)
 	getByID               func(ctx context.Context, id uuid.UUID) (*entity.Post, error)
-	getByAuthorWithCursor func(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilter string, limit int32) ([]*entity.Post, error)
+	getByAuthorWithCursor func(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilters []string, limit int32) ([]*entity.Post, error)
 	update                func(ctx context.Context, id uuid.UUID, content string, visibility entity.Visibility) (*entity.Post, error)
 	delete                func(ctx context.Context, id uuid.UUID) error
 }
@@ -76,9 +76,9 @@ func (m *mockPostRepo) GetByID(ctx context.Context, id uuid.UUID) (*entity.Post,
 	}
 	return nil, pkgerrors.ErrNotFound
 }
-func (m *mockPostRepo) GetByAuthorWithCursor(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilter string, limit int32) ([]*entity.Post, error) {
+func (m *mockPostRepo) GetByAuthorWithCursor(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilters []string, limit int32) ([]*entity.Post, error) {
 	if m.getByAuthorWithCursor != nil {
-		return m.getByAuthorWithCursor(ctx, authorID, cursorCreatedAt, cursorPostID, visibilityFilter, limit)
+		return m.getByAuthorWithCursor(ctx, authorID, cursorCreatedAt, cursorPostID, visibilityFilters, limit)
 	}
 	return nil, nil
 }
@@ -410,7 +410,13 @@ func (m *mockHashtagCache) SetSearchResults(ctx context.Context, prefix string, 
 
 // newCommentLikeService creates a CommentLikeService with the given mocks for testing.
 func newCommentLikeService(clr commentLikeRepo, cr commentRepo) *CommentLikeService {
-	return &CommentLikeService{commentLikeRepo: clr, commentRepo: cr}
+	return &CommentLikeService{
+		commentLikeRepo: clr,
+		commentRepo:     cr,
+		postRepo: &mockPostRepo{getByID: func(_ context.Context, _ uuid.UUID) (*entity.Post, error) {
+			return samplePost(uuid.New()), nil
+		}},
+	}
 }
 
 // newHashtagService creates a HashtagService with the given mocks for testing.

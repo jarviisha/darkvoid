@@ -605,7 +605,7 @@ func TestUpdatePost_GetByIDInternalError(t *testing.T) {
 func TestGetUserPosts_Success(t *testing.T) {
 	authorID := uuid.New()
 	pr := &mockPostRepo{
-		getByAuthorWithCursor: func(_ context.Context, _ uuid.UUID, _ pgtype.Timestamptz, _ uuid.UUID, _ string, _ int32) ([]*entity.Post, error) {
+		getByAuthorWithCursor: func(_ context.Context, _ uuid.UUID, _ pgtype.Timestamptz, _ uuid.UUID, _ []string, _ int32) ([]*entity.Post, error) {
 			return []*entity.Post{samplePost(authorID)}, nil
 		},
 	}
@@ -627,7 +627,7 @@ func TestGetUserPosts_NextPageCursor(t *testing.T) {
 	authorID := uuid.New()
 	// Return limit+1 posts to trigger next-page cursor generation
 	pr := &mockPostRepo{
-		getByAuthorWithCursor: func(_ context.Context, _ uuid.UUID, _ pgtype.Timestamptz, _ uuid.UUID, _ string, _ int32) ([]*entity.Post, error) {
+		getByAuthorWithCursor: func(_ context.Context, _ uuid.UUID, _ pgtype.Timestamptz, _ uuid.UUID, _ []string, _ int32) ([]*entity.Post, error) {
 			posts := make([]*entity.Post, 3) // limit=2, returns 3 → next page
 			for i := range posts {
 				posts[i] = samplePost(authorID)
@@ -661,7 +661,7 @@ func TestGetUserPosts_InvalidCursorPostID(t *testing.T) {
 
 func TestGetUserPosts_RepoError(t *testing.T) {
 	pr := &mockPostRepo{
-		getByAuthorWithCursor: func(_ context.Context, _ uuid.UUID, _ pgtype.Timestamptz, _ uuid.UUID, _ string, _ int32) ([]*entity.Post, error) {
+		getByAuthorWithCursor: func(_ context.Context, _ uuid.UUID, _ pgtype.Timestamptz, _ uuid.UUID, _ []string, _ int32) ([]*entity.Post, error) {
 			return nil, pkgerrors.NewInternalError(pkgerrors.ErrInternal)
 		},
 	}

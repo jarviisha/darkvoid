@@ -15,12 +15,23 @@ import (
 type CommentLikeService struct {
 	commentLikeRepo commentLikeRepo
 	commentRepo     commentRepo
+	postRepo        postRepo
+	followChecker   followChecker                  // optional: nil → followers content denied
 	notifEmitter    CommentLikeNotificationEmitter // optional, nil = no-op
 }
 
 // NewCommentLikeService creates a new CommentLikeService.
-func NewCommentLikeService(commentLikeRepo *repository.CommentLikeRepository, commentRepo *repository.CommentRepository) *CommentLikeService {
-	return &CommentLikeService{commentLikeRepo: commentLikeRepo, commentRepo: &commentRepoTxable{commentRepo}}
+func NewCommentLikeService(commentLikeRepo *repository.CommentLikeRepository, commentRepo *repository.CommentRepository, postRepo *repository.PostRepository) *CommentLikeService {
+	return &CommentLikeService{
+		commentLikeRepo: commentLikeRepo,
+		commentRepo:     &commentRepoTxable{commentRepo},
+		postRepo:        &postRepoTxable{postRepo},
+	}
+}
+
+// WithFollowChecker attaches the checker used to authorize followers-only posts.
+func (s *CommentLikeService) WithFollowChecker(checker followChecker) {
+	s.followChecker = checker
 }
 
 // WithNotificationEmitter attaches a notification emitter. Called at wire-up time.
@@ -36,6 +47,9 @@ func (s *CommentLikeService) Toggle(ctx context.Context, userID, commentID uuid.
 			return false, post.ErrCommentNotFound
 		}
 		return false, err
+	}
+	if _, accessErr := getVisiblePost(ctx, s.postRepo, s.followChecker, c.PostID, &userID); accessErr != nil {
+		return false, accessErr
 	}
 
 	// Prevent self-like (consistent with Like method behavior)

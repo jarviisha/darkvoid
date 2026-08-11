@@ -10,10 +10,10 @@ import (
 // RegisterRoutes registers all routes for the Post context.
 func (ctx *PostContext) RegisterRoutes(r chi.Router, auth middleware.AuthMiddleware) {
 	r.Group(func(r chi.Router) {
-		r.Get("/posts/{postID}", ctx.postHandler.GetPost)
-		r.Get("/users/{userID}/posts", ctx.postHandler.GetUserPosts)
-		r.Get("/posts/{postID}/comments", ctx.commentHandler.GetComments)
-		r.Get("/posts/{postID}/comments/{commentID}/replies", ctx.commentHandler.GetReplies)
+		r.With(auth.Optional).Get("/posts/{postID}", ctx.postHandler.GetPost)
+		r.With(auth.Optional).Get("/users/{userID}/posts", ctx.postHandler.GetUserPosts)
+		r.With(auth.Optional).Get("/posts/{postID}/comments", ctx.commentHandler.GetComments)
+		r.With(auth.Optional).Get("/posts/{postID}/comments/{commentID}/replies", ctx.commentHandler.GetReplies)
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RateLimitByIP(60, time.Minute))

@@ -1,2 +1,3 @@
-// Package middleware provides HTTP middleware used by the application router.
+// Package middleware provides authentication, authorization, rate limiting,
+// and browser security middleware used by the application router.
 package middleware

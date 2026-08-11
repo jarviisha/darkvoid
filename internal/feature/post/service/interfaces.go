@@ -22,7 +22,7 @@ type postRepo interface {
 	WithTx(tx pgx.Tx) postRepo
 	Create(ctx context.Context, authorID uuid.UUID, content string, visibility entity.Visibility) (*entity.Post, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*entity.Post, error)
-	GetByAuthorWithCursor(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilter string, limit int32) ([]*entity.Post, error)
+	GetByAuthorWithCursor(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilters []string, limit int32) ([]*entity.Post, error)
 	Update(ctx context.Context, id uuid.UUID, content string, visibility entity.Visibility) (*entity.Post, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 }

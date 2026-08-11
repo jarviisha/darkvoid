@@ -68,6 +68,12 @@ type CommentService struct {
 	notifEmitter       CommentNotificationEmitter // optional: nil → no-op
 	commentMentionRepo commentMentionRepo         // optional: nil → mentions skipped
 	eventPublisher     BehaviorEventPublisher     // optional: nil → no-op
+	followChecker      followChecker              // optional: nil → followers content denied
+}
+
+// WithFollowChecker attaches the checker used to authorize followers-only posts.
+func (s *CommentService) WithFollowChecker(checker followChecker) {
+	s.followChecker = checker
 }
 
 // NewCommentService creates a new CommentService. Required dependencies are passed as positional
@@ -107,11 +113,8 @@ func (s *CommentService) CreateComment(ctx context.Context, postID, authorID uui
 	if strings.TrimSpace(content) == "" && len(mediaKeys) == 0 {
 		return nil, errors.NewBadRequestError("comment content or media is required")
 	}
-	p, err := s.postRepo.GetByID(ctx, postID)
+	p, err := getVisiblePost(ctx, s.postRepo, s.followChecker, postID, &authorID)
 	if err != nil {
-		if errors.Is(err, errors.ErrNotFound) {
-			return nil, post.ErrPostNotFound
-		}
 		return nil, err
 	}
 	// Validate parent comment belongs to same post
@@ -179,10 +182,7 @@ func (s *CommentService) CreateComment(ctx context.Context, postID, authorID uui
 func (s *CommentService) GetComments(ctx context.Context, postID uuid.UUID, viewerID *uuid.UUID, req pagination.PaginationRequest) ([]*entity.Comment, pagination.PaginationResponse, error) {
 	req.Validate()
 
-	if _, err := s.postRepo.GetByID(ctx, postID); err != nil {
-		if errors.Is(err, errors.ErrNotFound) {
-			return nil, pagination.PaginationResponse{}, post.ErrPostNotFound
-		}
+	if _, err := getVisiblePost(ctx, s.postRepo, s.followChecker, postID, viewerID); err != nil {
 		return nil, pagination.PaginationResponse{}, err
 	}
 
@@ -210,11 +210,15 @@ func (s *CommentService) GetComments(ctx context.Context, postID uuid.UUID, view
 func (s *CommentService) GetReplies(ctx context.Context, commentID uuid.UUID, viewerID *uuid.UUID, req pagination.PaginationRequest) ([]*entity.Comment, pagination.PaginationResponse, error) {
 	req.Validate()
 
-	if _, err := s.commentRepo.GetByID(ctx, commentID); err != nil {
+	comment, err := s.commentRepo.GetByID(ctx, commentID)
+	if err != nil {
 		if errors.Is(err, errors.ErrNotFound) {
 			return nil, pagination.PaginationResponse{}, post.ErrCommentNotFound
 		}
 		return nil, pagination.PaginationResponse{}, err
+	}
+	if _, accessErr := getVisiblePost(ctx, s.postRepo, s.followChecker, comment.PostID, viewerID); accessErr != nil {
+		return nil, pagination.PaginationResponse{}, accessErr
 	}
 
 	replies, err := s.commentRepo.GetReplies(ctx, commentID, req.Limit, req.Offset)

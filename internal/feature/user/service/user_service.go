@@ -333,7 +333,7 @@ func (s *UserService) UpdateMyProfile(ctx context.Context, userID uuid.UUID, req
 	return updated, nil
 }
 
-func (s *UserService) UploadAvatar(ctx context.Context, userID uuid.UUID, r io.Reader, size int64, contentType string, ext string) (*entity.User, error) {
+func (s *UserService) UploadAvatar(ctx context.Context, userID uuid.UUID, r io.Reader, size int64) (*entity.User, error) {
 	existing, err := s.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, errors.ErrNotFound) {
@@ -343,8 +343,13 @@ func (s *UserService) UploadAvatar(ctx context.Context, userID uuid.UUID, r io.R
 		return nil, errors.NewInternalError(err)
 	}
 
-	newKey := fmt.Sprintf("avatars/%s%s", uuid.New().String(), ext)
-	if err = s.storage.Put(ctx, newKey, r, size, contentType); err != nil {
+	image, err := validateProfileImage(r, size)
+	if err != nil {
+		return nil, err
+	}
+
+	newKey := fmt.Sprintf("avatars/%s%s", uuid.New().String(), image.extension)
+	if err = s.storage.Put(ctx, newKey, image.reader, image.size, image.contentType); err != nil {
 		logger.LogError(ctx, err, "failed to upload avatar", "user_id", userID)
 		return nil, errors.NewInternalError(err)
 	}
@@ -369,7 +374,7 @@ func (s *UserService) UploadAvatar(ctx context.Context, userID uuid.UUID, r io.R
 	return updated, nil
 }
 
-func (s *UserService) UploadCover(ctx context.Context, userID uuid.UUID, r io.Reader, size int64, contentType string, ext string) (*entity.User, error) {
+func (s *UserService) UploadCover(ctx context.Context, userID uuid.UUID, r io.Reader, size int64) (*entity.User, error) {
 	existing, err := s.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, errors.ErrNotFound) {
@@ -379,8 +384,13 @@ func (s *UserService) UploadCover(ctx context.Context, userID uuid.UUID, r io.Re
 		return nil, errors.NewInternalError(err)
 	}
 
-	newKey := fmt.Sprintf("covers/%s%s", uuid.New().String(), ext)
-	if err = s.storage.Put(ctx, newKey, r, size, contentType); err != nil {
+	image, err := validateProfileImage(r, size)
+	if err != nil {
+		return nil, err
+	}
+
+	newKey := fmt.Sprintf("covers/%s%s", uuid.New().String(), image.extension)
+	if err = s.storage.Put(ctx, newKey, image.reader, image.size, image.contentType); err != nil {
 		logger.LogError(ctx, err, "failed to upload cover", "user_id", userID)
 		return nil, errors.NewInternalError(err)
 	}

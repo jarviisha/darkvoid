@@ -103,7 +103,7 @@ func SetupPostContext(pool *pgxpool.Pool, store storage.Storage, userRepo postUs
 		service.WithCommentLikeRepo(commentLikeRepo),
 		service.WithCommentMentionRepo(commentMentionRepo),
 	)
-	commentLikeService := service.NewCommentLikeService(commentLikeRepo, commentRepo)
+	commentLikeService := service.NewCommentLikeService(commentLikeRepo, commentRepo, postRepo)
 	hashtagService := service.NewHashtagService(hashtagRepo, hCache, postRepo, ur)
 
 	// Handlers
@@ -137,7 +137,11 @@ func SetupPostContext(pool *pgxpool.Pool, store storage.Storage, userRepo postUs
 }
 
 func (ctx *PostContext) WireFollowChecker(followService postFollowService) {
-	ctx.postService.WithFollowChecker(&postFollowChecker{followService: followService})
+	checker := &postFollowChecker{followService: followService}
+	ctx.postService.WithFollowChecker(checker)
+	ctx.likeService.WithFollowChecker(checker)
+	ctx.commentService.WithFollowChecker(checker)
+	ctx.commentLikeService.WithFollowChecker(checker)
 }
 
 // WireFeedCacheInvalidator wires trending cache eviction into the post service.
