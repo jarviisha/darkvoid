@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
@@ -13,6 +15,28 @@ import (
 	pkgerrors "github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
+
+type feedEventOutbox struct{ outbox *feed.PostgresOutbox }
+
+func (o *feedEventOutbox) EnqueuePostCreated(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error {
+	return o.outbox.Enqueue(ctx, tx, feed.Event{Type: feed.EventPostCreated, PostID: postID, AuthorID: authorID, Visibility: visibility, CreatedAt: createdAt})
+}
+
+func (o *feedEventOutbox) EnqueuePostDeleted(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID) error {
+	return o.outbox.Enqueue(ctx, tx, feed.Event{Type: feed.EventPostDeleted, PostID: postID, AuthorID: authorID})
+}
+
+func (o *feedEventOutbox) EnqueuePostVisibilityChanged(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error {
+	return o.outbox.Enqueue(ctx, tx, feed.Event{Type: feed.EventVisibilityChanged, PostID: postID, AuthorID: authorID, Visibility: visibility, CreatedAt: createdAt})
+}
+
+func (o *feedEventOutbox) EnqueueFollowCreated(ctx context.Context, tx pgx.Tx, followerID, followeeID uuid.UUID) error {
+	return o.outbox.Enqueue(ctx, tx, feed.Event{Type: feed.EventFollowCreated, ActorID: followerID, FolloweeID: followeeID})
+}
+
+func (o *feedEventOutbox) EnqueueFollowDeleted(ctx context.Context, tx pgx.Tx, followerID, followeeID uuid.UUID) error {
+	return o.outbox.Enqueue(ctx, tx, feed.Event{Type: feed.EventFollowDeleted, ActorID: followerID, FolloweeID: followeeID})
+}
 
 // --- Entity conversion ---
 
@@ -84,7 +108,7 @@ type postReader struct {
 }
 
 type feedPostRepo interface {
-	GetFollowingPostsWithCursor(ctx context.Context, authorIDs []uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorID uuid.UUID, limit int32) ([]*postentity.Post, error)
+	GetFollowingPostsWithCursor(ctx context.Context, authorIDs []uuid.UUID, viewerID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorID uuid.UUID, limit int32) ([]*postentity.Post, error)
 	GetTrendingPosts(ctx context.Context, limit int32) ([]*postentity.Post, error)
 	GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*postentity.Post, error)
 	GetDiscoverWithCursor(ctx context.Context, cursorCreatedAt pgtype.Timestamptz, cursorID uuid.UUID, limit int32) ([]*postentity.Post, error)
@@ -98,7 +122,7 @@ type feedLikeRepo interface {
 	GetLikedPostIDs(ctx context.Context, userID uuid.UUID, postIDs []uuid.UUID) ([]uuid.UUID, error)
 }
 
-func (r *postReader) GetFollowingPostsWithCursor(ctx context.Context, authorIDs []uuid.UUID, cursor *feed.FollowingCursor, limit int32) ([]*feedentity.Post, error) {
+func (r *postReader) GetFollowingPostsWithCursor(ctx context.Context, authorIDs []uuid.UUID, viewerID uuid.UUID, cursor *feed.FollowingCursor, limit int32) ([]*feedentity.Post, error) {
 	var cursorTS pgtype.Timestamptz
 	var cursorID uuid.UUID
 
@@ -112,7 +136,7 @@ func (r *postReader) GetFollowingPostsWithCursor(ctx context.Context, authorIDs 
 		cursorTS, cursorID = feed.DefaultDiscoverPgParams()
 	}
 
-	posts, err := r.postRepo.GetFollowingPostsWithCursor(ctx, authorIDs, cursorTS, cursorID, limit)
+	posts, err := r.postRepo.GetFollowingPostsWithCursor(ctx, authorIDs, viewerID, cursorTS, cursorID, limit)
 	if err != nil {
 		return nil, pkgerrors.NewInternalError(err)
 	}
@@ -261,15 +285,15 @@ type followReader struct {
 
 type feedFollowService interface {
 	GetFollowingIDs(ctx context.Context, targetID uuid.UUID) ([]uuid.UUID, error)
-	GetFollowerIDs(ctx context.Context, targetID uuid.UUID) ([]uuid.UUID, error)
+	GetFollowerIDs(ctx context.Context, targetID uuid.UUID, limit int) ([]uuid.UUID, error)
 }
 
 func (r *followReader) GetFollowingIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
 	return r.followService.GetFollowingIDs(ctx, userID)
 }
 
-func (r *followReader) GetFollowerIDs(ctx context.Context, targetID uuid.UUID) ([]uuid.UUID, error) {
-	return r.followService.GetFollowerIDs(ctx, targetID)
+func (r *followReader) GetFollowerIDs(ctx context.Context, targetID uuid.UUID, limit int) ([]uuid.UUID, error) {
+	return r.followService.GetFollowerIDs(ctx, targetID, limit)
 }
 
 // --- likeReader ---

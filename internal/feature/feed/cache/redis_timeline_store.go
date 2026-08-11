@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
@@ -16,8 +17,42 @@ import (
 // so they must never be read or written again — they expire via their TTL.
 const timelineKeyPrefix = "feed:tl:v2"
 
+const replaceTimelineScript = `
+local key = KEYS[1]
+local cutoff = tonumber(ARGV[1])
+local maxItems = tonumber(ARGV[2])
+local ttlMillis = tonumber(ARGV[3])
+local keep = {}
+for i = 4, #ARGV, 2 do
+  local member = ARGV[i]
+  keep[member] = true
+  redis.call('ZADD', key, ARGV[i + 1], member)
+end
+local current = redis.call('ZRANGE', key, 0, -1, 'WITHSCORES')
+for i = 1, #current, 2 do
+  local member = current[i]
+  if not keep[member] then
+    local writtenAt = redis.call('ZSCORE', KEYS[2], member)
+    if not writtenAt or tonumber(writtenAt) < cutoff then
+      redis.call('ZREM', key, member)
+    end
+  end
+end
+redis.call('ZREMRANGEBYRANK', key, 0, -maxItems - 1)
+if redis.call('ZCARD', key) == 0 then
+  redis.call('DEL', key)
+else
+  redis.call('PEXPIRE', key, ttlMillis)
+end
+return 1
+`
+
 func timelineKey(userID uuid.UUID) string {
 	return fmt.Sprintf("%s:%s", timelineKeyPrefix, userID)
+}
+
+func timelineWritesKey(userID uuid.UUID) string {
+	return fmt.Sprintf("%s:writes", timelineKey(userID))
 }
 
 // RedisTimelineStore stores prepared feed timelines in Redis sorted sets.
@@ -46,6 +81,21 @@ func (s *RedisTimelineStore) SetPostsBatch(ctx context.Context, userID uuid.UUID
 	return s.writeBatch(ctx, userID, entries, false)
 }
 
+func (s *RedisTimelineStore) ReplacePosts(ctx context.Context, userID uuid.UUID, entries []feed.TimelineEntry, preserveAfter time.Time) error {
+	cutoff := preserveAfter.UTC().UnixMilli()
+	maxItems, ttl := s.settings.TimelineWriteLimits()
+	args := make([]any, 0, 3+len(entries)*2)
+	args = append(args, cutoff, maxItems, ttl.Milliseconds())
+	for _, entry := range entries {
+		args = append(args, entry.PostID.String(), entry.Score)
+	}
+	if err := s.client.Eval(ctx, replaceTimelineScript, []string{timelineKey(userID), timelineWritesKey(userID)}, args...).Err(); err != nil {
+		feed.ObserveRedisError(err)
+		return fmt.Errorf("redis timeline replace posts: %w", err)
+	}
+	return nil
+}
+
 // writeBatch writes entries (ZADD NX when nx — never downgrading an existing
 // score — plain upsert otherwise), trims to maxItems, and refreshes the TTL.
 func (s *RedisTimelineStore) writeBatch(ctx context.Context, userID uuid.UUID, entries []feed.TimelineEntry, nx bool) error {
@@ -63,10 +113,24 @@ func (s *RedisTimelineStore) writeBatch(ctx context.Context, userID uuid.UUID, e
 	}
 
 	maxItems, ttl := s.settings.TimelineWriteLimits()
-	pipe := s.client.Pipeline()
+	// AddPost writes the timeline member and its fanout-write marker in one
+	// Redis transaction. ReplacePosts is a Lua script, so it observes either
+	// both writes or neither and cannot delete an in-flight fanout between them.
+	pipe := s.client.TxPipeline()
 	pipe.ZAddArgs(ctx, key, redis.ZAddArgs{NX: nx, Members: members})
 	pipe.ZRemRangeByRank(ctx, key, 0, int64(-maxItems-1))
 	pipe.Expire(ctx, key, ttl)
+	if nx {
+		writeMarkers := make([]redis.Z, 0, len(entries))
+		writtenAt := float64(time.Now().UTC().UnixMilli())
+		for _, entry := range entries {
+			writeMarkers = append(writeMarkers, redis.Z{Score: writtenAt, Member: entry.PostID.String()})
+		}
+		writesKey := timelineWritesKey(userID)
+		pipe.ZAdd(ctx, writesKey, writeMarkers...)
+		pipe.ZRemRangeByRank(ctx, writesKey, 0, int64(-maxItems-1))
+		pipe.Expire(ctx, writesKey, ttl)
+	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		feed.ObserveRedisError(err)
 		return fmt.Errorf("redis timeline write batch: %w", err)
@@ -79,43 +143,47 @@ func (s *RedisTimelineStore) ReadPage(ctx context.Context, userID uuid.UUID, aft
 		return &feed.TimelinePage{}, nil
 	}
 
-	max := "+inf"
+	maxScore := "+inf"
 	if after != nil {
-		max = strconv.FormatInt(after.Score, 10)
+		maxScore = strconv.FormatInt(after.Score, 10)
 	}
-	rows, err := s.client.ZRevRangeByScoreWithScores(ctx, timelineKey(userID), &redis.ZRangeBy{
-		Max:    max,
-		Min:    "-inf",
-		Offset: 0,
-		Count:  int64(limit * 2),
-	}).Result()
-	if err != nil {
-		feed.ObserveRedisError(err)
-		return nil, fmt.Errorf("redis timeline read page: %w", err)
-	}
-
-	entries := make([]feed.TimelineEntry, 0, min(limit, len(rows)))
-	for _, row := range rows {
-		postID, parseErr := uuid.Parse(fmt.Sprint(row.Member))
-		if parseErr != nil {
-			continue
+	want := limit + 1
+	chunkSize := max(limit*2, 64)
+	entries := make([]feed.TimelineEntry, 0, want)
+	var offset int64
+	for len(entries) < want {
+		rows, err := s.client.ZRevRangeByScoreWithScores(ctx, timelineKey(userID), &redis.ZRangeBy{
+			Max: maxScore, Min: "-inf", Offset: offset, Count: int64(chunkSize),
+		}).Result()
+		if err != nil {
+			feed.ObserveRedisError(err)
+			return nil, fmt.Errorf("redis timeline read page: %w", err)
 		}
-		score := int64(row.Score)
-		if after != nil {
-			if score > after.Score {
+		offset += int64(len(rows))
+		for _, row := range rows {
+			postID, parseErr := uuid.Parse(fmt.Sprint(row.Member))
+			if parseErr != nil {
 				continue
 			}
-			if score == after.Score && postID.String() >= after.PostID {
+			score := int64(row.Score)
+			if after != nil && score == after.Score && postID.String() >= after.PostID {
 				continue
 			}
+			entries = append(entries, feed.TimelineEntry{PostID: postID, Score: score})
+			if len(entries) == want {
+				break
+			}
 		}
-		entries = append(entries, feed.TimelineEntry{PostID: postID, Score: score})
-		if len(entries) == limit {
+		if len(rows) < chunkSize {
 			break
 		}
 	}
 
-	page := &feed.TimelinePage{Entries: entries}
+	page := &feed.TimelinePage{HasMore: len(entries) > limit}
+	if page.HasMore {
+		entries = entries[:limit]
+	}
+	page.Entries = entries
 	if len(entries) > 0 {
 		last := entries[len(entries)-1]
 		page.Last = &feed.TimelinePosition{Score: last.Score, PostID: last.PostID.String()}
@@ -125,7 +193,10 @@ func (s *RedisTimelineStore) ReadPage(ctx context.Context, userID uuid.UUID, aft
 
 func (s *RedisTimelineStore) Trim(ctx context.Context, userID uuid.UUID) error {
 	maxItems, _ := s.settings.TimelineWriteLimits()
-	if err := s.client.ZRemRangeByRank(ctx, timelineKey(userID), 0, int64(-maxItems-1)).Err(); err != nil {
+	pipe := s.client.Pipeline()
+	pipe.ZRemRangeByRank(ctx, timelineKey(userID), 0, int64(-maxItems-1))
+	pipe.ZRemRangeByRank(ctx, timelineWritesKey(userID), 0, int64(-maxItems-1))
+	if _, err := pipe.Exec(ctx); err != nil {
 		feed.ObserveRedisError(err)
 		return fmt.Errorf("redis timeline trim: %w", err)
 	}
@@ -133,7 +204,10 @@ func (s *RedisTimelineStore) Trim(ctx context.Context, userID uuid.UUID) error {
 }
 
 func (s *RedisTimelineStore) RemovePostBestEffort(ctx context.Context, userID uuid.UUID, postID uuid.UUID) error {
-	if err := s.client.ZRem(ctx, timelineKey(userID), postID.String()).Err(); err != nil {
+	pipe := s.client.Pipeline()
+	pipe.ZRem(ctx, timelineKey(userID), postID.String())
+	pipe.ZRem(ctx, timelineWritesKey(userID), postID.String())
+	if _, err := pipe.Exec(ctx); err != nil {
 		feed.ObserveRedisError(err)
 		return fmt.Errorf("redis timeline remove post: %w", err)
 	}

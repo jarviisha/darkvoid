@@ -24,6 +24,7 @@ type TimelinePosition struct {
 type TimelinePage struct {
 	Entries []TimelineEntry
 	Last    *TimelinePosition
+	HasMore bool
 }
 
 // TimelineStore stores and reads prepared per-user feed timelines.
@@ -35,6 +36,9 @@ type TimelineStore interface {
 	// SetPostsBatch upserts entries, overwriting scores of existing members.
 	// It is the write path for background ranking (refresher / re-rank jobs).
 	SetPostsBatch(ctx context.Context, userID uuid.UUID, entries []TimelineEntry) error
+	// ReplacePosts atomically replaces the refreshed snapshot while retaining
+	// fanout entries created after preserveAfter.
+	ReplacePosts(ctx context.Context, userID uuid.UUID, entries []TimelineEntry, preserveAfter time.Time) error
 	ReadPage(ctx context.Context, userID uuid.UUID, after *TimelinePosition, limit int) (*TimelinePage, error)
 	Trim(ctx context.Context, userID uuid.UUID) error
 	RemovePostBestEffort(ctx context.Context, userID uuid.UUID, postID uuid.UUID) error

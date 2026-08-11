@@ -25,7 +25,7 @@ type mockRefreshPostReader struct {
 	err       error
 }
 
-func (m *mockRefreshPostReader) GetFollowingPostsWithCursor(_ context.Context, _ []uuid.UUID, _ *FollowingCursor, limit int32) ([]*feedentity.Post, error) {
+func (m *mockRefreshPostReader) GetFollowingPostsWithCursor(_ context.Context, _ []uuid.UUID, _ uuid.UUID, _ *FollowingCursor, limit int32) ([]*feedentity.Post, error) {
 	m.lastLimit = limit
 	if m.err != nil {
 		return nil, m.err
@@ -101,7 +101,7 @@ func TestPreparedTimelineRefresher_WarmTimelinesWritesRankedPackedEntries(t *tes
 		}
 	}
 	if len(store.added) != 0 {
-		t.Fatalf("refresher must write via SetPostsBatch (upsert), got NX adds: %+v", store.added)
+		t.Fatalf("refresher must replace the ranked snapshot, got NX adds: %+v", store.added)
 	}
 	if !ranker.gotFollowing[followed.String()] || !ranker.gotFollowing[userB.String()] {
 		t.Fatalf("ranker followingSet must contain followed authors and self, got %+v", ranker.gotFollowing)

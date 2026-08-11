@@ -9,7 +9,10 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
 
-const maxFormMemory = 32 << 20 // 32 MB multipart buffer
+const (
+	maxUploadBodySize  = 101 << 20 // 100 MB file plus multipart framing
+	maxMultipartMemory = 32 << 20  // larger parts spill to temporary files
+)
 
 // MediaHandler handles media upload requests.
 type MediaHandler struct {
@@ -43,8 +46,8 @@ func NewMediaHandler(mediaService *service.MediaService) *MediaHandler {
 func (h *MediaHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxFormMemory)
-	if err := r.ParseMultipartForm(maxFormMemory); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBodySize)
+	if err := r.ParseMultipartForm(maxMultipartMemory); err != nil {
 		errors.WriteJSON(w, errors.NewBadRequestError("invalid or missing multipart form"))
 		return
 	}
@@ -56,21 +59,7 @@ func (h *MediaHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = file.Close() }()
 
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		// Fallback: sniff from file bytes (net/http will read at most 512 bytes)
-		buf := make([]byte, 512)
-		n, _ := file.Read(buf)
-		contentType = http.DetectContentType(buf[:n])
-		// Seek back — multipart.File implements io.ReadSeeker
-		if seeker, ok := file.(interface {
-			Seek(int64, int) (int64, error)
-		}); ok {
-			_, _ = seeker.Seek(0, 0)
-		}
-	}
-
-	result, err := h.mediaService.Upload(ctx, file, header.Size, contentType, header.Filename)
+	result, err := h.mediaService.Upload(ctx, file, header.Size)
 	if err != nil {
 		errors.WriteJSON(w, err)
 		return

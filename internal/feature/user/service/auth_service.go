@@ -29,6 +29,7 @@ type refreshTokenManager interface {
 	GenerateToken(ctx context.Context, userID uuid.UUID) (*entity.RefreshToken, error)
 	ValidateToken(ctx context.Context, token string) (uuid.UUID, error)
 	RevokeToken(ctx context.Context, token string) error
+	RotateToken(ctx context.Context, oldToken string) (*entity.RefreshToken, error)
 	RevokeAllUserTokens(ctx context.Context, userID uuid.UUID) error
 	GetExpiryDuration() time.Duration
 }
@@ -188,13 +189,12 @@ func (s *AuthService) RefreshAccessToken(ctx context.Context, req *dto.RefreshTo
 		return nil, errors.NewInternalError(err)
 	}
 
-	if err = s.refreshTokenService.RevokeToken(ctx, req.RefreshToken); err != nil {
-		logger.LogError(ctx, err, "failed to revoke old refresh token")
-	}
-
-	newRefreshToken, err := s.refreshTokenService.GenerateToken(ctx, u.ID)
+	newRefreshToken, err := s.refreshTokenService.RotateToken(ctx, req.RefreshToken)
 	if err != nil {
-		return nil, errors.NewInternalError(err)
+		return nil, err
+	}
+	if newRefreshToken.UserID != u.ID {
+		return nil, errors.NewUnauthorizedError("invalid refresh token")
 	}
 
 	logger.Info(ctx, "access token refreshed successfully", "user_id", u.ID)

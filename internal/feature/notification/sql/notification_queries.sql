@@ -38,9 +38,10 @@ WHERE recipient_id = $1 AND group_key = $2
 ORDER BY created_at DESC
 LIMIT $3;
 
--- name: DeleteByActorAndGroupKey :exec
+-- name: DeleteByActorAndGroupKey :one
 DELETE FROM notification.notifications
-WHERE actor_id = $1 AND group_key = $2;
+WHERE actor_id = $1 AND group_key = $2
+RETURNING recipient_id;
 
 -- name: CreateSystemNotification :one
 INSERT INTO notification.notifications (recipient_id, actor_id, type, group_key, message)

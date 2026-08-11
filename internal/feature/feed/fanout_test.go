@@ -19,11 +19,16 @@ func settingsWithFanoutCap(maxFollowers int) *Settings {
 }
 
 type mockFollowerReader struct {
-	ids []uuid.UUID
-	err error
+	ids       []uuid.UUID
+	err       error
+	lastLimit int
 }
 
-func (m *mockFollowerReader) GetFollowerIDs(_ context.Context, _ uuid.UUID) ([]uuid.UUID, error) {
+func (m *mockFollowerReader) GetFollowerIDs(_ context.Context, _ uuid.UUID, limit int) ([]uuid.UUID, error) {
+	m.lastLimit = limit
+	if limit > 0 && len(m.ids) > limit {
+		return m.ids[:limit], m.err
+	}
 	return m.ids, m.err
 }
 
@@ -53,6 +58,10 @@ func (s *recordingTimelineStore) SetPostsBatch(_ context.Context, userID uuid.UU
 	}
 	s.set[userID] = append(s.set[userID], entries...)
 	return nil
+}
+
+func (s *recordingTimelineStore) ReplacePosts(_ context.Context, userID uuid.UUID, entries []TimelineEntry, _ time.Time) error {
+	return s.SetPostsBatch(context.Background(), userID, entries)
 }
 
 func (s *recordingTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *TimelinePosition, _ int) (*TimelinePage, error) {
@@ -92,7 +101,8 @@ func TestFanoutWorker_PostCreatedWritesFollowers(t *testing.T) {
 func TestFanoutWorker_MaxFollowerCap(t *testing.T) {
 	followers := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
 	store := &recordingTimelineStore{}
-	worker := NewFanoutWorker(&mockFollowerReader{ids: followers}, store, nil, settingsWithFanoutCap(2))
+	reader := &mockFollowerReader{ids: followers}
+	worker := NewFanoutWorker(reader, store, nil, settingsWithFanoutCap(2))
 
 	authorID := uuid.New()
 	if err := worker.HandleFeedEvent(context.Background(), Event{Type: EventPostCreated, PostID: uuid.New(), AuthorID: authorID, Score: 1}); err != nil {
@@ -104,6 +114,9 @@ func TestFanoutWorker_MaxFollowerCap(t *testing.T) {
 	}
 	if len(store.added[authorID]) != 1 {
 		t.Fatalf("author entries = %+v, want own post delivered", store.added[authorID])
+	}
+	if reader.lastLimit != 3 {
+		t.Fatalf("follower query limit = %d, want configured cap + 1", reader.lastLimit)
 	}
 }
 
@@ -158,20 +171,22 @@ func TestFanoutWorker_PostCreatedWritesAuthorTimeline(t *testing.T) {
 	}
 }
 
-func TestFanoutWorker_SkipsPrivatePosts(t *testing.T) {
+func TestFanoutWorker_PrivatePostOnlyReachesAuthor(t *testing.T) {
 	store := &recordingTimelineStore{}
-	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{uuid.New()}}, store, nil, settingsWithFanoutCap(10))
+	followerID, authorID, postID := uuid.New(), uuid.New(), uuid.New()
+	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{followerID}}, store, nil, settingsWithFanoutCap(10))
 
 	err := worker.HandleFeedEvent(context.Background(), Event{
-		Type: EventPostCreated, PostID: uuid.New(), AuthorID: uuid.New(), Visibility: "private", Score: 1,
+		Type: EventPostCreated, PostID: postID, AuthorID: authorID, Visibility: "private", Score: 1,
 	})
 	if err != nil {
 		t.Fatalf("HandleFeedEvent: %v", err)
 	}
-	// A private post never hydrates on the read path, so no timeline —
-	// including the author's own — may receive an entry for it.
-	if len(store.added) != 0 {
-		t.Fatalf("private post reached timelines: %+v", store.added)
+	if len(store.added[authorID]) != 1 || store.added[authorID][0].PostID != postID {
+		t.Fatalf("private post missing from author timeline: %+v", store.added)
+	}
+	if len(store.added[followerID]) != 0 {
+		t.Fatalf("private post reached follower timeline: %+v", store.added[followerID])
 	}
 }
 
@@ -230,6 +245,10 @@ func (s *flakyTimelineStore) AddPost(_ context.Context, userID uuid.UUID, entry 
 func (s *flakyTimelineStore) SetPostsBatch(_ context.Context, _ uuid.UUID, _ []TimelineEntry) error {
 	return nil
 }
+
+func (s *flakyTimelineStore) ReplacePosts(_ context.Context, _ uuid.UUID, _ []TimelineEntry, _ time.Time) error {
+	return nil
+}
 func (s *flakyTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *TimelinePosition, _ int) (*TimelinePage, error) {
 	return &TimelinePage{}, nil
 }
@@ -238,7 +257,7 @@ func (s *flakyTimelineStore) RemovePostBestEffort(_ context.Context, _ uuid.UUID
 	return nil
 }
 
-func TestFanoutWorker_PartialFailureContinuesAndSucceeds(t *testing.T) {
+func TestFanoutWorker_PartialFailureContinuesAndReturnsErrorForRetry(t *testing.T) {
 	good1, bad, good2 := uuid.New(), uuid.New(), uuid.New()
 	store := &flakyTimelineStore{failFor: map[uuid.UUID]bool{bad: true}}
 	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{good1, bad, good2}}, store, nil, settingsWithFanoutCap(10))
@@ -246,8 +265,8 @@ func TestFanoutWorker_PartialFailureContinuesAndSucceeds(t *testing.T) {
 	err := worker.HandleFeedEvent(context.Background(), Event{
 		Type: EventPostCreated, PostID: uuid.New(), AuthorID: uuid.New(), Score: 1,
 	})
-	if err != nil {
-		t.Fatalf("HandleFeedEvent should succeed when at least one write lands: %v", err)
+	if err == nil {
+		t.Fatal("HandleFeedEvent should return an error so the outbox retries failed recipients")
 	}
 	if len(store.added[good1]) != 1 || len(store.added[good2]) != 1 {
 		t.Fatalf("good followers missed delivery: %+v", store.added)

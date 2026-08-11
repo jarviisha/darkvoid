@@ -17,7 +17,7 @@ type notifRepo interface {
 	MarkAllAsRead(ctx context.Context, recipientID uuid.UUID) error
 	CountUnread(ctx context.Context, recipientID uuid.UUID) (int64, error)
 	GetGroupActors(ctx context.Context, recipientID uuid.UUID, groupKey string, limit int32) ([]uuid.UUID, int64, error)
-	DeleteByActorAndGroupKey(ctx context.Context, actorID uuid.UUID, groupKey string) error
+	DeleteByActorAndGroupKey(ctx context.Context, actorID uuid.UUID, groupKey string) (uuid.UUID, error)
 }
 
 // userReader resolves user info for enriching notification actor data.

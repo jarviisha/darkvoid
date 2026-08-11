@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
 	"github.com/jarviisha/darkvoid/internal/pagination"
 	"github.com/jarviisha/darkvoid/pkg/errors"
@@ -24,6 +26,58 @@ type mockFollowRepo struct {
 	countFollowers func(ctx context.Context, targetID uuid.UUID) (int64, error)
 	countFollowing func(ctx context.Context, targetID uuid.UUID) (int64, error)
 }
+
+type mockFollowOutbox struct {
+	createdCalls      int
+	deletedCalls      int
+	observedCommitted bool
+	err               error
+}
+
+func (m *mockFollowOutbox) EnqueueFollowCreated(_ context.Context, tx pgx.Tx, _, _ uuid.UUID) error {
+	m.createdCalls++
+	m.observedCommitted = tx.(*followMockTx).committed
+	return m.err
+}
+
+func (m *mockFollowOutbox) EnqueueFollowDeleted(_ context.Context, tx pgx.Tx, _, _ uuid.UUID) error {
+	m.deletedCalls++
+	m.observedCommitted = tx.(*followMockTx).committed
+	return m.err
+}
+
+type followMockTx struct{ committed bool }
+
+func (tx *followMockTx) Begin(context.Context) (pgx.Tx, error) { return tx, nil }
+func (tx *followMockTx) Commit(context.Context) error {
+	tx.committed = true
+	return nil
+}
+func (tx *followMockTx) Rollback(context.Context) error { return nil }
+func (tx *followMockTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	panic("not implemented")
+}
+func (tx *followMockTx) SendBatch(context.Context, *pgx.Batch) pgx.BatchResults {
+	panic("not implemented")
+}
+func (tx *followMockTx) LargeObjects() pgx.LargeObjects { panic("not implemented") }
+func (tx *followMockTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
+	panic("not implemented")
+}
+func (tx *followMockTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	panic("not implemented")
+}
+func (tx *followMockTx) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	panic("not implemented")
+}
+func (tx *followMockTx) QueryRow(context.Context, string, ...any) pgx.Row {
+	panic("not implemented")
+}
+func (tx *followMockTx) Conn() *pgx.Conn { panic("not implemented") }
+
+type followMockTxBeginner struct{ tx *followMockTx }
+
+func (b *followMockTxBeginner) Begin(context.Context) (pgx.Tx, error) { return b.tx, nil }
 
 func (m *mockFollowRepo) Follow(ctx context.Context, followerID, followeeID uuid.UUID) error {
 	if m.follow != nil {
@@ -204,6 +258,51 @@ func TestFollow_FeedEmitterFailureIsNonFatal(t *testing.T) {
 
 	if err := svc.Follow(context.Background(), uuid.New(), uuid.New()); err != nil {
 		t.Fatalf("Follow should ignore feed emitter error: %v", err)
+	}
+}
+
+func TestFollow_PersistsFeedOutboxInsideMutationTransaction(t *testing.T) {
+	repo := &mockFollowRepo{}
+	tx := &followMockTx{}
+	outbox := &mockFollowOutbox{}
+	emitter := &mockFollowFeedEmitter{}
+	svc := &FollowService{
+		followRepo: repo,
+		pool:       &followMockTxBeginner{tx: tx},
+		withTx:     func(pgx.Tx) followRepo { return repo },
+	}
+	svc.WithFeedEventOutbox(outbox)
+	svc.WithFeedEventEmitter(emitter)
+
+	if err := svc.Follow(context.Background(), uuid.New(), uuid.New()); err != nil {
+		t.Fatalf("Follow: %v", err)
+	}
+	if outbox.createdCalls != 1 || outbox.observedCommitted {
+		t.Fatalf("outbox calls/commit = %d/%v, want one pre-commit enqueue", outbox.createdCalls, outbox.observedCommitted)
+	}
+	if !tx.committed {
+		t.Fatal("follow transaction was not committed")
+	}
+	if emitter.createCalls != 0 {
+		t.Fatalf("in-memory emitter called despite durable outbox: %d", emitter.createCalls)
+	}
+}
+
+func TestUnfollow_OutboxFailureAbortsMutation(t *testing.T) {
+	repo := &mockFollowRepo{}
+	tx := &followMockTx{}
+	svc := &FollowService{
+		followRepo: repo,
+		pool:       &followMockTxBeginner{tx: tx},
+		withTx:     func(pgx.Tx) followRepo { return repo },
+	}
+	svc.WithFeedEventOutbox(&mockFollowOutbox{err: fmt.Errorf("outbox unavailable")})
+
+	if err := svc.Unfollow(context.Background(), uuid.New(), uuid.New()); err == nil {
+		t.Fatal("expected outbox failure")
+	}
+	if tx.committed {
+		t.Fatal("unfollow transaction committed after outbox failure")
 	}
 }
 
@@ -578,7 +677,7 @@ func TestGetFollowerIDs_ReturnsFollowerIDs(t *testing.T) {
 		},
 	})
 
-	ids, err := svc.GetFollowerIDs(context.Background(), targetID)
+	ids, err := svc.GetFollowerIDs(context.Background(), targetID, 5000)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -598,7 +697,7 @@ func TestGetFollowerIDs_RepoError(t *testing.T) {
 		},
 	})
 
-	_, err := svc.GetFollowerIDs(context.Background(), uuid.New())
+	_, err := svc.GetFollowerIDs(context.Background(), uuid.New(), 5000)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

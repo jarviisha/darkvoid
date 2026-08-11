@@ -58,7 +58,7 @@ func (m *mockTxBeginner) Begin(ctx context.Context) (pgx.Tx, error) { return &mo
 type mockPostRepo struct {
 	create                func(ctx context.Context, authorID uuid.UUID, content string, visibility entity.Visibility) (*entity.Post, error)
 	getByID               func(ctx context.Context, id uuid.UUID) (*entity.Post, error)
-	getByAuthorWithCursor func(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilter string, limit int32) ([]*entity.Post, error)
+	getByAuthorWithCursor func(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilters []string, limit int32) ([]*entity.Post, error)
 	update                func(ctx context.Context, id uuid.UUID, content string, visibility entity.Visibility) (*entity.Post, error)
 	delete                func(ctx context.Context, id uuid.UUID) error
 }
@@ -76,9 +76,9 @@ func (m *mockPostRepo) GetByID(ctx context.Context, id uuid.UUID) (*entity.Post,
 	}
 	return nil, pkgerrors.ErrNotFound
 }
-func (m *mockPostRepo) GetByAuthorWithCursor(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilter string, limit int32) ([]*entity.Post, error) {
+func (m *mockPostRepo) GetByAuthorWithCursor(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilters []string, limit int32) ([]*entity.Post, error) {
 	if m.getByAuthorWithCursor != nil {
-		return m.getByAuthorWithCursor(ctx, authorID, cursorCreatedAt, cursorPostID, visibilityFilter, limit)
+		return m.getByAuthorWithCursor(ctx, authorID, cursorCreatedAt, cursorPostID, visibilityFilters, limit)
 	}
 	return nil, nil
 }
@@ -125,8 +125,23 @@ type mockLikeRepo struct {
 	like            func(ctx context.Context, userID, postID uuid.UUID) error
 	unlike          func(ctx context.Context, userID, postID uuid.UUID) error
 	isLiked         func(ctx context.Context, userID, postID uuid.UUID) (bool, error)
+	toggle          func(ctx context.Context, userID, postID uuid.UUID) (bool, error)
 	count           func(ctx context.Context, postID uuid.UUID) (int64, error)
 	getLikedPostIDs func(ctx context.Context, userID uuid.UUID, postIDs []uuid.UUID) ([]uuid.UUID, error)
+}
+
+func (m *mockLikeRepo) Toggle(ctx context.Context, userID, postID uuid.UUID) (bool, error) {
+	if m.toggle != nil {
+		return m.toggle(ctx, userID, postID)
+	}
+	liked, err := m.IsLiked(ctx, userID, postID)
+	if err != nil {
+		return false, err
+	}
+	if liked {
+		return false, m.Unlike(ctx, userID, postID)
+	}
+	return true, m.Like(ctx, userID, postID)
 }
 
 func (m *mockLikeRepo) Like(ctx context.Context, userID, postID uuid.UUID) error {
@@ -316,27 +331,13 @@ func (m *mockNotificationEmitter) EmitMention(ctx context.Context, actorID, reci
 // --------------------------------------------------------------------------
 
 type mockCommentLikeRepo struct {
-	like               func(ctx context.Context, userID, commentID uuid.UUID) error
-	unlike             func(ctx context.Context, userID, commentID uuid.UUID) error
-	isLiked            func(ctx context.Context, userID, commentID uuid.UUID) (bool, error)
+	toggle             func(ctx context.Context, userID, commentID uuid.UUID) (bool, error)
 	getLikedCommentIDs func(ctx context.Context, userID uuid.UUID, commentIDs []uuid.UUID) ([]uuid.UUID, error)
 }
 
-func (m *mockCommentLikeRepo) Like(ctx context.Context, userID, commentID uuid.UUID) error {
-	if m.like != nil {
-		return m.like(ctx, userID, commentID)
-	}
-	return nil
-}
-func (m *mockCommentLikeRepo) Unlike(ctx context.Context, userID, commentID uuid.UUID) error {
-	if m.unlike != nil {
-		return m.unlike(ctx, userID, commentID)
-	}
-	return nil
-}
-func (m *mockCommentLikeRepo) IsLiked(ctx context.Context, userID, commentID uuid.UUID) (bool, error) {
-	if m.isLiked != nil {
-		return m.isLiked(ctx, userID, commentID)
+func (m *mockCommentLikeRepo) Toggle(ctx context.Context, userID, commentID uuid.UUID) (bool, error) {
+	if m.toggle != nil {
+		return m.toggle(ctx, userID, commentID)
 	}
 	return false, nil
 }
@@ -410,7 +411,13 @@ func (m *mockHashtagCache) SetSearchResults(ctx context.Context, prefix string, 
 
 // newCommentLikeService creates a CommentLikeService with the given mocks for testing.
 func newCommentLikeService(clr commentLikeRepo, cr commentRepo) *CommentLikeService {
-	return &CommentLikeService{commentLikeRepo: clr, commentRepo: cr}
+	return &CommentLikeService{
+		commentLikeRepo: clr,
+		commentRepo:     cr,
+		postRepo: &mockPostRepo{getByID: func(_ context.Context, _ uuid.UUID) (*entity.Post, error) {
+			return samplePost(uuid.New()), nil
+		}},
+	}
 }
 
 // newHashtagService creates a HashtagService with the given mocks for testing.

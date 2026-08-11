@@ -1,11 +1,12 @@
 package service
 
 import (
+	"bufio"
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
-	"path/filepath"
-	"strings"
+	"net/http"
 
 	"github.com/google/uuid"
 	featurestorage "github.com/jarviisha/darkvoid/internal/feature/storage"
@@ -43,8 +44,9 @@ var allowedMIME = map[string]struct {
 }
 
 const (
-	maxImageSize int64 = 10 << 20  // 10 MB
-	maxVideoSize int64 = 100 << 20 // 100 MB
+	maxImageSize   int64 = 10 << 20  // 10 MB
+	maxVideoSize   int64 = 100 << 20 // 100 MB
+	mediaSniffSize       = 512
 )
 
 // MediaService handles validation and upload of media files.
@@ -57,16 +59,19 @@ func NewMediaService(s storage.Storage) *MediaService {
 	return &MediaService{storage: s}
 }
 
-// Upload validates and uploads a file to storage under the "media/" prefix.
-// contentType must be an explicit MIME type (from Content-Type header or sniffed).
-// filename is used only to derive the extension as fallback when MIME lookup gives a generic ext.
-func (s *MediaService) Upload(ctx context.Context, r io.Reader, size int64, contentType, filename string) (*UploadResult, error) {
-	// Normalize: strip parameters like "image/jpeg; charset=utf-8"
-	mime := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+// Upload validates the file's leading bytes and uploads it under the "media/"
+// prefix. Client-supplied MIME types and filenames are deliberately ignored.
+func (s *MediaService) Upload(ctx context.Context, r io.Reader, size int64) (*UploadResult, error) {
+	reader := bufio.NewReaderSize(r, mediaSniffSize)
+	header, err := reader.Peek(mediaSniffSize)
+	if err != nil && !stderrors.Is(err, io.EOF) {
+		return nil, featurestorage.ErrUnsupportedType
+	}
+	mime := http.DetectContentType(header)
 
 	meta, ok := allowedMIME[mime]
 	if !ok {
-		logger.Warn(ctx, "unsupported media type", "content_type", contentType)
+		logger.Warn(ctx, "unsupported media type", "detected_content_type", mime)
 		return nil, featurestorage.ErrUnsupportedType
 	}
 
@@ -79,15 +84,9 @@ func (s *MediaService) Upload(ctx context.Context, r io.Reader, size int64, cont
 		return nil, featurestorage.ErrFileTooLarge
 	}
 
-	// Prefer ext from MIME; fall back to filename ext
-	ext := meta.ext
-	if filenameExt := strings.ToLower(filepath.Ext(filename)); filenameExt != "" && ext == "" {
-		ext = filenameExt
-	}
+	key := fmt.Sprintf("media/%s%s", uuid.New().String(), meta.ext)
 
-	key := fmt.Sprintf("media/%s%s", uuid.New().String(), ext)
-
-	if err := s.storage.Put(ctx, key, r, size, mime); err != nil {
+	if err := s.storage.Put(ctx, key, reader, size, mime); err != nil {
 		logger.LogError(ctx, err, "failed to upload media", "key", key)
 		return nil, errors.NewInternalError(err)
 	}

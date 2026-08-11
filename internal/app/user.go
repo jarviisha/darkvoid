@@ -67,7 +67,7 @@ func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage
 	userService := service.NewUserService(userRepo, store)
 	refreshTokenService := service.NewRefreshTokenServiceWithExpiry(refreshTokenRepo, refreshTokenExpiry)
 	authService := service.NewAuthService(userRepo, userService, jwtService, refreshTokenService, store)
-	followService := service.NewFollowService(followRepo)
+	followService := service.NewFollowService(followRepo, pool)
 	emailEventService := service.NewEmailEventService(emailDeliveryRepo)
 	accountMailService := service.NewAccountMailService(mail.mailer, mail.templates, emailTokenRepo, userRepo, emailEventService, mail.baseURL)
 
@@ -134,6 +134,10 @@ func (ctx *UserContext) WireFeedInvalidator(inv service.FeedInvalidator) {
 
 func (ctx *UserContext) WireFeedEventEmitter(e service.FollowFeedEventEmitter) {
 	ctx.followService.WithFeedEventEmitter(e)
+}
+
+func (ctx *UserContext) WireFeedEventOutbox(outbox service.FollowFeedEventOutbox) {
+	ctx.followService.WithFeedEventOutbox(outbox)
 }
 
 func (ctx *UserContext) WireNotificationEmitter(notif *NotificationContext) {

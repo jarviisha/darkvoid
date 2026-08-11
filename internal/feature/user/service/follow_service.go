@@ -6,7 +6,9 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
+	"github.com/jarviisha/darkvoid/internal/feature/user/repository"
 	"github.com/jarviisha/darkvoid/internal/pagination"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
@@ -26,6 +28,17 @@ type FollowFeedEventEmitter interface {
 	EmitFollowDeleted(ctx context.Context, followerID, followeeID uuid.UUID) error
 }
 
+// FollowFeedEventOutbox persists follow feed events in the same transaction as
+// the follow-graph mutation.
+type FollowFeedEventOutbox interface {
+	EnqueueFollowCreated(ctx context.Context, tx pgx.Tx, followerID, followeeID uuid.UUID) error
+	EnqueueFollowDeleted(ctx context.Context, tx pgx.Tx, followerID, followeeID uuid.UUID) error
+}
+
+type followTxBeginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
 // FollowNotificationEmitter is a narrow interface for emitting follow notifications.
 // Defined here to avoid importing the notification package (would create a cycle).
 type FollowNotificationEmitter interface {
@@ -36,13 +49,23 @@ type FollowNotificationEmitter interface {
 // FollowService handles follow/unfollow business logic.
 type FollowService struct {
 	followRepo      followRepo
+	pool            followTxBeginner
+	withTx          func(pgx.Tx) followRepo
 	feedInvalidator FeedInvalidator           // optional, nil = no-op
 	feedEmitter     FollowFeedEventEmitter    // optional, nil = no-op
+	feedOutbox      FollowFeedEventOutbox     // optional: durable transactional events
 	notifEmitter    FollowNotificationEmitter // optional, nil = no-op
 }
 
-func NewFollowService(followRepo followRepo) *FollowService {
-	return &FollowService{followRepo: followRepo}
+func NewFollowService(repoPort followRepo, pools ...followTxBeginner) *FollowService {
+	s := &FollowService{followRepo: repoPort}
+	if repo, ok := repoPort.(*repository.FollowRepository); ok {
+		s.withTx = func(tx pgx.Tx) followRepo { return repo.WithTx(tx) }
+	}
+	if len(pools) > 0 {
+		s.pool = pools[0]
+	}
+	return s
 }
 
 // WithFeedInvalidator attaches a cache invalidator. Called at wire-up time after
@@ -54,6 +77,11 @@ func (s *FollowService) WithFeedInvalidator(inv FeedInvalidator) {
 // WithFeedEventEmitter attaches a feed event emitter. Called at wire-up time.
 func (s *FollowService) WithFeedEventEmitter(e FollowFeedEventEmitter) {
 	s.feedEmitter = e
+}
+
+// WithFeedEventOutbox wires durable event persistence into follow mutations.
+func (s *FollowService) WithFeedEventOutbox(outbox FollowFeedEventOutbox) {
+	s.feedOutbox = outbox
 }
 
 // WithNotificationEmitter attaches a notification emitter. Called at wire-up time.
@@ -74,13 +102,15 @@ func (s *FollowService) Follow(ctx context.Context, followerID, followeeID uuid.
 	if followerID == followeeID {
 		return errSelfFollow
 	}
-	if err := s.followRepo.Follow(ctx, followerID, followeeID); err != nil {
+	if err := s.persistFollowMutation(ctx, followerID, followeeID, true); err != nil {
 		logger.LogError(ctx, err, "failed to follow", "follower", followerID, "followee", followeeID)
 		return errors.NewInternalError(err)
 	}
 	logger.Info(ctx, "followed", "follower", followerID, "followee", followeeID)
 	s.invalidateFollowingIDs(ctx, followerID)
-	s.emitFollowCreated(ctx, followerID, followeeID)
+	if s.feedOutbox == nil {
+		s.emitFollowCreated(ctx, followerID, followeeID)
+	}
 	s.emitFollowNotification(ctx, followerID, followeeID)
 	return nil
 }
@@ -89,15 +119,51 @@ func (s *FollowService) Unfollow(ctx context.Context, followerID, followeeID uui
 	if followerID == followeeID {
 		return errSelfFollow
 	}
-	if err := s.followRepo.Unfollow(ctx, followerID, followeeID); err != nil {
+	if err := s.persistFollowMutation(ctx, followerID, followeeID, false); err != nil {
 		logger.LogError(ctx, err, "failed to unfollow", "follower", followerID, "followee", followeeID)
 		return errors.NewInternalError(err)
 	}
 	logger.Info(ctx, "unfollowed", "follower", followerID, "followee", followeeID)
 	s.invalidateFollowingIDs(ctx, followerID)
-	s.emitFollowDeleted(ctx, followerID, followeeID)
+	if s.feedOutbox == nil {
+		s.emitFollowDeleted(ctx, followerID, followeeID)
+	}
 	s.deleteFollowNotification(ctx, followerID, followeeID)
 	return nil
+}
+
+func (s *FollowService) persistFollowMutation(ctx context.Context, followerID, followeeID uuid.UUID, created bool) error {
+	if s.feedOutbox == nil {
+		if created {
+			return s.followRepo.Follow(ctx, followerID, followeeID)
+		}
+		return s.followRepo.Unfollow(ctx, followerID, followeeID)
+	}
+	if s.pool == nil || s.withTx == nil {
+		return fmt.Errorf("feed outbox configured without transaction pool")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	txRepo := s.withTx(tx)
+	if created {
+		if err := txRepo.Follow(ctx, followerID, followeeID); err != nil {
+			return err
+		}
+		if err := s.feedOutbox.EnqueueFollowCreated(ctx, tx, followerID, followeeID); err != nil {
+			return err
+		}
+	} else {
+		if err := txRepo.Unfollow(ctx, followerID, followeeID); err != nil {
+			return err
+		}
+		if err := s.feedOutbox.EnqueueFollowDeleted(ctx, tx, followerID, followeeID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // --- notification helpers (fire-and-forget) ---
@@ -175,9 +241,12 @@ func (s *FollowService) GetFollowingIDs(ctx context.Context, targetID uuid.UUID)
 	return ids, nil
 }
 
-// GetFollowerIDs returns the IDs of all users who follow targetID.
-func (s *FollowService) GetFollowerIDs(ctx context.Context, targetID uuid.UUID) ([]uuid.UUID, error) {
-	follows, err := s.followRepo.GetFollowers(ctx, targetID, 5000, 0)
+// GetFollowerIDs returns at most limit IDs of users who follow targetID.
+func (s *FollowService) GetFollowerIDs(ctx context.Context, targetID uuid.UUID, limit int) ([]uuid.UUID, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	follows, err := s.followRepo.GetFollowers(ctx, targetID, int32(limit), 0) //nolint:gosec // runtime feed settings validate the fanout cap as a bounded positive integer.
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get follower IDs", "user_id", targetID)
 		return nil, errors.NewInternalError(err)

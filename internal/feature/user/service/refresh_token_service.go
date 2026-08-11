@@ -3,10 +3,14 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	stderrors "errors"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
 	"github.com/jarviisha/darkvoid/internal/feature/user/repository"
 	"github.com/jarviisha/darkvoid/pkg/errors"
@@ -38,18 +42,19 @@ func (s *RefreshTokenService) GenerateToken(ctx context.Context, userID uuid.UUI
 		return nil, errors.NewInternalError(err)
 	}
 
-	token, err := s.repo.Create(ctx, tokenString, userID, time.Now().Add(s.expiry))
+	token, err := s.repo.Create(ctx, hashRefreshToken(tokenString), userID, time.Now().Add(s.expiry))
 	if err != nil {
 		logger.LogError(ctx, err, "failed to create refresh token", "user_id", userID)
 		return nil, errors.NewInternalError(err)
 	}
 
+	token.Token = tokenString
 	logger.Info(ctx, "refresh token created", "user_id", userID, "token_id", token.ID)
 	return token, nil
 }
 
 func (s *RefreshTokenService) ValidateToken(ctx context.Context, tokenString string) (uuid.UUID, error) {
-	token, err := s.repo.GetByToken(ctx, tokenString)
+	token, err := s.repo.GetByToken(ctx, hashRefreshToken(tokenString))
 	if err != nil {
 		logger.Warn(ctx, "refresh token not found", "error", err)
 		return uuid.Nil, errors.NewUnauthorizedError("invalid refresh token")
@@ -64,12 +69,29 @@ func (s *RefreshTokenService) ValidateToken(ctx context.Context, tokenString str
 }
 
 func (s *RefreshTokenService) RevokeToken(ctx context.Context, tokenString string) error {
-	if err := s.repo.Revoke(ctx, tokenString); err != nil {
+	if err := s.repo.Revoke(ctx, hashRefreshToken(tokenString)); err != nil {
 		logger.LogError(ctx, err, "failed to revoke refresh token")
 		return errors.NewInternalError(err)
 	}
 	logger.Info(ctx, "refresh token revoked")
 	return nil
+}
+
+func (s *RefreshTokenService) RotateToken(ctx context.Context, oldToken string) (*entity.RefreshToken, error) {
+	newToken, err := generateSecureToken()
+	if err != nil {
+		return nil, errors.NewInternalError(err)
+	}
+	rotated, err := s.repo.Rotate(ctx, hashRefreshToken(oldToken), hashRefreshToken(newToken), time.Now().Add(s.expiry))
+	if err != nil {
+		logger.Warn(ctx, "refresh token rotation rejected", "error", err)
+		if stderrors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.NewUnauthorizedError("refresh token is invalid or already used")
+		}
+		return nil, errors.NewInternalError(err)
+	}
+	rotated.Token = newToken
+	return rotated, nil
 }
 
 func (s *RefreshTokenService) RevokeAllUserTokens(ctx context.Context, userID uuid.UUID) error {
@@ -100,4 +122,9 @@ func generateSecureToken() (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+func hashRefreshToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }

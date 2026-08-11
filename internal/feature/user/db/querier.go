@@ -26,6 +26,7 @@ type Querier interface {
 	// there is no roles lookup table to join against.
 	AssignRoleToUser(ctx context.Context, arg AssignRoleToUserParams) error
 	CheckUserHasAnyRole(ctx context.Context, arg CheckUserHasAnyRoleParams) (bool, error)
+	ConsumeRefreshToken(ctx context.Context, tokenHash string) (uuid.UUID, error)
 	CountFollowers(ctx context.Context, followeeID uuid.UUID) (int64, error)
 	CountFollowing(ctx context.Context, followerID uuid.UUID) (int64, error)
 	CountSearchUsers(ctx context.Context, query *string) (int64, error)
@@ -49,7 +50,7 @@ type Querier interface {
 	GetEmailTokenByToken(ctx context.Context, token string) (UsrEmailToken, error)
 	GetFollowers(ctx context.Context, arg GetFollowersParams) ([]UsrFollow, error)
 	GetFollowing(ctx context.Context, arg GetFollowingParams) ([]UsrFollow, error)
-	GetRefreshTokenByToken(ctx context.Context, token string) (UsrRefreshToken, error)
+	GetRefreshTokenByToken(ctx context.Context, tokenHash string) (UsrRefreshToken, error)
 	GetUserByEmail(ctx context.Context, email string) (UsrUser, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (UsrUser, error)
 	GetUserByIDAny(ctx context.Context, id uuid.UUID) (UsrUser, error)
@@ -65,7 +66,7 @@ type Querier interface {
 	MarkEmailTokenUsed(ctx context.Context, id uuid.UUID) error
 	RemoveRoleFromUser(ctx context.Context, arg RemoveRoleFromUserParams) error
 	RevokeAllUserRefreshTokens(ctx context.Context, userID uuid.UUID) error
-	RevokeRefreshToken(ctx context.Context, token string) error
+	RevokeRefreshToken(ctx context.Context, tokenHash string) (uuid.UUID, error)
 	SearchUsers(ctx context.Context, arg SearchUsersParams) ([]UsrUser, error)
 	SearchUsersByQuery(ctx context.Context, arg SearchUsersByQueryParams) ([]UsrUser, error)
 	SuppressEmail(ctx context.Context, arg SuppressEmailParams) error

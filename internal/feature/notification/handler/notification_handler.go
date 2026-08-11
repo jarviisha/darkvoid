@@ -181,13 +181,12 @@ func (h *NotificationHandler) MarkAllAsRead(w http.ResponseWriter, r *http.Reque
 // Stream godoc
 //
 //	@Summary		Stream notifications (SSE)
-//	@Description	Open a Server-Sent Events stream for real-time notifications. Pass JWT via Authorization header or ?token= query parameter.
+//	@Description	Open a Server-Sent Events stream for real-time notifications. Pass JWT via the Authorization header.
 //	@Tags			notifications
 //	@Produce		text/event-stream
-//	@Param			token	query	string	false	"JWT access token (alternative to Authorization header)"
-//	@Success		200		"SSE stream"
-//	@Failure		401		{object}	errors.ErrorResponse
-//	@Failure		501		{object}	errors.ErrorResponse	"SSE not available (Redis disabled)"
+//	@Success		200	"SSE stream"
+//	@Failure		401	{object}	errors.ErrorResponse
+//	@Failure		501	{object}	errors.ErrorResponse	"SSE not available (Redis disabled)"
 //	@ID				streamNotifications
 //	@Router			/notifications/stream [get]
 //	@Security		BearerAuth

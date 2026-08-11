@@ -1,8 +1,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"strings"
 	"sync"
@@ -15,7 +19,17 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/errors"
 )
 
-func uploadReader() io.Reader { return strings.NewReader("fake-image-bytes") }
+func uploadReader() io.Reader {
+	var data bytes.Buffer
+	_ = jpeg.Encode(&data, image.NewRGBA(image.Rect(0, 0, 1, 1)), nil)
+	return bytes.NewReader(data.Bytes())
+}
+
+func pngUploadReader() io.Reader {
+	var data bytes.Buffer
+	_ = png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 1, 1)))
+	return bytes.NewReader(data.Bytes())
+}
 
 // --------------------------------------------------------------------------
 // GetMyProfile tests
@@ -208,7 +222,7 @@ func TestUploadAvatar_Success_NoOldKey(t *testing.T) {
 	store := &mockStorage{}
 	svc := &UserService{userRepo: repo, storage: store}
 
-	u, err := svc.UploadAvatar(context.Background(), id, uploadReader(), 100, "image/jpeg", ".jpg")
+	u, err := svc.UploadAvatar(context.Background(), id, uploadReader(), 100)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -248,7 +262,7 @@ func TestUploadAvatar_Success_WithOldKey_DeletesOldAsync(t *testing.T) {
 	store := &mockStorage{deleteWG: &wg}
 	svc := &UserService{userRepo: repo, storage: store}
 
-	_, err := svc.UploadAvatar(context.Background(), id, uploadReader(), 100, "image/jpeg", ".jpg")
+	_, err := svc.UploadAvatar(context.Background(), id, uploadReader(), 100)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -270,7 +284,7 @@ func TestUploadAvatar_UserNotFound(t *testing.T) {
 	store := &mockStorage{}
 	svc := &UserService{userRepo: repo, storage: store}
 
-	_, err := svc.UploadAvatar(context.Background(), uuid.New(), uploadReader(), 100, "image/jpeg", ".jpg")
+	_, err := svc.UploadAvatar(context.Background(), uuid.New(), uploadReader(), 100)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -289,7 +303,7 @@ func TestUploadAvatar_GetUserGenericError(t *testing.T) {
 	store := &mockStorage{}
 	svc := &UserService{userRepo: repo, storage: store}
 
-	_, err := svc.UploadAvatar(context.Background(), uuid.New(), uploadReader(), 100, "image/jpeg", ".jpg")
+	_, err := svc.UploadAvatar(context.Background(), uuid.New(), uploadReader(), 100)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -309,11 +323,30 @@ func TestUploadAvatar_StoragePutFails(t *testing.T) {
 	store := &mockStorage{putErr: fmt.Errorf("s3 unavailable")}
 	svc := &UserService{userRepo: repo, storage: store}
 
-	_, err := svc.UploadAvatar(context.Background(), id, uploadReader(), 100, "image/jpeg", ".jpg")
+	_, err := svc.UploadAvatar(context.Background(), id, uploadReader(), 100)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	assertServiceErrorCode(t, err, "INTERNAL_ERROR")
+}
+
+func TestUploadAvatar_RejectsHTMLDisguisedAsJPEG(t *testing.T) {
+	id := uuid.New()
+	repo := &mockUserRepo{
+		getUserByID: func(_ context.Context, _ uuid.UUID) (*entity.User, error) {
+			return activeUser(id), nil
+		},
+	}
+	store := &mockStorage{}
+	svc := &UserService{userRepo: repo, storage: store}
+
+	_, err := svc.UploadAvatar(context.Background(), id, strings.NewReader("<html><script>alert(1)</script></html>"), 42)
+	if err == nil {
+		t.Fatal("expected disguised HTML to be rejected")
+	}
+	if len(store.putCalls) != 0 {
+		t.Fatalf("Put calls = %d, want 0", len(store.putCalls))
+	}
 }
 
 func TestUploadAvatar_UpdateProfileFails_DeletesNewUpload(t *testing.T) {
@@ -329,7 +362,7 @@ func TestUploadAvatar_UpdateProfileFails_DeletesNewUpload(t *testing.T) {
 	store := &mockStorage{}
 	svc := &UserService{userRepo: repo, storage: store}
 
-	_, err := svc.UploadAvatar(context.Background(), id, uploadReader(), 100, "image/jpeg", ".jpg")
+	_, err := svc.UploadAvatar(context.Background(), id, uploadReader(), 100)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -364,7 +397,7 @@ func TestUploadCover_Success_NoOldKey(t *testing.T) {
 	store := &mockStorage{}
 	svc := &UserService{userRepo: repo, storage: store}
 
-	u, err := svc.UploadCover(context.Background(), id, uploadReader(), 100, "image/png", ".png")
+	u, err := svc.UploadCover(context.Background(), id, pngUploadReader(), 100)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -404,7 +437,7 @@ func TestUploadCover_Success_WithOldKey_DeletesOldAsync(t *testing.T) {
 	store := &mockStorage{deleteWG: &wg}
 	svc := &UserService{userRepo: repo, storage: store}
 
-	_, err := svc.UploadCover(context.Background(), id, uploadReader(), 100, "image/png", ".png")
+	_, err := svc.UploadCover(context.Background(), id, pngUploadReader(), 100)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -426,7 +459,7 @@ func TestUploadCover_UserNotFound(t *testing.T) {
 	store := &mockStorage{}
 	svc := &UserService{userRepo: repo, storage: store}
 
-	_, err := svc.UploadCover(context.Background(), uuid.New(), uploadReader(), 100, "image/png", ".png")
+	_, err := svc.UploadCover(context.Background(), uuid.New(), uploadReader(), 100)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -445,7 +478,7 @@ func TestUploadCover_GetUserGenericError(t *testing.T) {
 	store := &mockStorage{}
 	svc := &UserService{userRepo: repo, storage: store}
 
-	_, err := svc.UploadCover(context.Background(), uuid.New(), uploadReader(), 100, "image/png", ".png")
+	_, err := svc.UploadCover(context.Background(), uuid.New(), uploadReader(), 100)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -465,11 +498,42 @@ func TestUploadCover_StoragePutFails(t *testing.T) {
 	store := &mockStorage{putErr: fmt.Errorf("s3 unavailable")}
 	svc := &UserService{userRepo: repo, storage: store}
 
-	_, err := svc.UploadCover(context.Background(), id, uploadReader(), 100, "image/png", ".png")
+	_, err := svc.UploadCover(context.Background(), id, uploadReader(), 100)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	assertServiceErrorCode(t, err, "INTERNAL_ERROR")
+}
+
+func TestUploadCover_UsesDetectedType(t *testing.T) {
+	id := uuid.New()
+	repo := &mockUserRepo{
+		getUserByID: func(_ context.Context, _ uuid.UUID) (*entity.User, error) {
+			return activeUser(id), nil
+		},
+		updateUserProfile: func(_ context.Context, _ uuid.UUID, params db.UpdateUserProfileParams) (*entity.User, error) {
+			u := activeUser(id)
+			u.CoverKey = params.CoverKey
+			return u, nil
+		},
+	}
+	store := &mockStorage{}
+	svc := &UserService{userRepo: repo, storage: store}
+	png := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 32)...)
+
+	_, err := svc.UploadCover(context.Background(), id, pngUploadReader(), int64(len(png)))
+	if err != nil {
+		t.Fatalf("UploadCover() error = %v", err)
+	}
+	if len(store.putCalls) != 1 {
+		t.Fatalf("Put calls = %d, want 1", len(store.putCalls))
+	}
+	if !strings.HasSuffix(store.putCalls[0].key, ".png") {
+		t.Fatalf("storage key = %q, want .png suffix", store.putCalls[0].key)
+	}
+	if store.putCalls[0].contentType != "image/png" {
+		t.Fatalf("content type = %q, want image/png", store.putCalls[0].contentType)
+	}
 }
 
 func TestUploadCover_UpdateProfileFails_DeletesNewUpload(t *testing.T) {
@@ -485,7 +549,7 @@ func TestUploadCover_UpdateProfileFails_DeletesNewUpload(t *testing.T) {
 	store := &mockStorage{}
 	svc := &UserService{userRepo: repo, storage: store}
 
-	_, err := svc.UploadCover(context.Background(), id, uploadReader(), 100, "image/png", ".png")
+	_, err := svc.UploadCover(context.Background(), id, pngUploadReader(), 100)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

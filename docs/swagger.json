@@ -1902,7 +1902,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Open a Server-Sent Events stream for real-time notifications. Pass JWT via Authorization header or ?token= query parameter.",
+                "description": "Open a Server-Sent Events stream for real-time notifications. Pass JWT via the Authorization header.",
                 "produces": [
                     "text/event-stream"
                 ],
@@ -1911,14 +1911,6 @@
                 ],
                 "summary": "Stream notifications (SSE)",
                 "operationId": "streamNotifications",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "JWT access token (alternative to Authorization header)",
-                        "name": "token",
-                        "in": "query"
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "SSE stream"
@@ -2790,7 +2782,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Retrieve a user's information by UUID or username (with ?by=username)",
+                "description": "Retrieve the authenticated user's account information by UUID or username (with ?by=username)",
                 "produces": [
                     "application/json"
                 ],

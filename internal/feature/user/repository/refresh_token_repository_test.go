@@ -17,7 +17,7 @@ func TestDbRefreshTokenToEntity_NoNullableFields(t *testing.T) {
 
 	dbToken := db.UsrRefreshToken{
 		ID:        id,
-		Token:     "refresh-abc",
+		TokenHash: "refresh-abc",
 		UserID:    userID,
 		IsRevoked: false,
 		ExpiresAt: pgtype.Timestamp{Time: expires, Valid: true},
@@ -32,8 +32,8 @@ func TestDbRefreshTokenToEntity_NoNullableFields(t *testing.T) {
 	if token.UserID != userID {
 		t.Errorf("UserID mismatch")
 	}
-	if token.Token != "refresh-abc" {
-		t.Errorf("Token mismatch")
+	if token.Token != "" {
+		t.Errorf("raw token must not be reconstructed from its hash")
 	}
 	if token.IsRevoked {
 		t.Errorf("IsRevoked should be false")
@@ -68,7 +68,7 @@ func TestDbRefreshTokenToEntity_RevokedAtSet(t *testing.T) {
 
 func TestDbRefreshTokenToEntity_ExpiresAtNotSet(t *testing.T) {
 	dbToken := db.UsrRefreshToken{
-		Token: "tok",
+		TokenHash: "tok",
 		// ExpiresAt left invalid
 	}
 

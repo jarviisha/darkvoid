@@ -19,10 +19,6 @@ type NotificationCache interface {
 	// SetUnreadCount stores the unread count for a user.
 	SetUnreadCount(ctx context.Context, userID uuid.UUID, count int64) error
 
-	// IncrementUnreadCount atomically increments the cached unread count.
-	// No-op on cache miss (the next read will repopulate from DB).
-	IncrementUnreadCount(ctx context.Context, userID uuid.UUID) error
-
 	// InvalidateUnreadCount removes the cached unread count for a user.
 	InvalidateUnreadCount(ctx context.Context, userID uuid.UUID) error
 }

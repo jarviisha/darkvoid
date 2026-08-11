@@ -2,6 +2,7 @@ package feed
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -23,6 +24,8 @@ const (
 // eventHandlerTimeout caps per-event handler execution. Sized for fanout to
 // the configured maxFollowers cap (~10K serial Redis writes ≈ 10s) with headroom.
 const eventHandlerTimeout = 30 * time.Second
+
+var errFeedEventNotDispatched = errors.New("feed event was not dispatched")
 
 // Event is one feed-impacting mutation.
 type Event struct {
@@ -63,9 +66,25 @@ type EventDispatcher struct {
 	// so no sender can sit between its check and its send when the channel
 	// closes — with a bare atomic flag that window is a send-on-closed-channel
 	// panic on any request racing a shutdown.
-	mu     sync.RWMutex
-	closed bool
-	wg     sync.WaitGroup
+	mu             sync.RWMutex
+	closed         bool
+	wg             sync.WaitGroup
+	outbox         *PostgresOutbox
+	outboxWorkers  int
+	stopOutbox     chan struct{}
+	outboxWG       sync.WaitGroup
+	outboxStopOnce sync.Once
+}
+
+// WithOutbox starts the durable consumer. Call once during application wiring.
+func (d *EventDispatcher) WithOutbox(outbox *PostgresOutbox) {
+	if d == nil || outbox == nil || d.outbox != nil {
+		return
+	}
+	d.outbox = outbox
+	d.stopOutbox = make(chan struct{})
+	d.outboxWG.Add(1)
+	go d.consumeOutbox()
 }
 
 func NewEventDispatcher(settings *Settings, workers int, queueSize int, handler EventHandler) *EventDispatcher {
@@ -76,9 +95,10 @@ func NewEventDispatcher(settings *Settings, workers int, queueSize int, handler 
 		queueSize = 1
 	}
 	d := &EventDispatcher{
-		settings: settings,
-		jobs:     make(chan Event, queueSize),
-		handler:  handler,
+		settings:      settings,
+		jobs:          make(chan Event, queueSize),
+		handler:       handler,
+		outboxWorkers: workers,
 	}
 	if handler != nil {
 		for i := 0; i < workers; i++ {
@@ -119,8 +139,12 @@ func (d *EventDispatcher) Dispatch(ctx context.Context, event Event) bool {
 	default:
 		CountDispatchEnqueueFailed()
 		SetDispatchQueueDepth(len(d.jobs))
-		logger.Warn(ctx, "feed event queue full", "event_type", event.Type, "queue_depth", len(d.jobs))
-		return false
+		logger.Warn(ctx, "feed event queue full; handling synchronously", "event_type", event.Type, "queue_depth", len(d.jobs))
+		if err := d.handler.HandleFeedEvent(ctx, event); err != nil {
+			logger.LogError(ctx, err, "synchronous feed event fallback failed", "event_type", event.Type)
+			return false
+		}
+		return true
 	}
 }
 
@@ -131,6 +155,12 @@ func (d *EventDispatcher) Close() {
 	if d == nil {
 		return
 	}
+	d.outboxStopOnce.Do(func() {
+		if d.stopOutbox != nil {
+			close(d.stopOutbox)
+			d.outboxWG.Wait()
+		}
+	})
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
@@ -140,6 +170,72 @@ func (d *EventDispatcher) Close() {
 	close(d.jobs)
 	d.mu.Unlock()
 	d.wg.Wait()
+}
+
+func (d *EventDispatcher) consumeOutbox() {
+	defer d.outboxWG.Done()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-d.stopOutbox:
+			return
+		case <-ticker.C:
+			if !d.settings.Get().FanoutEnabled {
+				continue
+			}
+			d.consumeOutboxBatch()
+		}
+	}
+}
+
+func (d *EventDispatcher) consumeOutboxBatch() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	entries, err := d.outbox.claim(ctx, d.outboxWorkers)
+	if err != nil {
+		logger.LogError(ctx, err, "feed outbox claim failed")
+		return
+	}
+
+	var wg sync.WaitGroup
+	for _, entry := range entries {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.processOutboxEntry(entry)
+		}()
+	}
+	wg.Wait()
+}
+
+func (d *EventDispatcher) processOutboxEntry(entry outboxEntry) {
+	eventErr := entry.DecodeErr
+	if eventErr == nil {
+		if entry.Event.Score == 0 && (entry.Event.Type == EventPostCreated || entry.Event.Type == EventVisibilityChanged) {
+			entry.Event.Score = PackTimelineScore(d.writeScore(), entry.Event.CreatedAt)
+		}
+		handlerCtx, cancel := context.WithTimeout(context.Background(), eventHandlerTimeout)
+		eventErr = d.handler.HandleFeedEvent(handlerCtx, entry.Event)
+		cancel()
+	}
+
+	persistCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if eventErr != nil {
+		logger.LogError(persistCtx, eventErr, "feed outbox event failed", "event_id", entry.ID, "event_type", entry.Event.Type, "attempt", entry.Attempts)
+		CountOutboxRetry()
+		if entry.Attempts >= outboxMaxAttempts {
+			CountOutboxDeadLetter()
+		}
+		if failErr := d.outbox.fail(persistCtx, entry, eventErr); failErr != nil {
+			logger.LogError(persistCtx, failErr, "feed outbox retry scheduling failed", "event_id", entry.ID)
+		}
+		return
+	}
+	if err := d.outbox.complete(persistCtx, entry.ID); err != nil {
+		logger.LogError(persistCtx, err, "feed outbox completion failed", "event_id", entry.ID)
+	}
 }
 
 func (d *EventDispatcher) worker() {
@@ -160,25 +256,49 @@ func (d *EventDispatcher) handleEvent(event Event) {
 
 // EmitPostCreated publishes a post-created feed event.
 func (d *EventDispatcher) EmitPostCreated(ctx context.Context, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error {
-	d.Dispatch(ctx, Event{
+	if !d.Dispatch(ctx, Event{
 		Type:       EventPostCreated,
 		PostID:     postID,
 		AuthorID:   authorID,
 		Visibility: visibility,
 		CreatedAt:  createdAt,
 		Score:      PackTimelineScore(d.writeScore(), createdAt),
-	})
+	}) {
+		return errFeedEventNotDispatched
+	}
+	return nil
+}
+
+func (d *EventDispatcher) EmitPostDeleted(ctx context.Context, postID, authorID uuid.UUID) error {
+	if !d.Dispatch(ctx, Event{Type: EventPostDeleted, PostID: postID, AuthorID: authorID}) {
+		return errFeedEventNotDispatched
+	}
+	return nil
+}
+
+func (d *EventDispatcher) EmitPostVisibilityChanged(ctx context.Context, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error {
+	if !d.Dispatch(ctx, Event{
+		Type: EventVisibilityChanged, PostID: postID, AuthorID: authorID,
+		Visibility: visibility, CreatedAt: createdAt,
+		Score: PackTimelineScore(d.writeScore(), createdAt),
+	}) {
+		return errFeedEventNotDispatched
+	}
 	return nil
 }
 
 // EmitFollowCreated publishes a follow-created feed event.
 func (d *EventDispatcher) EmitFollowCreated(ctx context.Context, followerID, followeeID uuid.UUID) error {
-	d.Dispatch(ctx, Event{Type: EventFollowCreated, ActorID: followerID, FolloweeID: followeeID, CreatedAt: time.Now().UTC()})
+	if !d.Dispatch(ctx, Event{Type: EventFollowCreated, ActorID: followerID, FolloweeID: followeeID, CreatedAt: time.Now().UTC()}) {
+		return errFeedEventNotDispatched
+	}
 	return nil
 }
 
 // EmitFollowDeleted publishes a follow-deleted feed event.
 func (d *EventDispatcher) EmitFollowDeleted(ctx context.Context, followerID, followeeID uuid.UUID) error {
-	d.Dispatch(ctx, Event{Type: EventFollowDeleted, ActorID: followerID, FolloweeID: followeeID, CreatedAt: time.Now().UTC()})
+	if !d.Dispatch(ctx, Event{Type: EventFollowDeleted, ActorID: followerID, FolloweeID: followeeID, CreatedAt: time.Now().UTC()}) {
+		return errFeedEventNotDispatched
+	}
 	return nil
 }

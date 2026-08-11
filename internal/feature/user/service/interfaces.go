@@ -28,6 +28,7 @@ type userRepo interface {
 type refreshTokenRepo interface {
 	Create(ctx context.Context, token string, userID uuid.UUID, expiresAt time.Time) (*entity.RefreshToken, error)
 	GetByToken(ctx context.Context, token string) (*entity.RefreshToken, error)
+	Rotate(ctx context.Context, oldToken, newToken string, expiresAt time.Time) (*entity.RefreshToken, error)
 	Revoke(ctx context.Context, token string) error
 	RevokeAllUserTokens(ctx context.Context, userID uuid.UUID) error
 	DeleteExpired(ctx context.Context) error

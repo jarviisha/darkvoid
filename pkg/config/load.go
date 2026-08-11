@@ -77,13 +77,6 @@ func loadStorageConfig() StorageConfig {
 		Provider: getEnv("STORAGE_PROVIDER", "local"),
 		BaseURL:  getEnv("STORAGE_BASE_URL", "http://localhost:8080/static"),
 		LocalDir: getEnv("STORAGE_LOCAL_DIR", "./uploads"),
-
-		S3Endpoint:  getEnv("STORAGE_S3_ENDPOINT", ""),
-		S3Bucket:    getEnv("STORAGE_S3_BUCKET", "darkvoid"),
-		S3Region:    getEnv("STORAGE_S3_REGION", "us-east-1"),
-		S3AccessKey: getEnv("STORAGE_S3_ACCESS_KEY", ""),
-		S3SecretKey: getEnv("STORAGE_S3_SECRET_KEY", ""),
-		S3UseSSL:    getEnvBool("STORAGE_S3_USE_SSL", false),
 	}
 }
 

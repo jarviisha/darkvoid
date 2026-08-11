@@ -18,6 +18,12 @@ type LikeService struct {
 	postRepo       postRepo
 	notifEmitter   LikeNotificationEmitter // optional, nil = no-op
 	eventPublisher BehaviorEventPublisher  // optional, nil = no-op
+	followChecker  followChecker           // optional: nil → followers content denied
+}
+
+// WithFollowChecker attaches the checker used to authorize followers-only posts.
+func (s *LikeService) WithFollowChecker(checker followChecker) {
+	s.followChecker = checker
 }
 
 // NewLikeService creates a new LikeService
@@ -37,11 +43,8 @@ func (s *LikeService) WithBehaviorEventPublisher(p BehaviorEventPublisher) {
 
 // Like adds a like from userID to postID
 func (s *LikeService) Like(ctx context.Context, userID, postID uuid.UUID) error {
-	p, err := s.postRepo.GetByID(ctx, postID)
+	p, err := getVisiblePost(ctx, s.postRepo, s.followChecker, postID, &userID)
 	if err != nil {
-		if errors.Is(err, errors.ErrNotFound) {
-			return post.ErrPostNotFound
-		}
 		return err
 	}
 	if p.AuthorID == userID {
@@ -60,10 +63,7 @@ func (s *LikeService) Like(ctx context.Context, userID, postID uuid.UUID) error 
 
 // Unlike removes a like from userID to postID
 func (s *LikeService) Unlike(ctx context.Context, userID, postID uuid.UUID) error {
-	if _, err := s.postRepo.GetByID(ctx, postID); err != nil {
-		if errors.Is(err, errors.ErrNotFound) {
-			return post.ErrPostNotFound
-		}
+	if _, err := getVisiblePost(ctx, s.postRepo, s.followChecker, postID, &userID); err != nil {
 		return err
 	}
 
@@ -83,39 +83,24 @@ func (s *LikeService) Unlike(ctx context.Context, userID, postID uuid.UUID) erro
 
 // Toggle likes or unlikes a post depending on current state. Returns true if now liked.
 func (s *LikeService) Toggle(ctx context.Context, userID, postID uuid.UUID) (bool, error) {
-	p, err := s.postRepo.GetByID(ctx, postID)
+	p, err := getVisiblePost(ctx, s.postRepo, s.followChecker, postID, &userID)
 	if err != nil {
-		if errors.Is(err, errors.ErrNotFound) {
-			return false, post.ErrPostNotFound
-		}
 		return false, err
 	}
-	// if p.AuthorID == userID {
-	// 	return false, post.ErrSelfLike
-	// }
+	if p.AuthorID == userID {
+		return false, post.ErrSelfLike
+	}
 
-	// IsLiked + Like/Unlike is not atomic, but safe: LikePost uses ON CONFLICT DO NOTHING
-	// and UnlikePost is an idempotent DELETE, so concurrent requests cannot corrupt state.
-	liked, err := s.likeRepo.IsLiked(ctx, userID, postID)
+	liked, err := s.likeRepo.Toggle(ctx, userID, postID)
 	if err != nil {
-		logger.LogError(ctx, err, "failed to check like status", "user_id", userID, "post_id", postID)
+		logger.LogError(ctx, err, "failed to toggle like", "user_id", userID, "post_id", postID)
 		return false, errors.NewInternalError(err)
 	}
 
-	if liked {
-		if err := s.likeRepo.Unlike(ctx, userID, postID); err != nil {
-			logger.LogError(ctx, err, "failed to unlike post", "user_id", userID, "post_id", postID)
-			return false, errors.NewInternalError(err)
-		}
+	if !liked {
 		s.deleteLikeNotification(ctx, userID, postID)
-		// No behavior event — see Unlike.
 		logger.Info(ctx, "post unliked", "user_id", userID, "post_id", postID)
 		return false, nil
-	}
-
-	if err := s.likeRepo.Like(ctx, userID, postID); err != nil {
-		logger.LogError(ctx, err, "failed to like post", "user_id", userID, "post_id", postID)
-		return false, errors.NewInternalError(err)
 	}
 	s.emitLikeNotification(ctx, userID, p.AuthorID, postID)
 	s.publishBehaviorEvent(ctx, userID, postID, "LIKE", &p.CreatedAt)

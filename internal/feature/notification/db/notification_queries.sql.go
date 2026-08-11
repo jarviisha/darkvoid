@@ -116,9 +116,10 @@ func (q *Queries) CreateSystemNotification(ctx context.Context, arg CreateSystem
 	return i, err
 }
 
-const deleteByActorAndGroupKey = `-- name: DeleteByActorAndGroupKey :exec
+const deleteByActorAndGroupKey = `-- name: DeleteByActorAndGroupKey :one
 DELETE FROM notification.notifications
 WHERE actor_id = $1 AND group_key = $2
+RETURNING recipient_id
 `
 
 type DeleteByActorAndGroupKeyParams struct {
@@ -126,9 +127,11 @@ type DeleteByActorAndGroupKeyParams struct {
 	GroupKey string    `json:"group_key"`
 }
 
-func (q *Queries) DeleteByActorAndGroupKey(ctx context.Context, arg DeleteByActorAndGroupKeyParams) error {
-	_, err := q.db.Exec(ctx, deleteByActorAndGroupKey, arg.ActorID, arg.GroupKey)
-	return err
+func (q *Queries) DeleteByActorAndGroupKey(ctx context.Context, arg DeleteByActorAndGroupKeyParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, deleteByActorAndGroupKey, arg.ActorID, arg.GroupKey)
+	var recipient_id uuid.UUID
+	err := row.Scan(&recipient_id)
+	return recipient_id, err
 }
 
 const getGroupActors = `-- name: GetGroupActors :many

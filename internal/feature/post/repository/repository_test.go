@@ -231,6 +231,17 @@ func TestDiscoverSQL_UsesDeterministicCompositeCursor(t *testing.T) {
 	}
 }
 
+func TestFollowingSQL_IncludesPrivatePostsOnlyForViewer(t *testing.T) {
+	raw, err := os.ReadFile("../sql/post_queries.sql")
+	if err != nil {
+		t.Fatalf("read post query source: %v", err)
+	}
+	query := string(raw)
+	if !strings.Contains(query, "visibility IN ('public', 'followers') OR author_id = $2::uuid") {
+		t.Fatal("following query must include private posts only when the viewer is their author")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // HashtagRepository.UpsertAndLink — empty-names guard (no DB call)
 // ---------------------------------------------------------------------------

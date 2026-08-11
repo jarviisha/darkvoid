@@ -62,11 +62,12 @@ func (r *PostRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return database.MapDBError(r.queries.DeletePost(ctx, id))
 }
 
-func (r *PostRepository) GetFollowingPostsWithCursor(ctx context.Context, authorIDs []uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, limit int32) ([]*entity.Post, error) {
+func (r *PostRepository) GetFollowingPostsWithCursor(ctx context.Context, authorIDs []uuid.UUID, viewerID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, limit int32) ([]*entity.Post, error) {
 	rows, err := r.queries.GetFollowingPostsWithCursor(ctx, db.GetFollowingPostsWithCursorParams{
 		Column1: authorIDs,
-		Column2: cursorCreatedAt,
-		Column3: cursorPostID,
+		Column2: viewerID,
+		Column3: cursorCreatedAt,
+		Column4: cursorPostID,
 		Limit:   limit,
 	})
 	if err != nil {
@@ -83,12 +84,12 @@ func (r *PostRepository) GetTrendingPosts(ctx context.Context, limit int32) ([]*
 	return rowsToPosts(rows), nil
 }
 
-func (r *PostRepository) GetByAuthorWithCursor(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilter string, limit int32) ([]*entity.Post, error) {
+func (r *PostRepository) GetByAuthorWithCursor(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilters []string, limit int32) ([]*entity.Post, error) {
 	rows, err := r.queries.GetUserPostsWithCursor(ctx, db.GetUserPostsWithCursorParams{
 		AuthorID: authorID,
 		Column2:  cursorCreatedAt,
 		Column3:  cursorPostID,
-		Column4:  visibilityFilter,
+		Column4:  visibilityFilters,
 		Limit:    limit,
 	})
 	if err != nil {
@@ -157,8 +158,9 @@ func followingCursorRowsToPosts(rows []db.GetFollowingPostsWithCursorRow) []*ent
 	return result
 }
 
-// GetPostsByIDs fetches feed-visible, non-deleted posts by their IDs.
-// Callers that load provider-owned public pools must still filter visibility at their boundary.
+// GetPostsByIDs fetches non-deleted posts by their IDs. Visibility is enforced
+// by the feed boundary because prepared timelines may hydrate an author's own
+// private posts while provider-backed recommendation/trending pools are public-only.
 // Implemented directly via DBTX because sqlc does not generate unnest-based batch queries.
 func (r *PostRepository) GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*entity.Post, error) {
 	if len(ids) == 0 {
@@ -167,7 +169,7 @@ func (r *PostRepository) GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]
 	const q = `
 		SELECT id, author_id, content, visibility, like_count, comment_count, created_at, updated_at, deleted_at
 		FROM post.posts
-		WHERE id = ANY($1) AND deleted_at IS NULL AND visibility IN ('public', 'followers')`
+		WHERE id = ANY($1) AND deleted_at IS NULL`
 
 	rows, err := r.dbtx.Query(ctx, q, ids)
 	if err != nil {

@@ -118,6 +118,12 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 			logger.Info(ctx, "timeline feed hit", "user_id", userID, "items", len(items))
 			return items, next, nil
 		}
+		if err == nil && cursor != nil && cursor.TimelinePosition() != nil {
+			// A timeline continuation stays in the timeline family. If all
+			// remaining entries became stale, end this scroll instead of silently
+			// switching cursor families and re-serving public posts from the top.
+			return nil, nil, nil
+		}
 		if err != nil {
 			feed.CountTimelineReadError()
 			logger.LogError(ctx, err, "timeline feed read failed, falling back", "user_id", userID)
@@ -140,11 +146,12 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 		followingSet[id] = true
 	}
 
-	candidates, recOffset, recTotal, trendingCollected, followingFetched, err := s.collectMixedCandidates(ctx, userID, authorIDs, cursor)
+	candidates, recWindow, trendingCollected, followingFetched, err := s.collectMixedCandidates(ctx, userID, authorIDs, cursor)
 	if err != nil {
 		return nil, nil, err
 	}
 	candidates = filterEligibleCandidates(userID, followingSet, collapseCandidates(candidates))
+	recWindow.validOffsets = recommendationCandidateOffsets(candidates)
 	if len(candidates) == 0 && !followingFetched {
 		feed.CountFallback()
 		logger.Info(ctx, "feed fallback entered", "user_id", userID)
@@ -169,7 +176,7 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 	if len(page) == 0 {
 		return nil, nil, nil
 	}
-	return page, nextMixedCursor(userID, page, cursor, recOffset, recTotal, trendingCollected), nil
+	return page, nextMixedCursor(userID, page, cursor, recWindow, trendingCollected), nil
 }
 
 // discoverHandoff converts a following continuation into a discover one. The
@@ -233,7 +240,7 @@ func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID,
 	if err != nil {
 		return nil, nil, err
 	}
-	if (page == nil || len(page.Entries) == 0) && s.refresher != nil && s.refreshOnMissAllowed() {
+	if position == nil && (page == nil || len(page.Entries) == 0) && s.refresher != nil && s.refreshOnMissAllowed() {
 		feed.CountLazyRefresh()
 		logger.Info(ctx, "timeline refresh on miss started", "user_id", userID)
 		if refreshErr := s.refreshTimelineShared(ctx, userID); refreshErr != nil {
@@ -279,7 +286,7 @@ func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID,
 	sort.Slice(posts, func(i, j int) bool {
 		return entryOrder[posts[i].ID] < entryOrder[posts[j].ID]
 	})
-	items := make([]*feedentity.FeedItem, 0, pageSize)
+	items := make([]*feedentity.FeedItem, 0, pageSize+1)
 	for _, p := range posts {
 		if !isEligibleTimelinePost(userID, followingSet, p) {
 			continue
@@ -289,7 +296,7 @@ func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID,
 			Score:  feed.UnpackTimelineRank(entryByPost[p.ID].Score),
 			Source: feedentity.SourceFollowing,
 		})
-		if len(items) == pageSize {
+		if len(items) == pageSize+1 {
 			break
 		}
 	}
@@ -297,10 +304,14 @@ func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID,
 	// to the last kept one were examined; counting the whole read window would
 	// report healthy beyond-the-page entries as stale.
 	considered := len(page.Entries)
-	if len(items) == pageSize {
+	if len(items) == pageSize+1 {
 		considered = entryOrder[items[len(items)-1].Post.ID] + 1
 	}
 	feed.CountStaleFiltered(considered - len(items))
+	hasMore := page.HasMore || len(items) > pageSize
+	if len(items) > pageSize {
+		items = items[:pageSize]
+	}
 	s.enrichIsLiked(ctx, userID, items)
 	s.enrichIsFollowingAuthor(items, followingSet)
 
@@ -309,7 +320,7 @@ func (s *FeedService) getFeedFromTimeline(ctx context.Context, userID uuid.UUID,
 	}
 	lastEntry := entryByPost[items[len(items)-1].Post.ID]
 	next := (*feed.FeedCursor)(nil)
-	if len(items) == pageSize || len(page.Entries) == pageSize*fetchMultiplier {
+	if hasMore {
 		score := lastEntry.Score
 		next = &feed.FeedCursor{
 			TimelineScore:        &score,
@@ -363,42 +374,72 @@ func recommendationOffset(cursor *feed.FeedCursor) int {
 	return cursor.RecommendationOffset
 }
 
+func recommendationSeenSet(cursor *feed.FeedCursor) map[int]bool {
+	seen := make(map[int]bool)
+	if cursor == nil {
+		return seen
+	}
+	for _, offset := range cursor.RecommendationSeen {
+		seen[offset] = true
+	}
+	return seen
+}
+
+func recommendationCandidateOffsets(candidates []feedCandidate) map[int]bool {
+	offsets := make(map[int]bool)
+	for _, candidate := range candidates {
+		if candidate.recommendationOffset != nil {
+			offsets[*candidate.recommendationOffset] = true
+		}
+	}
+	return offsets
+}
+
 // feedCandidate is a post being considered for inclusion in the feed.
 // recommendationScore/recommendationRank carry the upstream Codohue values for
 // observability and downstream re-ranking — they are NOT the post's final
 // position in the returned page (that is decided after sortFeedItems).
 type feedCandidate struct {
-	post                *feedentity.Post
-	source              feedentity.Source
-	sourceRank          int
-	providerScore       *float64
-	providerRank        *int
-	recommendationScore *float64
-	recommendationRank  *int
+	post                 *feedentity.Post
+	source               feedentity.Source
+	sourceRank           int
+	providerScore        *float64
+	providerRank         *int
+	recommendationScore  *float64
+	recommendationRank   *int
+	recommendationOffset *int
 }
 
-func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UUID, authorIDs []uuid.UUID, cursor *feed.FeedCursor) ([]feedCandidate, int, int, bool, bool, error) {
+type recommendationWindow struct {
+	start        int
+	end          int
+	total        int
+	validOffsets map[int]bool
+}
+
+func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UUID, authorIDs []uuid.UUID, cursor *feed.FeedCursor) ([]feedCandidate, recommendationWindow, bool, bool, error) {
 	recommendationOffset := recommendationOffset(cursor)
+	recWindow := recommendationWindow{start: recommendationOffset, end: recommendationOffset}
 	candidates := make([]feedCandidate, 0, pageSize*fetchMultiplier)
 
-	followingPosts, err := s.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, cursor.FollowingPosition(), pageSize*fetchMultiplier)
+	followingPosts, err := s.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, userID, cursor.FollowingPosition(), pageSize*fetchMultiplier)
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get following posts", "user_id", userID)
-		return nil, recommendationOffset, 0, false, false, errors.NewInternalError(err)
+		return nil, recWindow, false, false, errors.NewInternalError(err)
 	}
 	for i, p := range followingPosts {
 		candidates = append(candidates, feedCandidate{post: p, source: feedentity.SourceFollowing, sourceRank: i + 1})
 	}
 
-	recommendationTotal := 0
 	if s.recommender != nil {
 		recPage, recErr := s.recommender.GetRecommendations(ctx, userID.String(), pageSize, recommendationOffset)
 		if recErr != nil {
 			logger.LogError(ctx, recErr, "codohue recommendations failed, skipping", "user_id", userID)
 		} else if recPage != nil {
-			recommendationOffset = recPage.Offset + len(recPage.Items)
-			recommendationTotal = recPage.Total
-			recCandidates, loadErr := s.loadRecommendationCandidates(ctx, recPage.Items)
+			recWindow.start = recPage.Offset
+			recWindow.end = recPage.Offset + len(recPage.Items)
+			recWindow.total = recPage.Total
+			recCandidates, loadErr := s.loadRecommendationCandidates(ctx, recPage.Items, recPage.Offset, cursor)
 			if loadErr != nil {
 				logger.LogError(ctx, loadErr, "failed to load recommendation candidates", "user_id", userID)
 			}
@@ -419,13 +460,19 @@ func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UU
 		trendingCollected = len(trendingPosts) > 0
 	}
 
-	return candidates, recommendationOffset, recommendationTotal, trendingCollected, len(followingPosts) > 0, nil
+	return candidates, recWindow, trendingCollected, len(followingPosts) > 0, nil
 }
 
-func (s *FeedService) loadRecommendationCandidates(ctx context.Context, items []feed.RecommendedItem) ([]feedCandidate, error) {
+func (s *FeedService) loadRecommendationCandidates(ctx context.Context, items []feed.RecommendedItem, baseOffset int, cursor *feed.FeedCursor) ([]feedCandidate, error) {
 	ids := make([]uuid.UUID, 0, len(items))
 	meta := make(map[uuid.UUID]feed.RecommendedItem, len(items))
-	for _, item := range items {
+	offsets := make(map[uuid.UUID]int, len(items))
+	seen := recommendationSeenSet(cursor)
+	for i, item := range items {
+		offset := baseOffset + i
+		if seen[offset] {
+			continue
+		}
 		if item.Score < 0 {
 			continue
 		}
@@ -435,6 +482,7 @@ func (s *FeedService) loadRecommendationCandidates(ctx context.Context, items []
 		}
 		ids = append(ids, id)
 		meta[id] = item
+		offsets[id] = offset
 	}
 	posts, err := s.postReader.GetPostsByIDs(ctx, ids)
 	if err != nil {
@@ -448,14 +496,16 @@ func (s *FeedService) loadRecommendationCandidates(ctx context.Context, items []
 		item := meta[p.ID]
 		score := item.Score
 		rank := item.Rank
+		offset := offsets[p.ID]
 		result = append(result, feedCandidate{
-			post:                p,
-			source:              feedentity.SourceRecommendation,
-			sourceRank:          item.Rank,
-			providerScore:       &score,
-			providerRank:        &rank,
-			recommendationScore: &score,
-			recommendationRank:  &rank,
+			post:                 p,
+			source:               feedentity.SourceRecommendation,
+			sourceRank:           item.Rank,
+			providerScore:        &score,
+			providerRank:         &rank,
+			recommendationScore:  &score,
+			recommendationRank:   &rank,
+			recommendationOffset: &offset,
 		})
 	}
 	return result, nil
@@ -477,6 +527,7 @@ func collapseCandidates(candidates []feedCandidate) []feedCandidate {
 			existing.providerRank = c.providerRank
 			existing.recommendationScore = c.recommendationScore
 			existing.recommendationRank = c.recommendationRank
+			existing.recommendationOffset = c.recommendationOffset
 			byID[c.post.ID] = existing
 		}
 	}
@@ -534,10 +585,27 @@ func sourcePriority(source feedentity.Source) int {
 	}
 }
 
-func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *feed.FeedCursor, recOffset, recTotal int, trendingCollected bool) *feed.FeedCursor {
+func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *feed.FeedCursor, recWindow recommendationWindow, trendingCollected bool) *feed.FeedCursor {
 	next := &feed.FeedCursor{TimelineUser: userID.String()}
-	if recTotal > 0 && recOffset < recTotal {
+	seen := recommendationSeenSet(incoming)
+	for _, item := range page {
+		if item.RecommendationOffset != nil {
+			seen[*item.RecommendationOffset] = true
+		}
+	}
+	recOffset := recWindow.start
+	for recOffset < recWindow.end && (seen[recOffset] || !recWindow.validOffsets[recOffset]) {
+		delete(seen, recOffset)
+		recOffset++
+	}
+	if recWindow.total > 0 && recOffset < recWindow.total {
 		next.RecommendationOffset = recOffset
+		for offset := range seen {
+			if offset >= recOffset {
+				next.RecommendationSeen = append(next.RecommendationSeen, offset)
+			}
+		}
+		sort.Ints(next.RecommendationSeen)
 	}
 	// The trending position advances to the lowest-trend-score item served on
 	// this page — the page is blend-ordered, so the last trending item in page
@@ -644,11 +712,12 @@ func (s *FeedService) rankCandidates(ctx context.Context, candidates []feedCandi
 			score += 5 / float64(*c.providerRank)
 		}
 		items = append(items, &feedentity.FeedItem{
-			Post:                c.post,
-			Score:               score,
-			Source:              c.source,
-			RecommendationScore: c.recommendationScore,
-			RecommendationRank:  c.recommendationRank,
+			Post:                 c.post,
+			Score:                score,
+			Source:               c.source,
+			RecommendationScore:  c.recommendationScore,
+			RecommendationRank:   c.recommendationRank,
+			RecommendationOffset: c.recommendationOffset,
 		})
 	}
 	return items

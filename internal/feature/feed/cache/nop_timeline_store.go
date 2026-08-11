@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
@@ -17,6 +18,10 @@ func (n *NopTimelineStore) AddPost(_ context.Context, _ uuid.UUID, _ feed.Timeli
 }
 
 func (n *NopTimelineStore) SetPostsBatch(_ context.Context, _ uuid.UUID, _ []feed.TimelineEntry) error {
+	return nil
+}
+
+func (n *NopTimelineStore) ReplacePosts(_ context.Context, _ uuid.UUID, _ []feed.TimelineEntry, _ time.Time) error {
 	return nil
 }
 

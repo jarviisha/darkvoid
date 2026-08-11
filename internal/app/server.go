@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/go-chi/httprate"
 	"github.com/jackc/pgx/v5/pgxpool"
+	appmiddleware "github.com/jarviisha/darkvoid/internal/app/middleware"
 	"github.com/jarviisha/darkvoid/pkg/config"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
@@ -46,10 +47,11 @@ func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis
 	// Global middlewares
 	// Note: middleware.RequestID is intentionally omitted — HTTPMiddleware is the
 	// sole source of request ID generation and X-Request-ID header propagation.
-	router.Use(middleware.RealIP)
+	router.Use(chimiddleware.RealIP)
 	router.Use(logger.HTTPMiddleware(log))
-	router.Use(middleware.Recoverer)
+	router.Use(chimiddleware.Recoverer)
 	router.Use(errors.ErrorHandler)
+	router.Use(appmiddleware.SecurityHeaders)
 
 	// CORS middleware
 	router.Use(cors.Handler(cors.Options{
@@ -96,7 +98,7 @@ func (s *Server) Router() chi.Router {
 // RequestTimeout returns the configured request timeout middleware.
 // Apply this to route groups that should enforce a deadline; omit for SSE/streaming routes.
 func (s *Server) RequestTimeout() func(http.Handler) http.Handler {
-	return middleware.Timeout(s.cfg.Server.RequestTimeout)
+	return chimiddleware.Timeout(s.cfg.Server.RequestTimeout)
 }
 
 // Start starts the HTTP server

@@ -22,7 +22,7 @@ type postRepo interface {
 	WithTx(tx pgx.Tx) postRepo
 	Create(ctx context.Context, authorID uuid.UUID, content string, visibility entity.Visibility) (*entity.Post, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*entity.Post, error)
-	GetByAuthorWithCursor(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilter string, limit int32) ([]*entity.Post, error)
+	GetByAuthorWithCursor(ctx context.Context, authorID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorPostID uuid.UUID, visibilityFilters []string, limit int32) ([]*entity.Post, error)
 	Update(ctx context.Context, id uuid.UUID, content string, visibility entity.Visibility) (*entity.Post, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 }
@@ -41,6 +41,7 @@ type mediaRepo interface {
 type likeRepo interface {
 	Like(ctx context.Context, userID, postID uuid.UUID) error
 	Unlike(ctx context.Context, userID, postID uuid.UUID) error
+	Toggle(ctx context.Context, userID, postID uuid.UUID) (bool, error)
 	IsLiked(ctx context.Context, userID, postID uuid.UUID) (bool, error)
 	Count(ctx context.Context, postID uuid.UUID) (int64, error)
 	GetLikedPostIDs(ctx context.Context, userID uuid.UUID, postIDs []uuid.UUID) ([]uuid.UUID, error)
@@ -71,9 +72,7 @@ type commentMediaRepo interface {
 // commentLikeRepo defines the repository operations needed by CommentLikeService.
 // *repository.CommentLikeRepository satisfies this interface.
 type commentLikeRepo interface {
-	Like(ctx context.Context, userID, commentID uuid.UUID) error
-	Unlike(ctx context.Context, userID, commentID uuid.UUID) error
-	IsLiked(ctx context.Context, userID, commentID uuid.UUID) (bool, error)
+	Toggle(ctx context.Context, userID, commentID uuid.UUID) (bool, error)
 	GetLikedCommentIDs(ctx context.Context, userID uuid.UUID, commentIDs []uuid.UUID) ([]uuid.UUID, error)
 }
 
@@ -127,6 +126,15 @@ type notificationEmitter interface {
 // FeedEventEmitter emits feed-impacting post events after successful mutations.
 type FeedEventEmitter interface {
 	EmitPostCreated(ctx context.Context, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error
+	EmitPostDeleted(ctx context.Context, postID, authorID uuid.UUID) error
+	EmitPostVisibilityChanged(ctx context.Context, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error
+}
+
+// FeedEventOutbox persists post feed events inside the post mutation transaction.
+type FeedEventOutbox interface {
+	EnqueuePostCreated(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error
+	EnqueuePostDeleted(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID) error
+	EnqueuePostVisibilityChanged(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error
 }
 
 // TrendingInvalidator invalidates the trending posts cache.

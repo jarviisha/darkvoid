@@ -12,33 +12,49 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const consumeRefreshToken = `-- name: ConsumeRefreshToken :one
+UPDATE usr.refresh_tokens
+SET is_revoked = true, revoked_at = NOW()
+WHERE token_hash = $1
+  AND is_revoked = false
+  AND expires_at > NOW()
+RETURNING user_id
+`
+
+func (q *Queries) ConsumeRefreshToken(ctx context.Context, tokenHash string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, consumeRefreshToken, tokenHash)
+	var user_id uuid.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const createRefreshToken = `-- name: CreateRefreshToken :one
 INSERT INTO usr.refresh_tokens (
-    token,
+    token_hash,
     user_id,
     expires_at
 ) VALUES (
     $1, $2, $3
-) RETURNING id, token, user_id, expires_at, created_at, revoked_at, is_revoked
+) RETURNING id, user_id, expires_at, created_at, revoked_at, is_revoked, token_hash
 `
 
 type CreateRefreshTokenParams struct {
-	Token     string           `json:"token"`
+	TokenHash string           `json:"token_hash"`
 	UserID    uuid.UUID        `json:"user_id"`
 	ExpiresAt pgtype.Timestamp `json:"expires_at"`
 }
 
 func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (UsrRefreshToken, error) {
-	row := q.db.QueryRow(ctx, createRefreshToken, arg.Token, arg.UserID, arg.ExpiresAt)
+	row := q.db.QueryRow(ctx, createRefreshToken, arg.TokenHash, arg.UserID, arg.ExpiresAt)
 	var i UsrRefreshToken
 	err := row.Scan(
 		&i.ID,
-		&i.Token,
 		&i.UserID,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.RevokedAt,
 		&i.IsRevoked,
+		&i.TokenHash,
 	)
 	return i, err
 }
@@ -54,7 +70,7 @@ func (q *Queries) DeleteExpiredRefreshTokens(ctx context.Context) error {
 }
 
 const getActiveRefreshTokensByUserID = `-- name: GetActiveRefreshTokensByUserID :many
-SELECT id, token, user_id, expires_at, created_at, revoked_at, is_revoked FROM usr.refresh_tokens
+SELECT id, user_id, expires_at, created_at, revoked_at, is_revoked, token_hash FROM usr.refresh_tokens
 WHERE user_id = $1 AND is_revoked = false AND expires_at > NOW()
 ORDER BY created_at DESC
 `
@@ -70,12 +86,12 @@ func (q *Queries) GetActiveRefreshTokensByUserID(ctx context.Context, userID uui
 		var i UsrRefreshToken
 		if err := rows.Scan(
 			&i.ID,
-			&i.Token,
 			&i.UserID,
 			&i.ExpiresAt,
 			&i.CreatedAt,
 			&i.RevokedAt,
 			&i.IsRevoked,
+			&i.TokenHash,
 		); err != nil {
 			return nil, err
 		}
@@ -88,22 +104,22 @@ func (q *Queries) GetActiveRefreshTokensByUserID(ctx context.Context, userID uui
 }
 
 const getRefreshTokenByToken = `-- name: GetRefreshTokenByToken :one
-SELECT id, token, user_id, expires_at, created_at, revoked_at, is_revoked FROM usr.refresh_tokens
-WHERE token = $1 AND is_revoked = false
+SELECT id, user_id, expires_at, created_at, revoked_at, is_revoked, token_hash FROM usr.refresh_tokens
+WHERE token_hash = $1 AND is_revoked = false
 LIMIT 1
 `
 
-func (q *Queries) GetRefreshTokenByToken(ctx context.Context, token string) (UsrRefreshToken, error) {
-	row := q.db.QueryRow(ctx, getRefreshTokenByToken, token)
+func (q *Queries) GetRefreshTokenByToken(ctx context.Context, tokenHash string) (UsrRefreshToken, error) {
+	row := q.db.QueryRow(ctx, getRefreshTokenByToken, tokenHash)
 	var i UsrRefreshToken
 	err := row.Scan(
 		&i.ID,
-		&i.Token,
 		&i.UserID,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.RevokedAt,
 		&i.IsRevoked,
+		&i.TokenHash,
 	)
 	return i, err
 }
@@ -119,13 +135,16 @@ func (q *Queries) RevokeAllUserRefreshTokens(ctx context.Context, userID uuid.UU
 	return err
 }
 
-const revokeRefreshToken = `-- name: RevokeRefreshToken :exec
+const revokeRefreshToken = `-- name: RevokeRefreshToken :one
 UPDATE usr.refresh_tokens
 SET is_revoked = true, revoked_at = NOW()
-WHERE token = $1
+WHERE token_hash = $1 AND is_revoked = false
+RETURNING id
 `
 
-func (q *Queries) RevokeRefreshToken(ctx context.Context, token string) error {
-	_, err := q.db.Exec(ctx, revokeRefreshToken, token)
-	return err
+func (q *Queries) RevokeRefreshToken(ctx context.Context, tokenHash string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, revokeRefreshToken, tokenHash)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }

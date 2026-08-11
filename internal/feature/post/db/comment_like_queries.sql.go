@@ -77,6 +77,23 @@ func (q *Queries) LikeComment(ctx context.Context, arg LikeCommentParams) error 
 	return err
 }
 
+const lockCommentLike = `-- name: LockCommentLike :exec
+SELECT pg_advisory_xact_lock(hashtextextended(
+    $1::text || ':' || $2::text,
+    0
+))
+`
+
+type LockCommentLikeParams struct {
+	UserID    string `json:"user_id"`
+	CommentID string `json:"comment_id"`
+}
+
+func (q *Queries) LockCommentLike(ctx context.Context, arg LockCommentLikeParams) error {
+	_, err := q.db.Exec(ctx, lockCommentLike, arg.UserID, arg.CommentID)
+	return err
+}
+
 const unlikeComment = `-- name: UnlikeComment :exec
 DELETE FROM post.comment_likes
 WHERE user_id = $1 AND comment_id = $2

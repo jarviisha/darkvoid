@@ -142,6 +142,7 @@ func TestGetUser_Success(t *testing.T) {
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("/users/%s", userID), nil)
 	req = withChiParam(req, "userKey", userID.String())
+	req = withUserID(req, userID)
 	w := httptest.NewRecorder()
 	h.GetUser(w, req)
 
@@ -170,10 +171,35 @@ func TestGetUser_NotFound(t *testing.T) {
 	userID := uuid.New()
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("/users/%s", userID), nil)
 	req = withChiParam(req, "userKey", userID.String())
+	req = withUserID(req, userID)
 	w := httptest.NewRecorder()
 	h.GetUser(w, req)
 
 	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestGetUser_OtherAccountForbidden(t *testing.T) {
+	targetID := uuid.New()
+	h := newUserHandler(&mockUserService{})
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("/users/%s", targetID), nil)
+	req = withChiParam(req, "userKey", targetID.String())
+	req = withUserID(req, uuid.New())
+	w := httptest.NewRecorder()
+	h.GetUser(w, req)
+	assertStatus(t, w, http.StatusForbidden)
+}
+
+func TestGetUser_OtherUsernameForbidden(t *testing.T) {
+	targetID := uuid.New()
+	h := &UserHandler{userService: &mockUserService{}, resolver: &mockUserResolver{getUserByUsername: func(context.Context, string) (*entity.User, error) {
+		return sampleUser(targetID), nil
+	}}}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/users/johndoe?by=username", nil)
+	req = withChiParam(req, "userKey", "johndoe")
+	req = withUserID(req, uuid.New())
+	w := httptest.NewRecorder()
+	h.GetUser(w, req)
+	assertStatus(t, w, http.StatusForbidden)
 }
 
 // --------------------------------------------------------------------------

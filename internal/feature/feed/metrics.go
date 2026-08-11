@@ -21,7 +21,13 @@ type feedMetrics struct {
 	fanoutProcessed       atomic.Uint64
 	fanoutErrors          atomic.Uint64
 	fanoutCapped          atomic.Uint64
+	fanoutFollowers       atomic.Uint64
+	fanoutAttempted       atomic.Uint64
+	fanoutSucceeded       atomic.Uint64
+	fanoutFailed          atomic.Uint64
 	fanoutLatencyMsTotal  atomic.Uint64
+	outboxRetries         atomic.Uint64
+	outboxDeadLetters     atomic.Uint64
 	redisMemoryPressure   atomic.Uint64
 }
 
@@ -39,7 +45,13 @@ type MetricsSnapshot struct {
 	FanoutProcessed       uint64 `json:"fanout_processed"`
 	FanoutErrors          uint64 `json:"fanout_errors"`
 	FanoutCapped          uint64 `json:"fanout_capped"`
+	FanoutFollowers       uint64 `json:"fanout_followers"`
+	FanoutAttempted       uint64 `json:"fanout_attempted"`
+	FanoutSucceeded       uint64 `json:"fanout_succeeded"`
+	FanoutFailed          uint64 `json:"fanout_failed"`
 	FanoutLatencyMsTotal  uint64 `json:"fanout_latency_ms_total"`
+	OutboxRetries         uint64 `json:"outbox_retries"`
+	OutboxDeadLetters     uint64 `json:"outbox_dead_letters"`
 	RedisMemoryPressure   uint64 `json:"redis_memory_pressure"`
 }
 
@@ -58,7 +70,13 @@ func SnapshotMetrics() MetricsSnapshot {
 		FanoutProcessed:       metrics.fanoutProcessed.Load(),
 		FanoutErrors:          metrics.fanoutErrors.Load(),
 		FanoutCapped:          metrics.fanoutCapped.Load(),
+		FanoutFollowers:       metrics.fanoutFollowers.Load(),
+		FanoutAttempted:       metrics.fanoutAttempted.Load(),
+		FanoutSucceeded:       metrics.fanoutSucceeded.Load(),
+		FanoutFailed:          metrics.fanoutFailed.Load(),
 		FanoutLatencyMsTotal:  metrics.fanoutLatencyMsTotal.Load(),
+		OutboxRetries:         metrics.outboxRetries.Load(),
+		OutboxDeadLetters:     metrics.outboxDeadLetters.Load(),
 		RedisMemoryPressure:   metrics.redisMemoryPressure.Load(),
 	}
 }
@@ -96,6 +114,25 @@ func ObserveFanoutProcessed(duration time.Duration) {
 func CountFanoutError() { metrics.fanoutErrors.Add(1) }
 
 func CountFanoutCapped() { metrics.fanoutCapped.Add(1) }
+
+func ObserveFanoutDelivery(followers, attempted, succeeded, failed int) {
+	if followers > 0 {
+		metrics.fanoutFollowers.Add(uint64(followers))
+	}
+	if attempted > 0 {
+		metrics.fanoutAttempted.Add(uint64(attempted))
+	}
+	if succeeded > 0 {
+		metrics.fanoutSucceeded.Add(uint64(succeeded))
+	}
+	if failed > 0 {
+		metrics.fanoutFailed.Add(uint64(failed))
+	}
+}
+
+func CountOutboxRetry() { metrics.outboxRetries.Add(1) }
+
+func CountOutboxDeadLetter() { metrics.outboxDeadLetters.Add(1) }
 
 // ObserveRedisError records Redis memory-pressure signals when Redis exposes them.
 func ObserveRedisError(err error) {

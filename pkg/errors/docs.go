@@ -1,2 +1,3 @@
-// Package errors defines application error types, codes, and HTTP serialization helpers.
+// Package errors defines immutable application error values, codes, safe panic
+// recovery, and HTTP serialization helpers.
 package errors

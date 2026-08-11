@@ -28,8 +28,8 @@ type mockProfileService struct {
 	getMyProfile       func(ctx context.Context, userID uuid.UUID) (*entity.User, error)
 	getProfileByUserID func(ctx context.Context, userID uuid.UUID) (*entity.User, error)
 	updateMyProfile    func(ctx context.Context, userID uuid.UUID, req *dto.UpdateProfileRequest) (*entity.User, error)
-	uploadAvatar       func(ctx context.Context, userID uuid.UUID, r io.Reader, size int64, contentType string, ext string) (*entity.User, error)
-	uploadCover        func(ctx context.Context, userID uuid.UUID, r io.Reader, size int64, contentType string, ext string) (*entity.User, error)
+	uploadAvatar       func(ctx context.Context, userID uuid.UUID, r io.Reader, size int64) (*entity.User, error)
+	uploadCover        func(ctx context.Context, userID uuid.UUID, r io.Reader, size int64) (*entity.User, error)
 }
 
 func (m *mockProfileService) GetMyProfile(ctx context.Context, userID uuid.UUID) (*entity.User, error) {
@@ -50,15 +50,15 @@ func (m *mockProfileService) UpdateMyProfile(ctx context.Context, userID uuid.UU
 	}
 	return nil, errors.ErrInternal
 }
-func (m *mockProfileService) UploadAvatar(ctx context.Context, userID uuid.UUID, r io.Reader, size int64, contentType string, ext string) (*entity.User, error) {
+func (m *mockProfileService) UploadAvatar(ctx context.Context, userID uuid.UUID, r io.Reader, size int64) (*entity.User, error) {
 	if m.uploadAvatar != nil {
-		return m.uploadAvatar(ctx, userID, r, size, contentType, ext)
+		return m.uploadAvatar(ctx, userID, r, size)
 	}
 	return nil, errors.ErrInternal
 }
-func (m *mockProfileService) UploadCover(ctx context.Context, userID uuid.UUID, r io.Reader, size int64, contentType string, ext string) (*entity.User, error) {
+func (m *mockProfileService) UploadCover(ctx context.Context, userID uuid.UUID, r io.Reader, size int64) (*entity.User, error) {
 	if m.uploadCover != nil {
-		return m.uploadCover(ctx, userID, r, size, contentType, ext)
+		return m.uploadCover(ctx, userID, r, size)
 	}
 	return nil, errors.ErrInternal
 }
@@ -390,7 +390,7 @@ func TestGetUserProfile_IsFollowingEnriched(t *testing.T) {
 func TestUploadAvatar_Success(t *testing.T) {
 	userID := uuid.New()
 	svc := &mockProfileService{
-		uploadAvatar: func(_ context.Context, id uuid.UUID, _ io.Reader, _ int64, _, _ string) (*entity.User, error) {
+		uploadAvatar: func(_ context.Context, id uuid.UUID, _ io.Reader, _ int64) (*entity.User, error) {
 			return sampleUserFull(id), nil
 		},
 	}
@@ -434,7 +434,7 @@ func TestUploadAvatar_MissingFile(t *testing.T) {
 func TestUploadAvatar_ServiceError(t *testing.T) {
 	userID := uuid.New()
 	svc := &mockProfileService{
-		uploadAvatar: func(_ context.Context, _ uuid.UUID, _ io.Reader, _ int64, _, _ string) (*entity.User, error) {
+		uploadAvatar: func(_ context.Context, _ uuid.UUID, _ io.Reader, _ int64) (*entity.User, error) {
 			return nil, errors.NewBadRequestError("unsupported file type")
 		},
 	}
@@ -456,7 +456,7 @@ func TestUploadAvatar_ServiceError(t *testing.T) {
 func TestUploadCover_Success(t *testing.T) {
 	userID := uuid.New()
 	svc := &mockProfileService{
-		uploadCover: func(_ context.Context, id uuid.UUID, _ io.Reader, _ int64, _, _ string) (*entity.User, error) {
+		uploadCover: func(_ context.Context, id uuid.UUID, _ io.Reader, _ int64) (*entity.User, error) {
 			return sampleUserFull(id), nil
 		},
 	}
@@ -500,7 +500,7 @@ func TestUploadCover_MissingFile(t *testing.T) {
 func TestUploadCover_ServiceError(t *testing.T) {
 	userID := uuid.New()
 	svc := &mockProfileService{
-		uploadCover: func(_ context.Context, _ uuid.UUID, _ io.Reader, _ int64, _, _ string) (*entity.User, error) {
+		uploadCover: func(_ context.Context, _ uuid.UUID, _ io.Reader, _ int64) (*entity.User, error) {
 			return nil, errors.NewBadRequestError("unsupported file type")
 		},
 	}
