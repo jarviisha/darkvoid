@@ -126,7 +126,8 @@ func OptionalAuth(jwtService *jwt.Service) func(http.Handler) http.Handler {
 				userID, err := uuid.Parse(claims.Subject)
 				if err == nil {
 					ctx = httputil.WithUserID(ctx, userID)
-					logger.Debug(ctx, "optional auth: user authenticated", "user_id", userID)
+					ctx = logger.WithUserID(ctx, userID.String())
+					logger.Debug(ctx, "optional auth: user authenticated")
 				} else {
 					logger.Debug(ctx, "optional auth: invalid user ID format", "subject", claims.Subject)
 				}

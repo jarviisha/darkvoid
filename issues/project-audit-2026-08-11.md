@@ -51,6 +51,7 @@ Các finding P2 đã được sửa trong worktree ngày 2026-08-11:
 | P2-02 | Resolved | Access token chỉ chấp nhận HS256 và bắt buộc đúng issuer, audience, expiration; thêm cấu hình `JWT_AUDIENCE` cùng security regression tests cho cả validator chuẩn và custom claims |
 | P2-03 | Resolved | Forwarded client IP chỉ được nhận từ `TRUSTED_PROXY_CIDRS`; chuỗi proxy được duyệt từ phải sang trái, header lỗi fail-closed và production Compose chỉ bind loopback theo mặc định |
 | P2-04 | Resolved | Common responses có `nosniff`, anti-frame, no-referrer và Permissions Policy; API/health/metrics dùng CSP khóa resource context, static upload dùng CSP sandbox riêng, Swagger giữ policy tương thích UI |
+| P2-05 | Resolved | Access middleware tạo request-scoped state đồng bộ; required/optional auth cập nhật `user_id` qua cùng pointer để final access log luôn đọc được identity sau khi handler hoàn tất |
 
 Tác động triển khai của P2:
 
@@ -570,11 +571,13 @@ Khuyến nghị thêm middleware security headers và có cấu hình riêng cho
 
 ---
 
-### P2-05: Access log không nhận được auth-enriched context
+### P2-05: Access log không nhận được auth-enriched context — Resolved
 
 **Mức độ:** Medium
 
-Comment nói access logger lấy logger mới nhất có `user_id`, nhưng middleware ngoài vẫn đọc context của request mà nó giữ tại [`pkg/logger/middleware.go:37`](../pkg/logger/middleware.go#L37). `r.WithContext` trong middleware phía trong không thay đổi request của middleware phía ngoài.
+> Đã sửa bằng request-scoped state pointer được tạo ở access middleware và chia sẻ qua mọi derived context. `logger.WithUserID` cập nhật state dưới lock đồng thời enrich context logger; final access log đọc state sau khi handler hoàn tất. Cả required và optional auth đều dùng cùng đường cập nhật và có integration tests. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, comment nói access logger lấy logger mới nhất có `user_id`, nhưng middleware ngoài vẫn đọc context của request mà nó giữ tại [`pkg/logger/middleware.go:37`](../pkg/logger/middleware.go#L37). `r.WithContext` trong middleware phía trong không thay đổi request của middleware phía ngoài.
 
 Ảnh hưởng: access log có thể thiếu `user_id`, làm giảm khả năng điều tra sự cố.
 

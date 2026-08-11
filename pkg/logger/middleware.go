@@ -28,22 +28,30 @@ func HTTPMiddleware(logger *Logger) func(http.Handler) http.Handler {
 			// Inject a request-scoped logger with only request_id.
 			// method/path/etc. are NOT added here to avoid duplicate fields in the
 			// final LogRequest call below.
+			state := &requestState{}
 			ctx := WithLogger(r.Context(), logger.With("request_id", requestID))
+			ctx = withRequestState(ctx, state)
 			r = r.WithContext(ctx)
 
 			wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 			next.ServeHTTP(wrapped, r)
 
-			// Single access-log entry written after the handler completes.
-			// FromContext picks up the latest logger (which may have user_id added
-			// by auth middleware during the request).
+			// Single access-log entry written after the handler completes. Auth
+			// middleware updates the shared request state because its derived
+			// context cannot replace the outer middleware's request context.
+			attrs := []any{
+				"remote_addr", r.RemoteAddr,
+				"user_agent", r.UserAgent(),
+			}
+			if userID := state.getUserID(); userID != "" {
+				attrs = append(attrs, "user_id", userID)
+			}
 			FromContext(r.Context()).LogRequest(
 				r.Method,
 				r.URL.Path,
 				wrapped.statusCode,
 				float64(time.Since(start).Milliseconds()),
-				"remote_addr", r.RemoteAddr,
-				"user_agent", r.UserAgent(),
+				attrs...,
 			)
 		})
 	}
