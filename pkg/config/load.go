@@ -85,6 +85,7 @@ func loadJWTConfig() JWTConfig {
 	return JWTConfig{
 		Secret:            getEnv("JWT_SECRET", ""),
 		Issuer:            getEnv("JWT_ISSUER", "darkvoid"),
+		Audience:          getEnv("JWT_AUDIENCE", "darkvoid-api"),
 		AccessTokenExpiry: getEnvDuration("JWT_ACCESS_TOKEN_EXPIRY", 15*time.Minute),
 	}
 }

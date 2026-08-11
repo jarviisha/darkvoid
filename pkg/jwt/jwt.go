@@ -30,6 +30,7 @@ func (s *Service) GenerateToken(subject string) (string, error) {
 
 	claims := &Claims{
 		Issuer:    s.cfg.Issuer,
+		Audience:  jwt.ClaimStrings{s.cfg.Audience},
 		Subject:   subject,
 		IssuedAt:  jwt.NewNumericDate(now),
 		ExpiresAt: jwt.NewNumericDate(now.Add(s.cfg.Expiry)),
@@ -60,13 +61,7 @@ func (s *Service) GenerateTokenWithClaims(claims jwt.Claims) (string, error) {
 
 // ValidateToken validates a token and returns the claims
 func (s *Service) ValidateToken(tokenString string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (any, error) {
-		// Validate signing method
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("jwt: unexpected signing method: %v", token.Header["alg"])
-		}
-		return s.cfg.Secret, nil
-	})
+	token, err := s.parseWithClaims(tokenString, &Claims{})
 
 	if err != nil {
 		return nil, s.mapError(err)
@@ -82,13 +77,7 @@ func (s *Service) ValidateToken(tokenString string) (*Claims, error) {
 
 // ValidateTokenWithClaims validates a token with custom claims type
 func (s *Service) ValidateTokenWithClaims(tokenString string, claims jwt.Claims) error {
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
-		// Validate signing method
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("jwt: unexpected signing method: %v", token.Header["alg"])
-		}
-		return s.cfg.Secret, nil
-	})
+	token, err := s.parseWithClaims(tokenString, claims)
 
 	if err != nil {
 		return s.mapError(err)
@@ -99,6 +88,20 @@ func (s *Service) ValidateTokenWithClaims(tokenString string, claims jwt.Claims)
 	}
 
 	return nil
+}
+
+func (s *Service) parseWithClaims(tokenString string, claims jwt.Claims) (*jwt.Token, error) {
+	return jwt.ParseWithClaims(
+		tokenString,
+		claims,
+		func(_ *jwt.Token) (any, error) {
+			return s.cfg.Secret, nil
+		},
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithIssuer(s.cfg.Issuer),
+		jwt.WithAudience(s.cfg.Audience),
+		jwt.WithExpirationRequired(),
+	)
 }
 
 // ParseToken parses a token without validating it (for debugging/inspection)

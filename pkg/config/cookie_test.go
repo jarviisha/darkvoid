@@ -98,7 +98,7 @@ func validCookieConfig() *Config {
 	cfg.Logger = LoggerConfig{Level: "info", Format: "json"}
 	cfg.Server = ServerConfig{Port: 8080}
 	cfg.Cookie = CookieConfig{SameSite: "lax", Secure: true}
-	cfg.JWT = JWTConfig{Secret: "secret", Issuer: "darkvoid", AccessTokenExpiry: 15 * 60 * 1e9}
+	cfg.JWT = JWTConfig{Secret: "secret", Issuer: "darkvoid", Audience: "darkvoid-api", AccessTokenExpiry: 15 * 60 * 1e9}
 	cfg.RefreshToken = RefreshTokenConfig{Expiry: 24 * 60 * 60 * 1e9}
 	cfg.Storage = StorageConfig{Provider: "local", LocalDir: "./uploads"}
 	cfg.FeedFanout = FeedFanoutConfig{Workers: 1, QueueSize: 1}

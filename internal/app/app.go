@@ -278,12 +278,11 @@ func (app *Application) codohueEventsClient() *pkgredis.Client {
 func (app *Application) setupJWT() error {
 	app.log.Info("initializing JWT service")
 
-	// TODO: Get JWT secret from config or environment
-	// For now using a placeholder - CHANGE THIS IN PRODUCTION!
 	jwtConfig := jwt.Config{
-		Secret: []byte(app.cfg.JWT.Secret),
-		Issuer: app.cfg.JWT.Issuer,
-		Expiry: app.cfg.JWT.AccessTokenExpiry,
+		Secret:   []byte(app.cfg.JWT.Secret),
+		Issuer:   app.cfg.JWT.Issuer,
+		Audience: app.cfg.JWT.Audience,
+		Expiry:   app.cfg.JWT.AccessTokenExpiry,
 	}
 
 	jwtService, err := jwt.NewService(jwtConfig)
@@ -295,6 +294,7 @@ func (app *Application) setupJWT() error {
 
 	app.log.Info("JWT service initialized",
 		"issuer", jwtConfig.Issuer,
+		"audience", jwtConfig.Audience,
 		"expiry", jwtConfig.Expiry,
 	)
 

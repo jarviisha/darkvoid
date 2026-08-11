@@ -262,6 +262,7 @@ func (c CookieConfig) SameSiteMode() http.SameSite {
 type JWTConfig struct {
 	Secret            string
 	Issuer            string
+	Audience          string
 	AccessTokenExpiry time.Duration
 }
 
@@ -374,6 +375,9 @@ func (c *Config) Validate() error {
 	}
 	if c.JWT.Issuer == "" {
 		return fmt.Errorf("JWT issuer is required")
+	}
+	if c.JWT.Audience == "" {
+		return fmt.Errorf("JWT audience is required")
 	}
 	if c.JWT.AccessTokenExpiry <= 0 {
 		return fmt.Errorf("JWT access token expiry must be positive")

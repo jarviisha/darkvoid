@@ -48,6 +48,11 @@ Các finding P2 đã được sửa trong worktree ngày 2026-08-11:
 | ID | Trạng thái | Thay đổi chính |
 |---|---|---|
 | P2-01 | Resolved | Mọi JSON handler dùng decoder chung với body limit 1 MiB, từ chối field lạ và nhiều JSON document, đồng thời trả lỗi syntax/type/size theo một contract thống nhất |
+| P2-02 | Resolved | Access token chỉ chấp nhận HS256 và bắt buộc đúng issuer, audience, expiration; thêm cấu hình `JWT_AUDIENCE` cùng security regression tests cho cả validator chuẩn và custom claims |
+
+Tác động triển khai của P2:
+
+- `JWT_AUDIENCE` mặc định là `darkvoid-api`; mọi API instance phải dùng cùng giá trị. Access token cũ không có claim `aud` sẽ bị từ chối sau khi deploy và client cần dùng refresh token để lấy access token mới; refresh token không bị ảnh hưởng.
 
 Tác động triển khai của P1:
 
@@ -518,11 +523,13 @@ Khuyến nghị tạo helper chung:
 
 ---
 
-### P2-02: JWT validation chấp nhận mọi HMAC algorithm
+### P2-02: JWT validation chấp nhận mọi HMAC algorithm — Resolved
 
 **Mức độ:** Medium
 
-JWT được ký bằng HS256 nhưng validate chỉ yêu cầu token method thuộc nhóm HMAC: [`pkg/jwt/jwt.go:61`](../pkg/jwt/jwt.go#L61), [`pkg/jwt/jwt.go:83`](../pkg/jwt/jwt.go#L83).
+> Đã sửa bằng parser policy chỉ cho phép chính xác HS256 và bắt buộc `iss`, `aud`, `exp` khớp cấu hình. Token mới luôn mang audience; cả `ValidateToken` và `ValidateTokenWithClaims` dùng chung policy. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, JWT được ký bằng HS256 nhưng validate chỉ yêu cầu token method thuộc nhóm HMAC: [`pkg/jwt/jwt.go:61`](../pkg/jwt/jwt.go#L61), [`pkg/jwt/jwt.go:83`](../pkg/jwt/jwt.go#L83).
 
 Khuyến nghị:
 
