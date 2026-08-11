@@ -53,6 +53,7 @@ Các finding P2 đã được sửa trong worktree ngày 2026-08-11:
 | P2-04 | Resolved | Common responses có `nosniff`, anti-frame, no-referrer và Permissions Policy; API/health/metrics dùng CSP khóa resource context, static upload dùng CSP sandbox riêng, Swagger giữ policy tương thích UI |
 | P2-05 | Resolved | Access middleware tạo request-scoped state đồng bộ; required/optional auth cập nhật `user_id` qua cùng pointer để final access log luôn đọc được identity sau khi handler hoàn tất |
 | P2-06 | Resolved | JSON response được encode hoàn chỉnh vào buffer trước khi commit status; lỗi encode trả contract `INTERNAL_ERROR` sạch với HTTP 500 |
+| P2-07 | Resolved | Feed service chỉ còn điều phối; timeline, mixed blend, trending, discovery, follow resolution và enrichment được tách thành component riêng, cursor transition có table-driven tests |
 
 Tác động triển khai của P2:
 
@@ -598,11 +599,13 @@ Khuyến nghị encode vào buffer trước khi commit header, hoặc chỉ log 
 
 ---
 
-### P2-07: Feed service quá lớn và gộp nhiều trách nhiệm
+### P2-07: Feed service quá lớn và gộp nhiều trách nhiệm — Resolved
 
 **Mức độ:** Medium
 
-`internal/feature/feed/service/feed_service.go` dài khoảng 962 dòng, đang xử lý:
+> Đã tách `FeedService` thành coordinator 163 dòng và các component chuyên trách: `timelineReader`, `mixedFeedBuilder`, `trendingSource`, `discoveryReader`, `followingResolver`, `feedEnricher`. Public constructor/API không đổi; singleflight thuộc về từng source, cursor transition là hàm thuần và có table-driven tests bên cạnh characterization suite hiện có. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, `internal/feature/feed/service/feed_service.go` dài 1.031 dòng và xử lý:
 
 - Timeline rollout và cache.
 - Timeline refresh/fallback.
