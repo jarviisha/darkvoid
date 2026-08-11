@@ -404,6 +404,8 @@ func (app *Application) registerRoutes() {
 	//
 	// Group B (with timeout): all regular REST endpoints.
 	router.Route("/api/v1", func(r chi.Router) {
+		r.Use(middleware.APIHeaders)
+
 		// Group A — SSE, no request timeout
 		r.Group(func(r chi.Router) {
 			app.Notification.RegisterSSERoute(r, auth)

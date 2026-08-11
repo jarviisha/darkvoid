@@ -75,10 +75,10 @@ func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis
 	// connections like SSE streams can opt out.
 
 	// Health check endpoint
-	router.Get("/health", s.healthCheckHandler)
+	router.With(appmiddleware.APIHeaders).Get("/health", s.healthCheckHandler)
 
 	// Metrics endpoint
-	router.Get("/metrics", s.metricsHandler)
+	router.With(appmiddleware.APIHeaders).Get("/metrics", s.metricsHandler)
 
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),

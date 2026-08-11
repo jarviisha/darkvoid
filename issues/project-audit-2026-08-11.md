@@ -50,6 +50,7 @@ Các finding P2 đã được sửa trong worktree ngày 2026-08-11:
 | P2-01 | Resolved | Mọi JSON handler dùng decoder chung với body limit 1 MiB, từ chối field lạ và nhiều JSON document, đồng thời trả lỗi syntax/type/size theo một contract thống nhất |
 | P2-02 | Resolved | Access token chỉ chấp nhận HS256 và bắt buộc đúng issuer, audience, expiration; thêm cấu hình `JWT_AUDIENCE` cùng security regression tests cho cả validator chuẩn và custom claims |
 | P2-03 | Resolved | Forwarded client IP chỉ được nhận từ `TRUSTED_PROXY_CIDRS`; chuỗi proxy được duyệt từ phải sang trái, header lỗi fail-closed và production Compose chỉ bind loopback theo mặc định |
+| P2-04 | Resolved | Common responses có `nosniff`, anti-frame, no-referrer và Permissions Policy; API/health/metrics dùng CSP khóa resource context, static upload dùng CSP sandbox riêng, Swagger giữ policy tương thích UI |
 
 Tác động triển khai của P2:
 
@@ -557,11 +558,13 @@ Khuyến nghị:
 
 ---
 
-### P2-04: Thiếu security headers
+### P2-04: Thiếu security headers — Resolved
 
 **Mức độ:** Medium
 
-Không thấy middleware thiết lập CSP, `X-Content-Type-Options`, `Referrer-Policy` hoặc các header bảo vệ liên quan. Rủi ro tăng lên vì static user uploads được phục vụ cùng origin.
+> Đã sửa bằng browser policy tách theo response boundary. Header chung áp dụng `nosniff`, anti-frame, no-referrer và Permissions Policy; `/api/v1`, `/health`, `/metrics` nhận CSP `default-src 'none'` cùng khóa base/form/frame; `/static` nhận CSP sandbox riêng. Swagger UI không nhận CSP khóa script/style nhưng vẫn nhận các header chung. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, không thấy middleware thiết lập CSP, `X-Content-Type-Options`, `Referrer-Policy` hoặc các header bảo vệ liên quan. Rủi ro tăng lên vì static user uploads được phục vụ cùng origin.
 
 Khuyến nghị thêm middleware security headers và có cấu hình riêng cho API/static upload.
 
