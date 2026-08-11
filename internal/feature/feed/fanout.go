@@ -51,6 +51,16 @@ func (w *FanoutWorker) HandleFeedEvent(ctx context.Context, event Event) error {
 	switch event.Type {
 	case EventPostCreated:
 		return w.handlePostCreated(ctx, event)
+	case EventPostDeleted:
+		return w.handlePostRemoved(ctx, event)
+	case EventVisibilityChanged:
+		if event.Visibility == "private" {
+			if err := w.handlePostRemoved(ctx, event); err != nil {
+				return err
+			}
+			return w.timeline.AddPost(ctx, event.AuthorID, TimelineEntry{PostID: event.PostID, Score: event.Score})
+		}
+		return w.handlePostCreated(ctx, event)
 	case EventFollowCreated, EventFollowDeleted:
 		return w.handleFollowChanged(ctx, event)
 	default:
@@ -77,20 +87,17 @@ func (w *FanoutWorker) handleFollowChanged(ctx context.Context, event Event) err
 }
 
 func (w *FanoutWorker) handlePostCreated(ctx context.Context, event Event) error {
-	// A private post never hydrates on the read path (the batch post query
-	// filters it out), so writing it anywhere would only plant entries that
-	// read as permanently stale.
 	if event.Visibility == "private" {
-		return nil
+		return w.timeline.AddPost(ctx, event.AuthorID, TimelineEntry{PostID: event.PostID, Score: event.Score})
 	}
 	start := time.Now()
-	followers, err := w.followerReader.GetFollowerIDs(ctx, event.AuthorID)
+	followerCap := w.maxFollowers()
+	followers, err := w.followerReader.GetFollowerIDs(ctx, event.AuthorID, followerCap+1)
 	if err != nil {
 		CountFanoutError()
 		return fmt.Errorf("get follower IDs: %w", err)
 	}
 	originalFollowerCount := len(followers)
-	followerCap := w.maxFollowers()
 	if len(followers) > followerCap {
 		followers = followers[:followerCap]
 		CountFanoutCapped()
@@ -126,13 +133,35 @@ func (w *FanoutWorker) handlePostCreated(ctx context.Context, event Event) error
 	}
 	duration := time.Since(start)
 	ObserveFanoutProcessed(duration)
-	// Surface error when nothing was successfully delivered AND we hit a real
-	// failure along the way — covers both "all writes failed" and "ctx cancelled
-	// before any write completed". A pure no-op (e.g. zero non-nil followers)
-	// stays a success.
-	if succeeded == 0 && lastErr != nil {
-		return fmt.Errorf("fanout post %s: %d attempted, 0 succeeded: %w", event.PostID, attempted, lastErr)
+	ObserveFanoutDelivery(originalFollowerCount, attempted, succeeded, failed)
+	// Any partial failure must keep the durable outbox event pending. Replaying
+	// successful recipients is safe because AddPost is an idempotent ZADD NX;
+	// accepting partial success here would permanently omit the failed users.
+	if lastErr != nil {
+		return fmt.Errorf("fanout post %s: %d attempted, %d succeeded, %d failed: %w", event.PostID, attempted, succeeded, failed, lastErr)
 	}
 	logger.Info(ctx, "fanout post processed", "post_id", event.PostID, "author_id", event.AuthorID, "followers", len(followers), "succeeded", succeeded, "failed", failed, "duration_ms", duration.Milliseconds())
+	return nil
+}
+
+func (w *FanoutWorker) handlePostRemoved(ctx context.Context, event Event) error {
+	followerCap := w.maxFollowers()
+	followers, err := w.followerReader.GetFollowerIDs(ctx, event.AuthorID, followerCap+1)
+	if err != nil {
+		return fmt.Errorf("get follower IDs for timeline removal: %w", err)
+	}
+	if len(followers) > followerCap {
+		followers = followers[:followerCap]
+	}
+	recipients := append([]uuid.UUID{event.AuthorID}, followers...)
+	var lastErr error
+	for _, recipientID := range recipients {
+		if err := w.timeline.RemovePostBestEffort(ctx, recipientID, event.PostID); err != nil {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return fmt.Errorf("remove post %s from timelines: %w", event.PostID, lastErr)
+	}
 	return nil
 }

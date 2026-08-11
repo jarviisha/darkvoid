@@ -2237,13 +2237,8 @@ paths:
   /notifications/stream:
     get:
       description: Open a Server-Sent Events stream for real-time notifications. Pass
-        JWT via Authorization header or ?token= query parameter.
+        JWT via the Authorization header.
       operationId: streamNotifications
-      parameters:
-      - description: JWT access token (alternative to Authorization header)
-        in: query
-        name: token
-        type: string
       produces:
       - text/event-stream
       responses:
@@ -2830,7 +2825,8 @@ paths:
       tags:
       - users
     get:
-      description: Retrieve a user's information by UUID or username (with ?by=username)
+      description: Retrieve the authenticated user's account information by UUID or
+        username (with ?by=username)
       operationId: getUser
       parameters:
       - description: User ID (UUID) or username

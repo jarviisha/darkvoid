@@ -125,8 +125,23 @@ type mockLikeRepo struct {
 	like            func(ctx context.Context, userID, postID uuid.UUID) error
 	unlike          func(ctx context.Context, userID, postID uuid.UUID) error
 	isLiked         func(ctx context.Context, userID, postID uuid.UUID) (bool, error)
+	toggle          func(ctx context.Context, userID, postID uuid.UUID) (bool, error)
 	count           func(ctx context.Context, postID uuid.UUID) (int64, error)
 	getLikedPostIDs func(ctx context.Context, userID uuid.UUID, postIDs []uuid.UUID) ([]uuid.UUID, error)
+}
+
+func (m *mockLikeRepo) Toggle(ctx context.Context, userID, postID uuid.UUID) (bool, error) {
+	if m.toggle != nil {
+		return m.toggle(ctx, userID, postID)
+	}
+	liked, err := m.IsLiked(ctx, userID, postID)
+	if err != nil {
+		return false, err
+	}
+	if liked {
+		return false, m.Unlike(ctx, userID, postID)
+	}
+	return true, m.Like(ctx, userID, postID)
 }
 
 func (m *mockLikeRepo) Like(ctx context.Context, userID, postID uuid.UUID) error {

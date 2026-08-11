@@ -19,6 +19,7 @@ func (app *Application) setupFeedContext(store storage.Storage) *codohue.Client 
 
 	var codohueClient *codohue.Client
 	app.Feed, codohueClient = SetupFeedContext(
+		app.pool,
 		store,
 		postReader, followReader, likeReader,
 		app.redis, app.codohueEventsClient(),
@@ -38,7 +39,9 @@ func (app *Application) wireFeedDependencies() {
 	app.User.WireFeedInvalidator(feedPorts.Cache)
 	app.Post.WireFeedCacheInvalidator(feedPorts.Cache)
 	app.Post.WireFeedEventEmitter(feedPorts.Dispatcher)
+	app.Post.WireFeedEventOutbox(&feedEventOutbox{outbox: feedPorts.Outbox})
 	app.User.WireFeedEventEmitter(feedPorts.Dispatcher)
+	app.User.WireFeedEventOutbox(&feedEventOutbox{outbox: feedPorts.Outbox})
 	app.log.Info("feed cache wired into follow and post services")
 }
 

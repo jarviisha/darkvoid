@@ -38,6 +38,7 @@ type Broker struct {
 	mu      sync.RWMutex
 	clients map[uuid.UUID]map[*client]struct{} // userID → set of clients
 	redis   *pkgredis.Client                   // required
+	closed  bool
 }
 
 // NewBroker creates a new notification broker. redis must be non-nil.
@@ -57,6 +58,11 @@ func (b *Broker) Subscribe(ctx context.Context, userID uuid.UUID) (<-chan Event,
 	}
 
 	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		c.close()
+		return c.ch, func() {}
+	}
 	if b.clients[userID] == nil {
 		b.clients[userID] = make(map[*client]struct{})
 	}
@@ -69,8 +75,8 @@ func (b *Broker) Subscribe(ctx context.Context, userID uuid.UUID) (<-chan Event,
 		if len(b.clients[userID]) == 0 {
 			delete(b.clients, userID)
 		}
-		b.mu.Unlock()
 		c.close()
+		b.mu.Unlock()
 	}
 
 	return c.ch, cleanup
@@ -82,11 +88,16 @@ func (b *Broker) Subscribe(ctx context.Context, userID uuid.UUID) (<-chan Event,
 func (b *Broker) Shutdown() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.closed {
+		return
+	}
+	b.closed = true
 	for _, clients := range b.clients {
 		for c := range clients {
 			c.close()
 		}
 	}
+	b.clients = make(map[uuid.UUID]map[*client]struct{})
 }
 
 // Publish sends an event to every SSE client connected for the given userID, on
@@ -110,10 +121,8 @@ func (b *Broker) Publish(ctx context.Context, userID uuid.UUID, evt Event) {
 // deliverLocal fans out an event to all in-memory clients for a user.
 func (b *Broker) deliverLocal(userID uuid.UUID, evt Event) {
 	b.mu.RLock()
-	clients := b.clients[userID]
-	b.mu.RUnlock()
-
-	for c := range clients {
+	defer b.mu.RUnlock()
+	for c := range b.clients[userID] {
 		select {
 		case c.ch <- evt:
 		default:

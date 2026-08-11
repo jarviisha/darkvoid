@@ -10,11 +10,44 @@ import (
 )
 
 type LikeRepository struct {
+	pool    *pgxpool.Pool
 	queries *db.Queries
 }
 
 func NewLikeRepository(pool *pgxpool.Pool) *LikeRepository {
-	return &LikeRepository{queries: db.New(pool)}
+	return &LikeRepository{pool: pool, queries: db.New(pool)}
+}
+
+// Toggle serializes mutations for one (user, post) pair with a transaction-
+// scoped advisory lock, then returns the state committed by that transaction.
+func (r *LikeRepository) Toggle(ctx context.Context, userID, postID uuid.UUID) (bool, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, database.MapDBError(err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	queries := db.New(tx)
+	params := db.LockPostLikeParams{UserID: userID.String(), PostID: postID.String()}
+	err = queries.LockPostLike(ctx, params)
+	if err != nil {
+		return false, database.MapDBError(err)
+	}
+	liked, err := queries.IsLiked(ctx, db.IsLikedParams{UserID: userID, PostID: postID})
+	if err != nil {
+		return false, database.MapDBError(err)
+	}
+	if liked {
+		err = queries.UnlikePost(ctx, db.UnlikePostParams{UserID: userID, PostID: postID})
+	} else {
+		err = queries.LikePost(ctx, db.LikePostParams{UserID: userID, PostID: postID})
+	}
+	if err != nil {
+		return false, database.MapDBError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, database.MapDBError(err)
+	}
+	return !liked, nil
 }
 
 func (r *LikeRepository) Like(ctx context.Context, userID, postID uuid.UUID) error {

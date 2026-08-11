@@ -157,6 +157,10 @@ func (ctx *PostContext) WireFeedEventEmitter(e service.FeedEventEmitter) {
 	ctx.postService.WithFeedEventEmitter(e)
 }
 
+func (ctx *PostContext) WireFeedEventOutbox(outbox service.FeedEventOutbox) {
+	ctx.postService.WithFeedEventOutbox(outbox)
+}
+
 func (ctx *PostContext) WireNotificationEmitter(notif *NotificationContext) {
 	ctx.postService.WithNotificationEmitter(notif.notifService)
 	ctx.likeService.WithNotificationEmitter(notif.notifService)

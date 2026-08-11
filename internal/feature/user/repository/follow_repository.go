@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jarviisha/darkvoid/internal/feature/user/db"
 	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
@@ -16,6 +17,10 @@ type FollowRepository struct {
 
 func NewFollowRepository(pool *pgxpool.Pool) *FollowRepository {
 	return &FollowRepository{queries: db.New(pool)}
+}
+
+func (r *FollowRepository) WithTx(tx pgx.Tx) *FollowRepository {
+	return &FollowRepository{queries: db.New(tx)}
 }
 
 func (r *FollowRepository) Follow(ctx context.Context, followerID, followeeID uuid.UUID) error {

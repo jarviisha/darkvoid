@@ -74,7 +74,6 @@ func (q *Queries) IsLiked(ctx context.Context, arg IsLikedParams) (bool, error) 
 }
 
 const likePost = `-- name: LikePost :exec
-
 INSERT INTO post.likes (user_id, post_id)
 VALUES ($1, $2)
 ON CONFLICT DO NOTHING
@@ -85,9 +84,27 @@ type LikePostParams struct {
 	PostID uuid.UUID `json:"post_id"`
 }
 
-// Like Queries
 func (q *Queries) LikePost(ctx context.Context, arg LikePostParams) error {
 	_, err := q.db.Exec(ctx, likePost, arg.UserID, arg.PostID)
+	return err
+}
+
+const lockPostLike = `-- name: LockPostLike :exec
+
+SELECT pg_advisory_xact_lock(hashtextextended(
+    $1::text || ':' || $2::text,
+    0
+))
+`
+
+type LockPostLikeParams struct {
+	UserID string `json:"user_id"`
+	PostID string `json:"post_id"`
+}
+
+// Like Queries
+func (q *Queries) LockPostLike(ctx context.Context, arg LockPostLikeParams) error {
+	_, err := q.db.Exec(ctx, lockPostLike, arg.UserID, arg.PostID)
 	return err
 }
 

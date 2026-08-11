@@ -74,9 +74,10 @@ type Querier interface {
 	IsCommentLiked(ctx context.Context, arg IsCommentLikedParams) (bool, error)
 	IsLiked(ctx context.Context, arg IsLikedParams) (bool, error)
 	LikeComment(ctx context.Context, arg LikeCommentParams) error
-	// Like Queries
 	LikePost(ctx context.Context, arg LikePostParams) error
 	LinkPostHashtag(ctx context.Context, arg LinkPostHashtagParams) error
+	// Like Queries
+	LockPostLike(ctx context.Context, arg LockPostLikeParams) error
 	SearchHashtagsByPrefix(ctx context.Context, arg SearchHashtagsByPrefixParams) ([]string, error)
 	UnlikeComment(ctx context.Context, arg UnlikeCommentParams) error
 	UnlikePost(ctx context.Context, arg UnlikePostParams) error

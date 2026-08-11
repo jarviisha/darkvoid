@@ -111,6 +111,10 @@ func (m *mockTimelineStore) SetPostsBatch(_ context.Context, userID uuid.UUID, e
 	return nil
 }
 
+func (m *mockTimelineStore) ReplacePosts(_ context.Context, userID uuid.UUID, entries []feed.TimelineEntry, _ time.Time) error {
+	return m.SetPostsBatch(context.Background(), userID, entries)
+}
+
 func (m *mockTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *feed.TimelinePosition, _ int) (*feed.TimelinePage, error) {
 	if m.readCount >= len(m.pages) {
 		m.readCount++
@@ -364,6 +368,29 @@ func TestGetFeed_TimelineFirstOrderingAndCursor(t *testing.T) {
 	}
 }
 
+func TestGetFeed_TimelineExactEndHasNoCursor(t *testing.T) {
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	entries := make([]feed.TimelineEntry, 0, pageSize)
+	for i := 0; i < pageSize; i++ {
+		p := testPost(time.Now().UTC().Add(-time.Duration(i) * time.Minute))
+		p.AuthorID = userID
+		reader.byID[p.ID] = p
+		entries = append(entries, feed.TimelineEntry{PostID: p.ID, Score: feed.PackTimelineScore(30, p.CreatedAt)})
+	}
+	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: entries, HasMore: false}}}
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	svc.WithTimelineStore(store)
+
+	page, next, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != pageSize || next != nil {
+		t.Fatalf("page/cursor = %d/%+v, want exact final page with no cursor", len(page), next)
+	}
+}
+
 func TestGetFeed_TimelinePaginationNoDuplicates(t *testing.T) {
 	now := time.Now().UTC()
 	userID := uuid.New()
@@ -376,7 +403,7 @@ func TestGetFeed_TimelinePaginationNoDuplicates(t *testing.T) {
 		allEntries = append(allEntries, feed.TimelineEntry{PostID: p.ID, Score: feed.PackTimelineScore(30, p.CreatedAt)})
 	}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{
-		{Entries: allEntries[:pageSize]},
+		{Entries: allEntries[:pageSize], HasMore: true},
 		{Entries: allEntries[pageSize:]},
 	}}
 
@@ -445,6 +472,34 @@ func TestGetFeed_TimelineFiltersStaleVisibilityAndFollowState(t *testing.T) {
 	}
 	if len(page) != 1 || page[0].Post.ID != visible.ID {
 		t.Fatalf("expected only visible followed post, got %+v", page)
+	}
+}
+
+func TestGetFeed_StaleTimelineContinuationEndsWithoutSwitchingSource(t *testing.T) {
+	userID := uuid.New()
+	missingPostID := uuid.New()
+	reader := &mockPostReader{
+		byID:     map[uuid.UUID]*feedentity.Post{},
+		discover: []*feedentity.Post{testPost(time.Now().UTC())},
+	}
+	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: []feed.TimelineEntry{
+		{PostID: missingPostID, Score: feed.PackTimelineScore(30, time.Now().UTC())},
+	}}}}
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	svc.WithTimelineStore(store)
+	score := feed.PackTimelineScore(31, time.Now().UTC())
+	cursor := &feed.FeedCursor{
+		TimelineScore:  &score,
+		TimelinePostID: uuid.NewString(),
+		TimelineUser:   userID.String(),
+	}
+
+	page, next, err := svc.GetFeed(context.Background(), userID, cursor)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != 0 || next != nil {
+		t.Fatalf("page/cursor = %d/%+v, want exhausted timeline scroll", len(page), next)
 	}
 }
 
@@ -823,6 +878,35 @@ func TestGetFeed_RecommendationOffsetContinuation(t *testing.T) {
 	}
 }
 
+func TestGetFeed_RecommendationOffsetDoesNotSkipOutrankedItems(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+	for i := 0; i < pageSize; i++ {
+		p := testPost(now.Add(-time.Duration(i) * time.Minute))
+		p.AuthorID = userID
+		reader.following = append(reader.following, p)
+		scores[p.ID] = 1000 - float64(i)
+	}
+	recommended := testPost(now.Add(-time.Hour))
+	recommended.AuthorID = uuid.New()
+	reader.byID[recommended.ID] = recommended
+	svc := newTestService(reader, &mockRanker{scores: scores})
+	svc.WithRecommender(&mockRecommender{items: []feed.RecommendedItem{{ObjectID: recommended.ID.String(), Rank: 1}}})
+
+	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != pageSize || cursor == nil {
+		t.Fatalf("page/cursor = %d/%v", len(page), cursor)
+	}
+	if cursor.RecommendationOffset != 0 {
+		t.Fatalf("recommendation offset = %d, want 0 for unshown candidate", cursor.RecommendationOffset)
+	}
+}
+
 func TestGetFeed_TrendingContinuationNoDuplicates(t *testing.T) {
 	now := time.Now().UTC()
 	userID := uuid.New()
@@ -1127,6 +1211,9 @@ func (emptyTimelineStore) AddPost(_ context.Context, _ uuid.UUID, _ feed.Timelin
 	return nil
 }
 func (emptyTimelineStore) SetPostsBatch(_ context.Context, _ uuid.UUID, _ []feed.TimelineEntry) error {
+	return nil
+}
+func (emptyTimelineStore) ReplacePosts(_ context.Context, _ uuid.UUID, _ []feed.TimelineEntry, _ time.Time) error {
 	return nil
 }
 func (emptyTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *feed.TimelinePosition, _ int) (*feed.TimelinePage, error) {

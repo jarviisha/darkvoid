@@ -12,9 +12,10 @@ const (
 
 // FeedItem is a scored post in the feed.
 type FeedItem struct {
-	Post                *Post
-	Score               float64
-	Source              Source
-	RecommendationScore *float64
-	RecommendationRank  *int
+	Post                 *Post
+	Score                float64
+	Source               Source
+	RecommendationScore  *float64
+	RecommendationRank   *int
+	RecommendationOffset *int
 }

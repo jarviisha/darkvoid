@@ -1,6 +1,7 @@
 package app
 
 import (
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	feedcache "github.com/jarviisha/darkvoid/internal/feature/feed/cache"
 	feedhandler "github.com/jarviisha/darkvoid/internal/feature/feed/handler"
@@ -16,6 +17,7 @@ type FeedContext struct {
 	// Services
 	feedService *feedservice.FeedService
 	dispatcher  *feed.EventDispatcher
+	outbox      *feed.PostgresOutbox
 
 	// Handlers
 	feedHandler *feedhandler.FeedHandler
@@ -32,6 +34,7 @@ type FeedPorts struct {
 	Cache      feedcache.FeedCache
 	Dispatcher *feed.EventDispatcher
 	Settings   *feed.Settings
+	Outbox     *feed.PostgresOutbox
 }
 
 // SetupFeedContext initializes the Feed context with all required dependencies.
@@ -49,6 +52,7 @@ type FeedPorts struct {
 // Returns the FeedContext and a *codohue.Client (nil when Codohue is disabled) so
 // the caller (app.go) can wire Codohue into other contexts.
 func SetupFeedContext(
+	pool *pgxpool.Pool,
 	store storage.Storage,
 	postReader feed.PostReader,
 	followReader feed.FollowGraphReader,
@@ -80,6 +84,8 @@ func SetupFeedContext(
 	// and a channel here, so a stored value could not take effect without
 	// rebuilding the dispatcher. See migrations/settings/000002.
 	dispatcher := feed.NewEventDispatcher(settings, feedFanoutCfg.Workers, feedFanoutCfg.QueueSize, fanoutWorker)
+	outbox := feed.NewPostgresOutbox(pool)
+	dispatcher.WithOutbox(outbox)
 
 	// Wire Codohue recommender and trending fetcher into the feed service when enabled.
 	// Wiring Codohue into other contexts (post services) is the caller's responsibility.
@@ -98,9 +104,10 @@ func SetupFeedContext(
 		feedHandler: feedHdlr,
 		cache:       fc,
 		settings:    settings,
+		outbox:      outbox,
 	}, codohueClient
 }
 
 func (ctx *FeedContext) Ports() FeedPorts {
-	return FeedPorts{Cache: ctx.cache, Dispatcher: ctx.dispatcher, Settings: ctx.settings}
+	return FeedPorts{Cache: ctx.cache, Dispatcher: ctx.dispatcher, Settings: ctx.settings, Outbox: ctx.outbox}
 }

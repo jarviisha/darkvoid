@@ -93,7 +93,7 @@ func TestEventDispatcher_EnqueueSuccess(t *testing.T) {
 	}
 }
 
-func TestEventDispatcher_FullQueueReturnsFalse(t *testing.T) {
+func TestEventDispatcher_FullQueueFallsBackSynchronously(t *testing.T) {
 	dispatcher := &EventDispatcher{
 		settings: NewSettings(DefaultRuntimeSettings()),
 		jobs:     make(chan Event, 1),
@@ -101,8 +101,8 @@ func TestEventDispatcher_FullQueueReturnsFalse(t *testing.T) {
 	}
 	dispatcher.jobs <- Event{Type: EventPostCreated}
 
-	if dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
-		t.Fatal("expected full queue dispatch to return false")
+	if !dispatcher.Dispatch(context.Background(), Event{Type: EventPostCreated}) {
+		t.Fatal("expected full queue dispatch to use the synchronous fallback")
 	}
 }
 

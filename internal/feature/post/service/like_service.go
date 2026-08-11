@@ -87,32 +87,20 @@ func (s *LikeService) Toggle(ctx context.Context, userID, postID uuid.UUID) (boo
 	if err != nil {
 		return false, err
 	}
-	// if p.AuthorID == userID {
-	// 	return false, post.ErrSelfLike
-	// }
+	if p.AuthorID == userID {
+		return false, post.ErrSelfLike
+	}
 
-	// IsLiked + Like/Unlike is not atomic, but safe: LikePost uses ON CONFLICT DO NOTHING
-	// and UnlikePost is an idempotent DELETE, so concurrent requests cannot corrupt state.
-	liked, err := s.likeRepo.IsLiked(ctx, userID, postID)
+	liked, err := s.likeRepo.Toggle(ctx, userID, postID)
 	if err != nil {
-		logger.LogError(ctx, err, "failed to check like status", "user_id", userID, "post_id", postID)
+		logger.LogError(ctx, err, "failed to toggle like", "user_id", userID, "post_id", postID)
 		return false, errors.NewInternalError(err)
 	}
 
-	if liked {
-		if err := s.likeRepo.Unlike(ctx, userID, postID); err != nil {
-			logger.LogError(ctx, err, "failed to unlike post", "user_id", userID, "post_id", postID)
-			return false, errors.NewInternalError(err)
-		}
+	if !liked {
 		s.deleteLikeNotification(ctx, userID, postID)
-		// No behavior event — see Unlike.
 		logger.Info(ctx, "post unliked", "user_id", userID, "post_id", postID)
 		return false, nil
-	}
-
-	if err := s.likeRepo.Like(ctx, userID, postID); err != nil {
-		logger.LogError(ctx, err, "failed to like post", "user_id", userID, "post_id", postID)
-		return false, errors.NewInternalError(err)
 	}
 	s.emitLikeNotification(ctx, userID, p.AuthorID, postID)
 	s.publishBehaviorEvent(ctx, userID, postID, "LIKE", &p.CreatedAt)

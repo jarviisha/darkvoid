@@ -30,7 +30,7 @@ func NewUserHandler(userService *service.UserService, resolver userResolver, sto
 // GetUser godoc
 //
 //	@Summary		Get user by ID or username
-//	@Description	Retrieve a user's information by UUID or username (with ?by=username)
+//	@Description	Retrieve the authenticated user's account information by UUID or username (with ?by=username)
 //	@Tags			users
 //	@Produce		json
 //	@Param			userKey	path		string	true	"User ID (UUID) or username"
@@ -52,6 +52,11 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u := resolved.User
+	currentUserID := httputil.GetUserID(ctx)
+	if currentUserID == nil || resolved.ID != *currentUserID {
+		errors.WriteJSON(w, errors.NewForbiddenError("you can only view your own account details"))
+		return
+	}
 	if u == nil {
 		u, err = h.userService.GetUserByID(ctx, resolved.ID)
 		if err != nil {

@@ -6,7 +6,10 @@
 // from UnixMicro timestamps to packed rank scores — the numeric ranges
 // overlap, so legacy keys are never read again and expire via TTL. Writes have
 // two modes: AddPost (ZADD NX, fan-out — never downgrades a refreshed score)
-// and SetPostsBatch (plain upsert, background re-rank).
+// and SetPostsBatch (plain upsert, background re-rank). Refresher rebuilds use
+// an atomic replacement script that removes stale members while preserving
+// entries whose companion write-time marker shows fanout happened during the
+// database read, including delayed outbox events for older posts.
 //
 // The trim bound and TTL are read from the live feed.Settings snapshot on each
 // write rather than captured when the store is built, so lowering either starts

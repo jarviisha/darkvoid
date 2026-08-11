@@ -83,8 +83,8 @@ func (s *NotificationService) EmitSystemAnnouncement(ctx context.Context, adminI
 		return err
 	}
 
-	if err := s.cache.IncrementUnreadCount(ctx, recipientID); err != nil {
-		logger.LogError(ctx, err, "failed to increment unread count cache", "recipient", recipientID)
+	if err := s.cache.InvalidateUnreadCount(ctx, recipientID); err != nil {
+		logger.LogError(ctx, err, "failed to invalidate unread count cache", "recipient", recipientID)
 	}
 
 	s.publishSSE(ctx, recipientID, n)
@@ -93,9 +93,13 @@ func (s *NotificationService) EmitSystemAnnouncement(ctx context.Context, adminI
 
 // DeleteNotification removes a notification (used for unlike/unfollow).
 func (s *NotificationService) DeleteNotification(ctx context.Context, actorID uuid.UUID, groupKey string) error {
-	if err := s.repo.DeleteByActorAndGroupKey(ctx, actorID, groupKey); err != nil {
+	recipientID, err := s.repo.DeleteByActorAndGroupKey(ctx, actorID, groupKey)
+	if err != nil {
 		logger.LogError(ctx, err, "failed to delete notification", "actor_id", actorID, "group_key", groupKey)
 		return err
+	}
+	if err := s.cache.InvalidateUnreadCount(ctx, recipientID); err != nil {
+		logger.LogError(ctx, err, "failed to invalidate unread count cache", "recipient", recipientID)
 	}
 	return nil
 }
@@ -114,9 +118,10 @@ func (s *NotificationService) emit(ctx context.Context, actorID, recipientID uui
 		return err
 	}
 
-	// Best-effort: increment cached unread count
-	if err := s.cache.IncrementUnreadCount(ctx, recipientID); err != nil {
-		logger.LogError(ctx, err, "failed to increment unread count cache", "recipient", recipientID)
+	// Create is an upsert that may turn an existing row unread again, so a
+	// blind increment cannot represent the resulting database state.
+	if err := s.cache.InvalidateUnreadCount(ctx, recipientID); err != nil {
+		logger.LogError(ctx, err, "failed to invalidate unread count cache", "recipient", recipientID)
 	}
 
 	// Best-effort: push real-time SSE event

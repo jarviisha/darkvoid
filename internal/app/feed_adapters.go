@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
@@ -13,6 +15,28 @@ import (
 	pkgerrors "github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
+
+type feedEventOutbox struct{ outbox *feed.PostgresOutbox }
+
+func (o *feedEventOutbox) EnqueuePostCreated(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error {
+	return o.outbox.Enqueue(ctx, tx, feed.Event{Type: feed.EventPostCreated, PostID: postID, AuthorID: authorID, Visibility: visibility, CreatedAt: createdAt})
+}
+
+func (o *feedEventOutbox) EnqueuePostDeleted(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID) error {
+	return o.outbox.Enqueue(ctx, tx, feed.Event{Type: feed.EventPostDeleted, PostID: postID, AuthorID: authorID})
+}
+
+func (o *feedEventOutbox) EnqueuePostVisibilityChanged(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error {
+	return o.outbox.Enqueue(ctx, tx, feed.Event{Type: feed.EventVisibilityChanged, PostID: postID, AuthorID: authorID, Visibility: visibility, CreatedAt: createdAt})
+}
+
+func (o *feedEventOutbox) EnqueueFollowCreated(ctx context.Context, tx pgx.Tx, followerID, followeeID uuid.UUID) error {
+	return o.outbox.Enqueue(ctx, tx, feed.Event{Type: feed.EventFollowCreated, ActorID: followerID, FolloweeID: followeeID})
+}
+
+func (o *feedEventOutbox) EnqueueFollowDeleted(ctx context.Context, tx pgx.Tx, followerID, followeeID uuid.UUID) error {
+	return o.outbox.Enqueue(ctx, tx, feed.Event{Type: feed.EventFollowDeleted, ActorID: followerID, FolloweeID: followeeID})
+}
 
 // --- Entity conversion ---
 
@@ -261,15 +285,15 @@ type followReader struct {
 
 type feedFollowService interface {
 	GetFollowingIDs(ctx context.Context, targetID uuid.UUID) ([]uuid.UUID, error)
-	GetFollowerIDs(ctx context.Context, targetID uuid.UUID) ([]uuid.UUID, error)
+	GetFollowerIDs(ctx context.Context, targetID uuid.UUID, limit int) ([]uuid.UUID, error)
 }
 
 func (r *followReader) GetFollowingIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
 	return r.followService.GetFollowingIDs(ctx, userID)
 }
 
-func (r *followReader) GetFollowerIDs(ctx context.Context, targetID uuid.UUID) ([]uuid.UUID, error) {
-	return r.followService.GetFollowerIDs(ctx, targetID)
+func (r *followReader) GetFollowerIDs(ctx context.Context, targetID uuid.UUID, limit int) ([]uuid.UUID, error) {
+	return r.followService.GetFollowerIDs(ctx, targetID, limit)
 }
 
 // --- likeReader ---

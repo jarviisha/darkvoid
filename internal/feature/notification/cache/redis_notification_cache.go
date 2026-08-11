@@ -46,22 +46,6 @@ func (c *RedisNotificationCache) SetUnreadCount(ctx context.Context, userID uuid
 	return nil
 }
 
-func (c *RedisNotificationCache) IncrementUnreadCount(ctx context.Context, userID uuid.UUID) error {
-	key := unreadKey(userID)
-	// Only increment if the key already exists (avoids creating stale entries).
-	exists, err := c.client.Exists(ctx, key).Result()
-	if err != nil {
-		return fmt.Errorf("redis exists unread count: %w", err)
-	}
-	if exists == 0 {
-		return nil // cache miss, no-op
-	}
-	if err := c.client.Incr(ctx, key).Err(); err != nil {
-		return fmt.Errorf("redis incr unread count: %w", err)
-	}
-	return nil
-}
-
 func (c *RedisNotificationCache) InvalidateUnreadCount(ctx context.Context, userID uuid.UUID) error {
 	if err := c.client.Del(ctx, unreadKey(userID)).Err(); err != nil {
 		return fmt.Errorf("redis del unread count: %w", err)

@@ -25,11 +25,36 @@ func NewRefreshTokenRepository(pool *pgxpool.Pool) *RefreshTokenRepository {
 
 func (r *RefreshTokenRepository) Create(ctx context.Context, token string, userID uuid.UUID, expiresAt time.Time) (*entity.RefreshToken, error) {
 	dbToken, err := r.queries.CreateRefreshToken(ctx, db.CreateRefreshTokenParams{
-		Token:     token,
+		TokenHash: token,
 		UserID:    userID,
 		ExpiresAt: pgtype.Timestamp{Time: expiresAt, Valid: true},
 	})
 	if err != nil {
+		return nil, err
+	}
+	return dbRefreshTokenToEntity(dbToken), nil
+}
+
+func (r *RefreshTokenRepository) Rotate(ctx context.Context, oldToken, newToken string, expiresAt time.Time) (*entity.RefreshToken, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	queries := db.New(tx)
+	userID, err := queries.ConsumeRefreshToken(ctx, oldToken)
+	if err != nil {
+		return nil, err
+	}
+	dbToken, err := queries.CreateRefreshToken(ctx, db.CreateRefreshTokenParams{
+		TokenHash: newToken,
+		UserID:    userID,
+		ExpiresAt: pgtype.Timestamp{Time: expiresAt, Valid: true},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return dbRefreshTokenToEntity(dbToken), nil
@@ -44,7 +69,8 @@ func (r *RefreshTokenRepository) GetByToken(ctx context.Context, token string) (
 }
 
 func (r *RefreshTokenRepository) Revoke(ctx context.Context, token string) error {
-	return r.queries.RevokeRefreshToken(ctx, token)
+	_, err := r.queries.RevokeRefreshToken(ctx, token)
+	return err
 }
 
 func (r *RefreshTokenRepository) RevokeAllUserTokens(ctx context.Context, userID uuid.UUID) error {
@@ -71,7 +97,6 @@ func (r *RefreshTokenRepository) GetActiveByUserID(ctx context.Context, userID u
 func dbRefreshTokenToEntity(dbToken db.UsrRefreshToken) *entity.RefreshToken {
 	token := &entity.RefreshToken{
 		ID:        dbToken.ID,
-		Token:     dbToken.Token,
 		UserID:    dbToken.UserID,
 		IsRevoked: dbToken.IsRevoked,
 		CreatedAt: dbToken.CreatedAt.Time,

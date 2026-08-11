@@ -1,6 +1,6 @@
 -- name: CreateRefreshToken :one
 INSERT INTO usr.refresh_tokens (
-    token,
+    token_hash,
     user_id,
     expires_at
 ) VALUES (
@@ -9,13 +9,22 @@ INSERT INTO usr.refresh_tokens (
 
 -- name: GetRefreshTokenByToken :one
 SELECT * FROM usr.refresh_tokens
-WHERE token = $1 AND is_revoked = false
+WHERE token_hash = $1 AND is_revoked = false
 LIMIT 1;
 
--- name: RevokeRefreshToken :exec
+-- name: RevokeRefreshToken :one
 UPDATE usr.refresh_tokens
 SET is_revoked = true, revoked_at = NOW()
-WHERE token = $1;
+WHERE token_hash = $1 AND is_revoked = false
+RETURNING id;
+
+-- name: ConsumeRefreshToken :one
+UPDATE usr.refresh_tokens
+SET is_revoked = true, revoked_at = NOW()
+WHERE token_hash = $1
+  AND is_revoked = false
+  AND expires_at > NOW()
+RETURNING user_id;
 
 -- name: RevokeAllUserRefreshTokens :exec
 UPDATE usr.refresh_tokens

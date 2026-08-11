@@ -1,3 +1,4 @@
 // Package service implements post business logic, visibility authorization,
-// and orchestration for post, comment, like, and hashtag operations.
+// atomic like toggling, and transactional feed-event orchestration for post,
+// comment, like, and hashtag operations.
 package service

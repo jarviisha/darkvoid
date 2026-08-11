@@ -49,6 +49,7 @@ type FeedCursor struct {
 	TimelinePostID       string   `json:"tl_post_id,omitempty"`
 	TimelineUser         string   `json:"tl_user,omitempty"`
 	RecommendationOffset int      `json:"rec_offset,omitempty"`
+	RecommendationSeen   []int    `json:"rec_seen,omitempty"`
 	TrendingScore        *float64 `json:"trend_score,omitempty"`
 	TrendingPostID       string   `json:"trend_post_id,omitempty"`
 	FollowingCreatedAt   *int64   `json:"fl_ts,omitempty"`
@@ -114,6 +115,11 @@ func (c *FeedCursor) Validate() error {
 	}
 	if c.RecommendationOffset < 0 {
 		return fmt.Errorf("invalid recommendation cursor offset")
+	}
+	for _, offset := range c.RecommendationSeen {
+		if offset < c.RecommendationOffset {
+			return fmt.Errorf("invalid seen recommendation offset")
+		}
 	}
 	if c.TrendingScore != nil {
 		if *c.TrendingScore < 0 {

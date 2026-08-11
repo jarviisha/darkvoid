@@ -14,7 +14,7 @@ type Querier interface {
 	CountUnread(ctx context.Context, recipientID uuid.UUID) (int64, error)
 	CreateNotification(ctx context.Context, arg CreateNotificationParams) (CreateNotificationRow, error)
 	CreateSystemNotification(ctx context.Context, arg CreateSystemNotificationParams) (NotificationNotification, error)
-	DeleteByActorAndGroupKey(ctx context.Context, arg DeleteByActorAndGroupKeyParams) error
+	DeleteByActorAndGroupKey(ctx context.Context, arg DeleteByActorAndGroupKeyParams) (uuid.UUID, error)
 	GetGroupActors(ctx context.Context, arg GetGroupActorsParams) ([]GetGroupActorsRow, error)
 	GetNotificationsWithCursor(ctx context.Context, arg GetNotificationsWithCursorParams) ([]GetNotificationsWithCursorRow, error)
 	MarkAllAsRead(ctx context.Context, recipientID uuid.UUID) error

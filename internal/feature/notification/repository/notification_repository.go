@@ -85,11 +85,12 @@ func (r *NotificationRepository) GetGroupActors(ctx context.Context, recipientID
 	return ids, rows[0].TotalCount, nil
 }
 
-func (r *NotificationRepository) DeleteByActorAndGroupKey(ctx context.Context, actorID uuid.UUID, groupKey string) error {
-	return database.MapDBError(r.queries.DeleteByActorAndGroupKey(ctx, db.DeleteByActorAndGroupKeyParams{
+func (r *NotificationRepository) DeleteByActorAndGroupKey(ctx context.Context, actorID uuid.UUID, groupKey string) (uuid.UUID, error) {
+	recipientID, err := r.queries.DeleteByActorAndGroupKey(ctx, db.DeleteByActorAndGroupKeyParams{
 		ActorID:  actorID,
 		GroupKey: groupKey,
-	}))
+	})
+	return recipientID, database.MapDBError(err)
 }
 
 func (r *NotificationRepository) CreateSystemNotification(ctx context.Context, recipientID, actorID uuid.UUID, message, groupKey string) (*entity.Notification, error) {

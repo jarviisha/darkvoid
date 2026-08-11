@@ -45,6 +45,11 @@ func (s *PostService) WithFeedEventEmitter(e FeedEventEmitter) {
 	s.feedEmitter = e
 }
 
+// WithFeedEventOutbox wires durable feed-event persistence into post mutations.
+func (s *PostService) WithFeedEventOutbox(outbox FeedEventOutbox) {
+	s.feedOutbox = outbox
+}
+
 // WithTrendingInvalidator wires a cross-context trending cache invalidator after construction.
 // Called by the app layer once the feed cache is ready.
 func (s *PostService) WithTrendingInvalidator(inv TrendingInvalidator) {
@@ -77,6 +82,7 @@ type PostService struct {
 
 	notifEmitter        notificationEmitter // optional: nil → notifications skipped
 	feedEmitter         FeedEventEmitter    // optional: nil → feed propagation skipped
+	feedOutbox          FeedEventOutbox     // optional: durable transactional post events
 	trendingInvalidator TrendingInvalidator // optional: nil → no-op
 	objectDeleter       ObjectDeleter       // optional: nil → no recommendation index cleanup on delete
 	catalogIngester     CatalogIngester     // optional: nil → posts are not indexed for recommendations
@@ -161,6 +167,11 @@ func (s *PostService) CreatePost(ctx context.Context, authorID uuid.UUID, conten
 		}
 		persistedMentionIDs = ids
 	}
+	if s.feedOutbox != nil {
+		if err := s.feedOutbox.EnqueuePostCreated(ctx, tx, p.ID, p.AuthorID, string(p.Visibility), p.CreatedAt); err != nil {
+			return nil, errors.NewInternalError(err)
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, errors.NewInternalError(err)
@@ -170,7 +181,9 @@ func (s *PostService) CreatePost(ctx context.Context, authorID uuid.UUID, conten
 	p.Mentions = s.enrichMentionsAfterCommit(ctx, p.ID, authorID, persistedMentionIDs)
 
 	s.ingestCatalogAsync(p.ID.String(), p.Content, p.Tags, p.AuthorID.String())
-	s.emitPostCreatedFeedEvent(ctx, p)
+	if s.feedOutbox == nil {
+		s.emitPostCreatedFeedEvent(ctx, p)
+	}
 
 	logger.Info(ctx, "post created", "post_id", p.ID, "author_id", authorID)
 	return p, nil
@@ -329,6 +342,11 @@ func (s *PostService) UpdatePost(ctx context.Context, postID, userID uuid.UUID, 
 			persistedMentionIDs = ids
 		}
 	}
+	if existing.Visibility != updated.Visibility && s.feedOutbox != nil {
+		if err := s.feedOutbox.EnqueuePostVisibilityChanged(ctx, tx, updated.ID, updated.AuthorID, string(updated.Visibility), updated.CreatedAt); err != nil {
+			return nil, errors.NewInternalError(err)
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, errors.NewInternalError(err)
@@ -347,6 +365,11 @@ func (s *PostService) UpdatePost(ctx context.Context, postID, userID uuid.UUID, 
 	s.enrichMentions(ctx, []*entity.Post{updated})
 
 	s.ingestCatalogAsync(postID.String(), updated.Content, updated.Tags, updated.AuthorID.String())
+	if existing.Visibility != updated.Visibility && s.feedOutbox == nil && s.feedEmitter != nil {
+		if err := s.feedEmitter.EmitPostVisibilityChanged(ctx, updated.ID, updated.AuthorID, string(updated.Visibility), updated.CreatedAt); err != nil {
+			logger.LogError(ctx, err, "failed to emit post visibility event", "post_id", postID)
+		}
+	}
 
 	logger.Info(ctx, "post updated", "post_id", postID)
 	return updated, nil
@@ -364,14 +387,32 @@ func (s *PostService) DeletePost(ctx context.Context, postID, userID uuid.UUID) 
 	if existing.AuthorID != userID {
 		return post.ErrForbidden
 	}
-	if err := s.postRepo.Delete(ctx, postID); err != nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return errors.NewInternalError(err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if err := s.postRepo.WithTx(tx).Delete(ctx, postID); err != nil {
 		logger.LogError(ctx, err, "failed to delete post", "post_id", postID)
+		return errors.NewInternalError(err)
+	}
+	if s.feedOutbox != nil {
+		if err := s.feedOutbox.EnqueuePostDeleted(ctx, tx, postID, existing.AuthorID); err != nil {
+			return errors.NewInternalError(err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return errors.NewInternalError(err)
 	}
 
 	// The trending cache serves full posts without re-checking the DB, so a
 	// deleted post would keep appearing in feeds until TTL without eviction.
 	s.invalidateTrending(ctx)
+	if s.feedOutbox == nil && s.feedEmitter != nil {
+		if err := s.feedEmitter.EmitPostDeleted(ctx, postID, existing.AuthorID); err != nil {
+			logger.LogError(ctx, err, "failed to emit post-deleted feed event", "post_id", postID)
+		}
+	}
 
 	// Remove the post from the recommendation index so it no longer appears in suggestions.
 	// Fire-and-forget — a failure here does not roll back the deletion.

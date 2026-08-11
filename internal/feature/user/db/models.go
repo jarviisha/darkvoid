@@ -37,6 +37,16 @@ type UsrEmailToken struct {
 	CreatedAt pgtype.Timestamp `json:"created_at"`
 }
 
+type UsrFeedOutbox struct {
+	ID             uuid.UUID          `json:"id"`
+	Event          []byte             `json:"event"`
+	Attempts       int32              `json:"attempts"`
+	AvailableAt    pgtype.Timestamptz `json:"available_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	LastError      *string            `json:"last_error"`
+	DeadLetteredAt pgtype.Timestamptz `json:"dead_lettered_at"`
+}
+
 type UsrFollow struct {
 	FollowerID uuid.UUID          `json:"follower_id"`
 	FolloweeID uuid.UUID          `json:"followee_id"`
@@ -45,12 +55,12 @@ type UsrFollow struct {
 
 type UsrRefreshToken struct {
 	ID        uuid.UUID        `json:"id"`
-	Token     string           `json:"token"`
 	UserID    uuid.UUID        `json:"user_id"`
 	ExpiresAt pgtype.Timestamp `json:"expires_at"`
 	CreatedAt pgtype.Timestamp `json:"created_at"`
 	RevokedAt pgtype.Timestamp `json:"revoked_at"`
 	IsRevoked bool             `json:"is_revoked"`
+	TokenHash string           `json:"token_hash"`
 }
 
 type UsrUser struct {

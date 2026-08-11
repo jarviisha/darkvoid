@@ -1,12 +1,14 @@
 // Package feed provides core feed domain logic such as ranking, scoring, reader
 // ports, recommendation provider contracts, no-version feed cursors, prepared
-// timeline storage contracts, refresh coordination, and fanout orchestration.
+// timeline storage contracts, refresh coordination, fanout orchestration, and
+// a transactional PostgreSQL outbox with retry/dead-letter delivery for post
+// and follow mutations.
 //
 // Prepared timelines are ranked at write time: ZSET scores are packed rank
 // scores (see PackTimelineScore — rank bucket over createdAt seconds), written
 // by fan-out (NX, write-time constant) and by the background refresher
-// (upsert, local formula). The read path serves the materialized order and
-// never re-ranks.
+// (atomic snapshot replacement, local formula). The read path serves the
+// materialized order and never re-ranks.
 //
 // The knobs that shape all of the above — whether timelines are served and to
 // whom, how many entries they hold and for how long, whether fanout runs, its

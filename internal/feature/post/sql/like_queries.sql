@@ -1,5 +1,11 @@
 -- Like Queries
 
+-- name: LockPostLike :exec
+SELECT pg_advisory_xact_lock(hashtextextended(
+    sqlc.arg('user_id')::text || ':' || sqlc.arg('post_id')::text,
+    0
+));
+
 -- name: LikePost :exec
 INSERT INTO post.likes (user_id, post_id)
 VALUES ($1, $2)

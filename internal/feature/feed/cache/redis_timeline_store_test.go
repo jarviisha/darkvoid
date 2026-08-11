@@ -145,50 +145,73 @@ func TestRedisTimelineStore_SetPostsBatchOverwritesAndInserts(t *testing.T) {
 	}
 }
 
+func TestRedisTimelineStore_ReplaceRemovesStaleAndPreservesConcurrentFanout(t *testing.T) {
+	ctx := context.Background()
+	store, client := newRedisTimelineStoreForTest(t)
+	defer client.Close() //nolint:errcheck
+
+	userID := uuid.New()
+	preserveAfter := time.Now().UTC().Add(-time.Millisecond)
+	stale := feed.TimelineEntry{PostID: uuid.New(), Score: feed.PackTimelineScore(1, preserveAfter.Add(-time.Hour))}
+	// The concurrent post is intentionally old: preservation is based on the
+	// fanout write time, not post creation time (outbox retries may deliver an
+	// old post while refresh is rebuilding the same timeline).
+	concurrent := feed.TimelineEntry{PostID: uuid.New(), Score: feed.PackTimelineScore(1, preserveAfter.Add(-time.Hour))}
+	wanted := feed.TimelineEntry{PostID: uuid.New(), Score: feed.PackTimelineScore(2, preserveAfter.Add(-time.Hour))}
+	if err := store.SetPostsBatch(ctx, userID, []feed.TimelineEntry{stale}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddPost(ctx, userID, concurrent); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplacePosts(ctx, userID, []feed.TimelineEntry{wanted}, preserveAfter); err != nil {
+		t.Fatal(err)
+	}
+	page, err := store.ReadPage(ctx, userID, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[uuid.UUID]bool{}
+	for _, entry := range page.Entries {
+		got[entry.PostID] = true
+	}
+	if got[stale.PostID] || !got[concurrent.PostID] || !got[wanted.PostID] {
+		t.Fatalf("replacement entries = %+v", page.Entries)
+	}
+}
+
 func TestRedisTimelineStore_EqualScoreBlockPagination(t *testing.T) {
 	ctx := context.Background()
 	_, client := newRedisTimelineStoreForTest(t)
 	defer client.Close() //nolint:errcheck
-	// Block size must stay <= 2x the ReadPage limit: continuation over a bigger
-	// equal-score block exceeds the fetch window and stalls (known, documented
-	// limitation — see contracts/timeline-store.md).
 	const score = int64(4200)
 	userID := uuid.New()
-	members := []feed.TimelineEntry{
-		{PostID: uuid.New(), Score: score},
-		{PostID: uuid.New(), Score: score},
-		{PostID: uuid.New(), Score: score},
-		{PostID: uuid.New(), Score: score},
+	members := make([]feed.TimelineEntry, 0, 130)
+	for range 130 {
+		members = append(members, feed.TimelineEntry{PostID: uuid.New(), Score: score})
 	}
-	// The shared helper store trims at 3 items; use one with room for 4.
-	bigStore := NewRedisTimelineStore(client, timelineSettings(10, time.Hour))
+	bigStore := NewRedisTimelineStore(client, timelineSettings(200, time.Hour))
 	if err := bigStore.SetPostsBatch(ctx, userID, members); err != nil {
 		t.Fatalf("SetPostsBatch: %v", err)
 	}
 
 	seen := make(map[uuid.UUID]bool, len(members))
-	page1, err := bigStore.ReadPage(ctx, userID, nil, 2)
-	if err != nil {
-		t.Fatalf("ReadPage page1: %v", err)
-	}
-	if len(page1.Entries) != 2 || page1.Last == nil {
-		t.Fatalf("page1 = %+v, want 2 entries and a continuation", page1)
-	}
-	for _, e := range page1.Entries {
-		seen[e.PostID] = true
-	}
-	page2, err := bigStore.ReadPage(ctx, userID, page1.Last, 2)
-	if err != nil {
-		t.Fatalf("ReadPage page2: %v", err)
-	}
-	if len(page2.Entries) != 2 {
-		t.Fatalf("page2 = %+v, want remaining 2 entries", page2)
-	}
-	for _, e := range page2.Entries {
-		if seen[e.PostID] {
-			t.Fatalf("duplicate entry across pages: %s", e.PostID)
+	var after *feed.TimelinePosition
+	for {
+		page, err := bigStore.ReadPage(ctx, userID, after, 2)
+		if err != nil {
+			t.Fatalf("ReadPage: %v", err)
 		}
-		seen[e.PostID] = true
+		for _, e := range page.Entries {
+			if seen[e.PostID] {
+				t.Fatalf("duplicate entry across pages: %s", e.PostID)
+			}
+			seen[e.PostID] = true
+		}
+		if !page.HasMore {
+			break
+		}
+		after = page.Last
 	}
 	if len(seen) != len(members) {
 		t.Fatalf("paged %d distinct entries, want %d (no loss)", len(seen), len(members))

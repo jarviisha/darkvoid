@@ -41,6 +41,7 @@ type mediaRepo interface {
 type likeRepo interface {
 	Like(ctx context.Context, userID, postID uuid.UUID) error
 	Unlike(ctx context.Context, userID, postID uuid.UUID) error
+	Toggle(ctx context.Context, userID, postID uuid.UUID) (bool, error)
 	IsLiked(ctx context.Context, userID, postID uuid.UUID) (bool, error)
 	Count(ctx context.Context, postID uuid.UUID) (int64, error)
 	GetLikedPostIDs(ctx context.Context, userID uuid.UUID, postIDs []uuid.UUID) ([]uuid.UUID, error)
@@ -127,6 +128,15 @@ type notificationEmitter interface {
 // FeedEventEmitter emits feed-impacting post events after successful mutations.
 type FeedEventEmitter interface {
 	EmitPostCreated(ctx context.Context, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error
+	EmitPostDeleted(ctx context.Context, postID, authorID uuid.UUID) error
+	EmitPostVisibilityChanged(ctx context.Context, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error
+}
+
+// FeedEventOutbox persists post feed events inside the post mutation transaction.
+type FeedEventOutbox interface {
+	EnqueuePostCreated(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error
+	EnqueuePostDeleted(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID) error
+	EnqueuePostVisibilityChanged(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error
 }
 
 // TrendingInvalidator invalidates the trending posts cache.

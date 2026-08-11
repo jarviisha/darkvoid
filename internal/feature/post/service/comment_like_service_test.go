@@ -714,6 +714,17 @@ func TestToggle_PostNotFound(t *testing.T) {
 	}
 }
 
+func TestToggle_SelfLikeForbidden(t *testing.T) {
+	userID := uuid.New()
+	pr := &mockPostRepo{getByID: func(_ context.Context, _ uuid.UUID) (*entity.Post, error) {
+		return samplePost(userID), nil
+	}}
+	svc := newLikeService(&mockLikeRepo{}, pr)
+	if _, err := svc.Toggle(context.Background(), userID, uuid.New()); err != post.ErrSelfLike {
+		t.Fatalf("Toggle() error = %v, want ErrSelfLike", err)
+	}
+}
+
 func TestToggle_IsLikedError(t *testing.T) {
 	pr := &mockPostRepo{
 		getByID: func(_ context.Context, _ uuid.UUID) (*entity.Post, error) {

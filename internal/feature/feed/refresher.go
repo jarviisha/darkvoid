@@ -70,6 +70,7 @@ func (r *PreparedTimelineRefresher) WarmTimelines(ctx context.Context, userIDs [
 }
 
 func (r *PreparedTimelineRefresher) refreshOne(ctx context.Context, userID uuid.UUID) error {
+	refreshStartedAt := time.Now().UTC()
 	authorIDs, err := r.followReader.GetFollowingIDs(ctx, userID)
 	if err != nil {
 		return err
@@ -99,5 +100,5 @@ func (r *PreparedTimelineRefresher) refreshOne(ctx context.Context, userID uuid.
 			Score:  PackTimelineScore(scores[p.ID.String()], p.CreatedAt),
 		})
 	}
-	return r.timeline.SetPostsBatch(ctx, userID, entries)
+	return r.timeline.ReplacePosts(ctx, userID, entries, refreshStartedAt)
 }

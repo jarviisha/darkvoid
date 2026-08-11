@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jarviisha/darkvoid/internal/feature/user/dto"
 	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
 	"github.com/jarviisha/darkvoid/pkg/errors"
@@ -34,6 +36,54 @@ func TestRefreshAccessToken_Success(t *testing.T) {
 	}
 	if resp.RefreshToken == "" {
 		t.Error("expected new refresh token")
+	}
+}
+
+func TestRefreshAccessToken_ConcurrentReuseOnlyRotatesOnce(t *testing.T) {
+	userID := uuid.New()
+	var mu sync.Mutex
+	consumed := false
+	rtRepo := &mockRefreshTokenRepo{
+		getByToken: func(context.Context, string) (*entity.RefreshToken, error) {
+			return &entity.RefreshToken{UserID: userID, ExpiresAt: time.Now().Add(time.Hour)}, nil
+		},
+		rotate: func(_ context.Context, _, newToken string, expiresAt time.Time) (*entity.RefreshToken, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if consumed {
+				return nil, pgx.ErrNoRows
+			}
+			consumed = true
+			return &entity.RefreshToken{ID: uuid.New(), Token: newToken, UserID: userID, ExpiresAt: expiresAt}, nil
+		},
+	}
+	userRepo := &mockUserRepo{getUserByID: func(context.Context, uuid.UUID) (*entity.User, error) {
+		return activeUser(userID), nil
+	}}
+	svc := newAuthService(userRepo, rtRepo, newTestJWT(t))
+
+	var wg sync.WaitGroup
+	results := make(chan error, 2)
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := svc.RefreshAccessToken(context.Background(), &dto.RefreshTokenRequest{RefreshToken: "one-use"})
+			results <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	var succeeded, failed int
+	for err := range results {
+		if err == nil {
+			succeeded++
+		} else {
+			failed++
+		}
+	}
+	if succeeded != 1 || failed != 1 {
+		t.Fatalf("rotation results: %d succeeded, %d failed", succeeded, failed)
 	}
 }
 
@@ -168,7 +218,7 @@ func TestRefreshAccessToken_UserLookupFailsReturnsUnauthorized(t *testing.T) {
 	assertServiceErrorCode(t, err, "UNAUTHORIZED")
 }
 
-func TestRefreshAccessToken_RevokeOldTokenFailureStillSucceeds(t *testing.T) {
+func TestRefreshAccessToken_RevokeOldTokenFailureRejectsRotation(t *testing.T) {
 	userID := uuid.New()
 	revokeCalled := false
 	rtRepo := &mockRefreshTokenRepo{
@@ -200,18 +250,16 @@ func TestRefreshAccessToken_RevokeOldTokenFailureStillSucceeds(t *testing.T) {
 	}
 	svc := newAuthService(userRepo, rtRepo, newTestJWT(t))
 
-	resp, err := svc.RefreshAccessToken(context.Background(), &dto.RefreshTokenRequest{
+	_, err := svc.RefreshAccessToken(context.Background(), &dto.RefreshTokenRequest{
 		RefreshToken: "valid-refresh-token",
 	})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	if err == nil {
+		t.Fatal("expected atomic rotation failure")
 	}
 	if !revokeCalled {
 		t.Fatal("expected RevokeToken to be called")
 	}
-	if resp.AccessToken == "" || resp.RefreshToken == "" {
-		t.Fatal("expected refreshed tokens")
-	}
+	assertServiceErrorCode(t, err, "INTERNAL_ERROR")
 }
 
 func TestRefreshAccessToken_NewRefreshTokenGenerationFails(t *testing.T) {

@@ -16,8 +16,23 @@ type mockRefreshTokenRepo struct {
 	create              func(ctx context.Context, token string, userID uuid.UUID, expiresAt time.Time) (*entity.RefreshToken, error)
 	getByToken          func(ctx context.Context, token string) (*entity.RefreshToken, error)
 	revoke              func(ctx context.Context, token string) error
+	rotate              func(ctx context.Context, oldToken, newToken string, expiresAt time.Time) (*entity.RefreshToken, error)
 	revokeAllUserTokens func(ctx context.Context, userID uuid.UUID) error
 	deleteExpired       func(ctx context.Context) error
+}
+
+func (m *mockRefreshTokenRepo) Rotate(ctx context.Context, oldToken, newToken string, expiresAt time.Time) (*entity.RefreshToken, error) {
+	if m.rotate != nil {
+		return m.rotate(ctx, oldToken, newToken, expiresAt)
+	}
+	if err := m.Revoke(ctx, oldToken); err != nil {
+		return nil, err
+	}
+	userID := uuid.Nil
+	if token, err := m.GetByToken(ctx, oldToken); err == nil {
+		userID = token.UserID
+	}
+	return m.Create(ctx, newToken, userID, expiresAt)
 }
 
 func (m *mockRefreshTokenRepo) Create(ctx context.Context, token string, userID uuid.UUID, expiresAt time.Time) (*entity.RefreshToken, error) {

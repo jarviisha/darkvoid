@@ -25,6 +25,32 @@ Các finding P0 đã được sửa trong worktree ngày 2026-08-11:
 | P0-03 | Resolved | Storage factory và config validation fail startup với `s3`, provider rỗng hoặc không hỗ trợ; cấu hình S3 chưa triển khai đã được gỡ khỏi env/docs |
 | P0-04 | Resolved | `WithDetail` copy-on-write; panic chỉ được log nội bộ với stack và client luôn nhận generic `INTERNAL_ERROR` |
 
+Các finding P1 đã được sửa trong worktree ngày 2026-08-11:
+
+| ID | Trạng thái | Thay đổi chính |
+|---|---|---|
+| P1-01 | Resolved | Post và follow mutation ghi feed event vào transactional PostgreSQL outbox; consumer có lease, retry/backoff, dead-letter, metric và timeline upsert idempotent; queue đầy fallback đồng bộ và emitter trả lỗi đúng |
+| P1-02 | Resolved | Follower reader nhận limit từ runtime setting (`cap+1`) thay vì hard-code 5.000; bổ sung metric followers/attempted/succeeded/failed/capped |
+| P1-03 | Resolved | Timeline đọc dư một item và dùng `HasMore`; continuation rỗng/stale kết thúc đúng cursor family, không khởi động lại mixed feed |
+| P1-04 | Resolved | Redis timeline đọc lặp theo chunk đến khi đủ trang hoặc hết ZSET; có integration test tie-score block 130 phần tử |
+| P1-05 | Resolved | Refresh dùng atomic snapshot replacement nhưng giữ fanout đồng thời; delete/visibility event chủ động loại stale entry |
+| P1-06 | Resolved | Private post được materialize chỉ vào timeline tác giả và batch hydration cho phép service eligibility trả post đó cho owner |
+| P1-07 | Resolved | Cursor chỉ advance recommendation đã emit hoặc invalid; offset đã emit lệch thứ tự được giữ trong cursor để không skip item bị outrank |
+| P1-08 | Resolved | Broker đồng bộ deliver/cleanup/shutdown dưới RW lock, cleanup/shutdown idempotent; có stress/race test |
+| P1-09 | Resolved | Bỏ `EXISTS` + `INCR`; mọi create/upsert/delete/read mutation invalidate unread cache để rebuild từ DB |
+| P1-10 | Resolved | Refresh token chỉ lưu SHA-256 hash; consume-and-rotate nằm trong một transaction và token cũ chỉ được consume một lần |
+| P1-11 | Resolved | Account-detail endpoint chỉ trả `UserResponse` khi key UUID/username resolve về chính authenticated user; thêm authorization tests |
+| P1-12 | Resolved | Auth middleware chỉ nhận Bearer token qua `Authorization`; query-token và Swagger parameter đã bị loại bỏ |
+| P1-13 | Resolved | Toggle áp dụng self-like guard và transaction advisory lock theo `(user, post)`, trả trạng thái committed trước khi phát side effect |
+
+Tác động triển khai của P1:
+
+- Phải chạy migration user `000014` và `000015` trước khi chạy binary mới. `000014` chuyển token hiện hữu sang hash một chiều; down migration chỉ khôi phục cấu trúc bằng giá trị hash, không thể khôi phục raw token.
+- Client SSE không còn được gửi JWT trong query string. Client phải dùng request streaming có `Authorization: Bearer ...`; native `EventSource` cần chuyển sang cookie/ticket ngắn hạn trong một thay đổi riêng nếu được sử dụng.
+- `GET /users/{userKey}` nay là account-detail self-only; dữ liệu public của user khác tiếp tục đi qua profile endpoint.
+
+Xác minh thay đổi P1: `make generate`, `make build`, `make test`, `go test -race ./...`, `go vet ./...` và `golangci-lint run ./...` đều đạt. Redis integration test cho atomic replacement và tie-score block đã được thêm nhưng bị skip trong lần chạy này do không cấu hình `REDIS_TEST_ADDR`.
+
 Các thay đổi đã qua `make build`, `make test`, `go test -race ./...`, `go vet ./...` và `golangci-lint run ./...`.
 
 ## Phạm vi và phương pháp kiểm tra
@@ -175,7 +201,7 @@ Nếu đặt `STORAGE_PROVIDER=s3`, upload trả thành công và DB lưu key nh
 
 ## P1 — lỗi lớn về tính đúng, bảo mật và concurrency
 
-### P1-01: Feed event có thể mất vĩnh viễn
+### P1-01: Feed event có thể mất vĩnh viễn — Resolved
 
 **Mức độ:** High
 **Loại:** Reliability / eventual consistency
@@ -199,7 +225,7 @@ Event mất khi queue đầy, process crash/restart, worker timeout hoặc Redis
 
 ---
 
-### P1-02: Fanout follower cap không đúng với runtime settings
+### P1-02: Fanout follower cap không đúng với runtime settings — Resolved
 
 **Mức độ:** High
 **Loại:** Feed correctness / configuration drift
@@ -220,7 +246,7 @@ Mọi cấu hình cap trên 5.000 không có tác dụng. Follower nằm ngoài 
 
 ---
 
-### P1-03: Timeline cursor có thể chuyển sang mixed feed và lặp dữ liệu
+### P1-03: Timeline cursor có thể chuyển sang mixed feed và lặp dữ liệu — Resolved
 
 **Mức độ:** High
 **Loại:** Pagination correctness
@@ -243,7 +269,7 @@ Nếu trang trước đúng bằng số item cuối cùng, client vẫn nhận c
 
 ---
 
-### P1-04: Redis timeline pagination bỏ sót tie-score block lớn
+### P1-04: Redis timeline pagination bỏ sót tie-score block lớn — Resolved
 
 **Mức độ:** High
 **Loại:** Pagination correctness / Redis data access
@@ -265,7 +291,7 @@ Nếu có hơn `2*limit` member cùng score đứng trước cursor, toàn bộ 
 
 ---
 
-### P1-05: Timeline refresh không xóa entry stale
+### P1-05: Timeline refresh không xóa entry stale — Resolved
 
 **Mức độ:** High
 **Loại:** Cache consistency / feed correctness
@@ -288,7 +314,7 @@ Entry từ author đã unfollow, post đã xóa hoặc visibility đã đổi ti
 
 ---
 
-### P1-06: Feed của tác giả không nhất quán với private post
+### P1-06: Feed của tác giả không nhất quán với private post — Resolved
 
 **Mức độ:** High
 **Loại:** Business-rule inconsistency
@@ -309,7 +335,7 @@ Code mô tả rằng tác giả thấy private post của chính mình trong fee
 
 ---
 
-### P1-07: Recommendation cursor bỏ qua item chưa hiển thị
+### P1-07: Recommendation cursor bỏ qua item chưa hiển thị — Resolved
 
 **Mức độ:** High
 **Loại:** Pagination correctness / ranking
@@ -331,7 +357,7 @@ Recommendation đã fetch nhưng bị nguồn khác outrank và chưa trả cho 
 
 ---
 
-### P1-08: SSE broker có race giữa deliver, cleanup và shutdown
+### P1-08: SSE broker có race giữa deliver, cleanup và shutdown — Resolved
 
 **Mức độ:** High
 **Loại:** Concurrency / availability
@@ -357,7 +383,7 @@ Recommendation đã fetch nhưng bị nguồn khác outrank và chưa trả cho 
 
 ---
 
-### P1-09: Unread notification count bị drift
+### P1-09: Unread notification count bị drift — Resolved
 
 **Mức độ:** High
 **Loại:** Cache consistency
@@ -380,7 +406,7 @@ Unread badge có thể lớn hơn hoặc khác DB cho tới khi TTL hết/rebuil
 
 ---
 
-### P1-10: Refresh-token rotation không atomic và token lưu dạng raw
+### P1-10: Refresh-token rotation không atomic và token lưu dạng raw — Resolved
 
 **Mức độ:** High
 **Loại:** Session security
@@ -406,7 +432,7 @@ Unread badge có thể lớn hơn hoặc khác DB cho tới khi TTL hết/rebuil
 
 ---
 
-### P1-11: Endpoint user làm lộ email và trạng thái tài khoản
+### P1-11: Endpoint user làm lộ email và trạng thái tài khoản — Resolved
 
 **Mức độ:** High
 **Loại:** Privacy / authorization
@@ -426,7 +452,7 @@ Unread badge có thể lớn hơn hoặc khác DB cho tới khi TTL hết/rebuil
 
 ---
 
-### P1-12: Bearer token được chấp nhận qua query string trên mọi route
+### P1-12: Bearer token được chấp nhận qua query string trên mọi route — Resolved
 
 **Mức độ:** High
 **Loại:** Credential exposure
@@ -446,7 +472,7 @@ Token có thể xuất hiện trong browser history, referrer, reverse-proxy log
 
 ---
 
-### P1-13: Toggle like không atomic về side effect và self-like rule không nhất quán
+### P1-13: Toggle like không atomic về side effect và self-like rule không nhất quán — Resolved
 
 **Mức độ:** High
 **Loại:** Concurrency / business-rule inconsistency

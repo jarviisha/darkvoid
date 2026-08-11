@@ -101,7 +101,7 @@ func TestPreparedTimelineRefresher_WarmTimelinesWritesRankedPackedEntries(t *tes
 		}
 	}
 	if len(store.added) != 0 {
-		t.Fatalf("refresher must write via SetPostsBatch (upsert), got NX adds: %+v", store.added)
+		t.Fatalf("refresher must replace the ranked snapshot, got NX adds: %+v", store.added)
 	}
 	if !ranker.gotFollowing[followed.String()] || !ranker.gotFollowing[userB.String()] {
 		t.Fatalf("ranker followingSet must contain followed authors and self, got %+v", ranker.gotFollowing)

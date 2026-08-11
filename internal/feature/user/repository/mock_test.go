@@ -23,6 +23,7 @@ type mockQuerier struct {
 	createEmailDelivery                 func(context.Context, db.CreateEmailDeliveryParams) (db.UsrEmailDelivery, error)
 	createEmailToken                    func(context.Context, db.CreateEmailTokenParams) (db.UsrEmailToken, error)
 	createRefreshToken                  func(context.Context, db.CreateRefreshTokenParams) (db.UsrRefreshToken, error)
+	consumeRefreshToken                 func(context.Context, string) (uuid.UUID, error)
 	createUser                          func(context.Context, db.CreateUserParams) (db.UsrUser, error)
 	deactivateUser                      func(context.Context, db.DeactivateUserParams) error
 	deleteEmailSuppression              func(context.Context, string) (int64, error)
@@ -54,7 +55,7 @@ type mockQuerier struct {
 	markEmailTokenUsed                  func(context.Context, uuid.UUID) error
 	removeRoleFromUser                  func(context.Context, db.RemoveRoleFromUserParams) error
 	revokeAllUserRefreshTokens          func(context.Context, uuid.UUID) error
-	revokeRefreshToken                  func(context.Context, string) error
+	revokeRefreshToken                  func(context.Context, string) (uuid.UUID, error)
 	searchUsers                         func(context.Context, db.SearchUsersParams) ([]db.UsrUser, error)
 	searchUsersByQuery                  func(context.Context, db.SearchUsersByQueryParams) ([]db.UsrUser, error)
 	suppressEmail                       func(context.Context, db.SuppressEmailParams) error
@@ -181,6 +182,13 @@ func (m *mockQuerier) CreateRefreshToken(ctx context.Context, arg db.CreateRefre
 		return m.createRefreshToken(ctx, arg)
 	}
 	return db.UsrRefreshToken{}, nil
+}
+
+func (m *mockQuerier) ConsumeRefreshToken(ctx context.Context, token string) (uuid.UUID, error) {
+	if m.consumeRefreshToken != nil {
+		return m.consumeRefreshToken(ctx, token)
+	}
+	return uuid.Nil, nil
 }
 
 func (m *mockQuerier) CreateUser(ctx context.Context, arg db.CreateUserParams) (db.UsrUser, error) {
@@ -372,11 +380,11 @@ func (m *mockQuerier) RevokeAllUserRefreshTokens(ctx context.Context, userID uui
 	return nil
 }
 
-func (m *mockQuerier) RevokeRefreshToken(ctx context.Context, token string) error {
+func (m *mockQuerier) RevokeRefreshToken(ctx context.Context, token string) (uuid.UUID, error) {
 	if m.revokeRefreshToken != nil {
 		return m.revokeRefreshToken(ctx, token)
 	}
-	return nil
+	return uuid.Nil, nil
 }
 
 func (m *mockQuerier) SearchUsers(ctx context.Context, arg db.SearchUsersParams) ([]db.UsrUser, error) {

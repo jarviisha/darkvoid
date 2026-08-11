@@ -26,21 +26,20 @@ func NewAuthMiddleware(jwtService *jwt.Service) AuthMiddleware {
 	}
 }
 
-// extractToken extracts a JWT from the request.
-// Priority: Authorization header → ?token= query parameter.
+// extractToken extracts a JWT from the Authorization header. Credentials are
+// never accepted from the URL because query strings leak into logs, history,
+// referrers, and monitoring systems.
 func extractToken(r *http.Request) string {
-	// 1. Check Authorization header
 	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
 		if token := strings.TrimPrefix(authHeader, "Bearer "); token != authHeader {
 			return token
 		}
 	}
-	// 2. Fallback to query parameter (used by SSE/EventSource)
-	return r.URL.Query().Get("token")
+	return ""
 }
 
 // Auth creates an authentication middleware that validates JWT tokens.
-// Accepts token from Authorization header or ?token= query parameter.
+// Accepts tokens only from the Authorization header.
 func Auth(jwtService *jwt.Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +100,7 @@ func Auth(jwtService *jwt.Service) func(http.Handler) http.Handler {
 // OptionalAuth creates an optional authentication middleware.
 // If token is present and valid, user info is stored in context.
 // If token is missing or invalid, request continues without authentication.
-// Accepts token from Authorization header or ?token= query parameter.
+// Accepts tokens only from the Authorization header.
 func OptionalAuth(jwtService *jwt.Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	post "github.com/jarviisha/darkvoid/internal/feature/post"
 	"github.com/jarviisha/darkvoid/internal/feature/post/entity"
@@ -52,11 +53,57 @@ type mockFeedEventEmitter struct {
 	err        error
 }
 
+type mockFeedEventOutbox struct {
+	createdCalls int
+	deletedCalls int
+	changedCalls int
+	err          error
+	committed    bool
+}
+
+func (m *mockFeedEventOutbox) EnqueuePostCreated(_ context.Context, tx pgx.Tx, _, _ uuid.UUID, _ string, _ time.Time) error {
+	m.createdCalls++
+	if recording, ok := tx.(*recordingTx); ok {
+		m.committed = recording.committed
+	}
+	return m.err
+}
+
+func (m *mockFeedEventOutbox) EnqueuePostDeleted(_ context.Context, _ pgx.Tx, _, _ uuid.UUID) error {
+	m.deletedCalls++
+	return m.err
+}
+
+func (m *mockFeedEventOutbox) EnqueuePostVisibilityChanged(_ context.Context, _ pgx.Tx, _, _ uuid.UUID, _ string, _ time.Time) error {
+	m.changedCalls++
+	return m.err
+}
+
+type recordingTx struct {
+	*mockTx
+	committed bool
+}
+
+func (tx *recordingTx) Commit(context.Context) error {
+	tx.committed = true
+	return nil
+}
+
+type recordingTxBeginner struct{ tx *recordingTx }
+
+func (b *recordingTxBeginner) Begin(context.Context) (pgx.Tx, error) { return b.tx, nil }
+
 func (m *mockFeedEventEmitter) EmitPostCreated(_ context.Context, postID, authorID uuid.UUID, visibility string, _ time.Time) error {
 	m.called++
 	m.postID = postID
 	m.authorID = authorID
 	m.visibility = visibility
+	return m.err
+}
+
+func (m *mockFeedEventEmitter) EmitPostDeleted(_ context.Context, _, _ uuid.UUID) error { return m.err }
+
+func (m *mockFeedEventEmitter) EmitPostVisibilityChanged(_ context.Context, _, _ uuid.UUID, _ string, _ time.Time) error {
 	return m.err
 }
 
@@ -120,6 +167,43 @@ func TestCreatePost_FeedEmitterFailureIsNonFatal(t *testing.T) {
 	}
 	if emitter.called != 1 {
 		t.Fatalf("feed emitter calls = %d, want 1", emitter.called)
+	}
+}
+
+func TestCreatePost_PersistsFeedOutboxInsideTransaction(t *testing.T) {
+	tx := &recordingTx{mockTx: &mockTx{}}
+	outbox := &mockFeedEventOutbox{}
+	emitter := &mockFeedEventEmitter{}
+	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, &mockLikeRepo{})
+	svc.pool = &recordingTxBeginner{tx: tx}
+	svc.WithFeedEventOutbox(outbox)
+	svc.WithFeedEventEmitter(emitter)
+
+	if _, err := svc.CreatePost(context.Background(), uuid.New(), "Hello world", entity.VisibilityPublic, nil, nil, nil); err != nil {
+		t.Fatalf("CreatePost: %v", err)
+	}
+	if outbox.createdCalls != 1 || outbox.committed {
+		t.Fatalf("outbox calls = %d, observed committed=%v; want one pre-commit enqueue", outbox.createdCalls, outbox.committed)
+	}
+	if !tx.committed {
+		t.Fatal("post transaction was not committed")
+	}
+	if emitter.called != 0 {
+		t.Fatalf("in-memory emitter called despite durable outbox: %d", emitter.called)
+	}
+}
+
+func TestCreatePost_OutboxFailureAbortsMutation(t *testing.T) {
+	tx := &recordingTx{mockTx: &mockTx{}}
+	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, &mockLikeRepo{})
+	svc.pool = &recordingTxBeginner{tx: tx}
+	svc.WithFeedEventOutbox(&mockFeedEventOutbox{err: errors.New("outbox unavailable")})
+
+	if _, err := svc.CreatePost(context.Background(), uuid.New(), "Hello world", entity.VisibilityPublic, nil, nil, nil); err == nil {
+		t.Fatal("expected outbox failure")
+	}
+	if tx.committed {
+		t.Fatal("post transaction committed after outbox failure")
 	}
 }
 
