@@ -123,7 +123,9 @@ func New(ctx context.Context, cfg *config.Config) (app *Application, err error) 
 	}
 
 	// Setup HTTP server
-	app.setupServer()
+	if err = app.setupServer(); err != nil {
+		return app, fmt.Errorf("failed to setup HTTP server: %w", err)
+	}
 
 	app.log.Info("application initialized successfully")
 	return app, nil
@@ -339,10 +341,14 @@ func (app *Application) bootstrapRootUser(ctx context.Context) error {
 }
 
 // setupServer initializes HTTP server and registers routes
-func (app *Application) setupServer() {
+func (app *Application) setupServer() error {
 	app.log.Info("initializing HTTP server")
 
-	app.server = NewServer(app.cfg, app.log, app.pool, app.redis, app.codohue)
+	server, err := NewServer(app.cfg, app.log, app.pool, app.redis, app.codohue)
+	if err != nil {
+		return err
+	}
+	app.server = server
 
 	// Register routes
 	app.registerRoutes()
@@ -351,6 +357,7 @@ func (app *Application) setupServer() {
 		"host", app.cfg.Server.Host,
 		"port", app.cfg.Server.Port,
 	)
+	return nil
 }
 
 // registerRoutes registers all HTTP routes

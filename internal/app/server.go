@@ -31,8 +31,8 @@ type Server struct {
 	startTime  time.Time        // Server start time for uptime calculation
 }
 
-// NewServer a new HTTP server
-func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis *pkgredis.Client, codohue *codohueStatus) *Server {
+// NewServer creates an HTTP server with its global middleware policy.
+func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis *pkgredis.Client, codohue *codohueStatus) (*Server, error) {
 	s := &Server{
 		cfg:       cfg,
 		log:       log,
@@ -43,11 +43,15 @@ func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis
 	}
 
 	router := chi.NewRouter()
+	trustedRealIP, err := appmiddleware.TrustedRealIP(cfg.Server.TrustedProxyCIDRs)
+	if err != nil {
+		return nil, fmt.Errorf("configure trusted proxy IP resolution: %w", err)
+	}
 
 	// Global middlewares
 	// Note: middleware.RequestID is intentionally omitted — HTTPMiddleware is the
 	// sole source of request ID generation and X-Request-ID header propagation.
-	router.Use(chimiddleware.RealIP)
+	router.Use(trustedRealIP)
 	router.Use(logger.HTTPMiddleware(log))
 	router.Use(chimiddleware.Recoverer)
 	router.Use(errors.ErrorHandler)
@@ -87,7 +91,7 @@ func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis
 	s.httpServer = httpServer
 	s.router = router
 
-	return s
+	return s, nil
 }
 
 // Router returns the chi router for registering routes

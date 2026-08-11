@@ -49,10 +49,12 @@ Các finding P2 đã được sửa trong worktree ngày 2026-08-11:
 |---|---|---|
 | P2-01 | Resolved | Mọi JSON handler dùng decoder chung với body limit 1 MiB, từ chối field lạ và nhiều JSON document, đồng thời trả lỗi syntax/type/size theo một contract thống nhất |
 | P2-02 | Resolved | Access token chỉ chấp nhận HS256 và bắt buộc đúng issuer, audience, expiration; thêm cấu hình `JWT_AUDIENCE` cùng security regression tests cho cả validator chuẩn và custom claims |
+| P2-03 | Resolved | Forwarded client IP chỉ được nhận từ `TRUSTED_PROXY_CIDRS`; chuỗi proxy được duyệt từ phải sang trái, header lỗi fail-closed và production Compose chỉ bind loopback theo mặc định |
 
 Tác động triển khai của P2:
 
 - `JWT_AUDIENCE` mặc định là `darkvoid-api`; mọi API instance phải dùng cùng giá trị. Access token cũ không có claim `aud` sẽ bị từ chối sau khi deploy và client cần dùng refresh token để lấy access token mới; refresh token không bị ảnh hưởng.
+- Production Compose đổi `SERVER_BIND` mặc định từ `0.0.0.0` sang `127.0.0.1`. Deployment dùng reverse proxy phải cấu hình `TRUSTED_PROXY_CIDRS` theo source CIDR mà app thực sự nhìn thấy và proxy phải overwrite hoặc append đúng `X-Forwarded-For`; chỉ mở bind ra interface khác khi firewall/private load-balancer network đã chặn truy cập trực tiếp.
 
 Tác động triển khai của P1:
 
@@ -539,11 +541,13 @@ Khuyến nghị:
 
 ---
 
-### P2-03: Rate limiting phụ thuộc cấu hình reverse proxy
+### P2-03: Rate limiting phụ thuộc cấu hình reverse proxy — Resolved
 
 **Mức độ:** Medium, phụ thuộc deployment
 
-`middleware.RealIP` chạy trước rate limiter: [`internal/app/server.go:46`](../internal/app/server.go#L46). Nếu app được expose trực tiếp hoặc proxy không sanitize forwarded headers, client có thể spoof IP và vượt rate limit.
+> Đã sửa bằng trusted-proxy middleware fail-closed. Forwarded headers bị bỏ qua với peer không nằm trong `TRUSTED_PROXY_CIDRS`; multi-hop chain được duyệt từ phải sang trái và header chứa IP không hợp lệ không được dùng. Production Compose bind `127.0.0.1` theo mặc định để tránh expose app trực tiếp. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, `middleware.RealIP` chạy trước rate limiter: [`internal/app/server.go:46`](../internal/app/server.go#L46). Nếu app được expose trực tiếp hoặc proxy không sanitize forwarded headers, client có thể spoof IP và vượt rate limit.
 
 Khuyến nghị:
 

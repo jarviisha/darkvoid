@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -206,6 +207,7 @@ type ServerConfig struct {
 	IdleTimeout       time.Duration
 	RequestTimeout    time.Duration // Request timeout for middleware
 	AllowedOrigins    []string      // CORS allowed origins
+	TrustedProxyCIDRs []string      // Network peers allowed to supply client IP headers
 	RateLimitRequests int           // Rate limit: requests per window
 	RateLimitWindow   time.Duration // Rate limit: time window
 }
@@ -350,6 +352,11 @@ func (c *Config) Validate() error {
 	// Validate server config
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("invalid server port: %d", c.Server.Port)
+	}
+	for _, cidr := range c.Server.TrustedProxyCIDRs {
+		if _, err := netip.ParsePrefix(cidr); err != nil {
+			return fmt.Errorf("invalid trusted proxy CIDR %q: %w", cidr, err)
+		}
 	}
 
 	// Validate cookie config

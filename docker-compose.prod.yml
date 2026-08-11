@@ -241,9 +241,9 @@ services:
     stop_grace_period: 40s
     ports:
       # Bind address is a variable so a deployment that puts a reverse proxy in
-      # front can set SERVER_BIND=127.0.0.1 and stop publishing the app on every
-      # interface, without editing this file. Default preserves today's binding.
-      - "${SERVER_BIND:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
+      # front can keep the app off public interfaces without editing this file.
+      # Opening it beyond loopback requires an explicit deployment decision.
+      - "${SERVER_BIND:-127.0.0.1}:${SERVER_PORT:-8080}:8080"
     healthcheck:
       # GET, not --spider: /health only registers GET; wget --spider sends
       # HEAD, which chi answers with 405 and the check reports a broken link.
@@ -260,6 +260,7 @@ services:
     environment:
       # App
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-}"
 
       # Database — points to the postgres container
       DB_HOST: postgres

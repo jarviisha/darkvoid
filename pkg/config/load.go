@@ -49,6 +49,7 @@ func loadServerConfig() ServerConfig {
 		IdleTimeout:       getEnvDuration("SERVER_IDLE_TIMEOUT", 120*time.Second),
 		RequestTimeout:    getEnvDuration("SERVER_REQUEST_TIMEOUT", 60*time.Second),
 		AllowedOrigins:    getEnvSlice("CORS_ALLOWED_ORIGINS", []string{"*"}),
+		TrustedProxyCIDRs: getEnvSlice("TRUSTED_PROXY_CIDRS", nil),
 		RateLimitRequests: getEnvInt("RATE_LIMIT_REQUESTS", 100),
 		RateLimitWindow:   getEnvDuration("RATE_LIMIT_WINDOW", 1*time.Minute),
 	}
