@@ -1,2 +1,3 @@
-// Package httputil provides shared HTTP context and response helpers.
+// Package httputil provides shared HTTP context, strict request decoding, and
+// response helpers.
 package httputil

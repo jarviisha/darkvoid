@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -102,8 +101,8 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dto.UpdateUserRequest
-	if err = json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errors.WriteJSON(w, errors.NewBadRequestError("Invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 

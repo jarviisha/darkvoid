@@ -43,6 +43,12 @@ Các finding P1 đã được sửa trong worktree ngày 2026-08-11:
 | P1-12 | Resolved | Auth middleware chỉ nhận Bearer token qua `Authorization`; query-token và Swagger parameter đã bị loại bỏ |
 | P1-13 | Resolved | Post-like và comment-like toggle áp dụng self-like guard cùng transaction advisory lock theo cặp tài nguyên, trả trạng thái committed trước khi phát side effect |
 
+Các finding P2 đã được sửa trong worktree ngày 2026-08-11:
+
+| ID | Trạng thái | Thay đổi chính |
+|---|---|---|
+| P2-01 | Resolved | Mọi JSON handler dùng decoder chung với body limit 1 MiB, từ chối field lạ và nhiều JSON document, đồng thời trả lỗi syntax/type/size theo một contract thống nhất |
+
 Tác động triển khai của P1:
 
 - Phải chạy migration user `000014` và `000015` trước khi chạy binary mới. `000014` chuyển token hiện hữu sang hash một chiều; down migration chỉ khôi phục cấu trúc bằng giá trị hash, không thể khôi phục raw token.
@@ -495,11 +501,13 @@ DB state có thể vẫn hợp lệ nhờ idempotent SQL, nhưng request đồng
 
 ## P2 — kiến trúc, hardening và vận hành
 
-### P2-01: Handler JSON không có body limit và strict decoding
+### P2-01: Handler JSON không có body limit và strict decoding — Resolved
 
 **Mức độ:** Medium
 
-Có nhiều handler gọi trực tiếp `json.NewDecoder(r.Body).Decode(...)`, ví dụ [`internal/feature/post/handler/post_handler.go:57`](../internal/feature/post/handler/post_handler.go#L57) và [`internal/feature/user/handler/auth_handler.go:96`](../internal/feature/user/handler/auth_handler.go#L96).
+> Đã sửa bằng strict JSON request decoder dùng chung trong `internal/http`, áp dụng cho toàn bộ handler nhận JSON. Decoder giới hạn body ở 1 MiB, từ chối field không được khai báo và nhiều JSON document, đồng thời chuẩn hóa lỗi parse thành `BAD_REQUEST` với nguyên nhân cụ thể. Webhook và multipart upload giữ luồng riêng vì đã có giới hạn và quy tắc xác thực chuyên biệt. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, có nhiều handler gọi trực tiếp `json.NewDecoder(r.Body).Decode(...)`, ví dụ [`internal/feature/post/handler/post_handler.go:57`](../internal/feature/post/handler/post_handler.go#L57) và [`internal/feature/user/handler/auth_handler.go:96`](../internal/feature/user/handler/auth_handler.go#L96).
 
 Khuyến nghị tạo helper chung:
 
