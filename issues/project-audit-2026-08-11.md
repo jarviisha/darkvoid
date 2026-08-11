@@ -41,7 +41,7 @@ Các finding P1 đã được sửa trong worktree ngày 2026-08-11:
 | P1-10 | Resolved | Refresh token chỉ lưu SHA-256 hash; consume-and-rotate nằm trong một transaction và token cũ chỉ được consume một lần |
 | P1-11 | Resolved | Account-detail endpoint chỉ trả `UserResponse` khi key UUID/username resolve về chính authenticated user; thêm authorization tests |
 | P1-12 | Resolved | Auth middleware chỉ nhận Bearer token qua `Authorization`; query-token và Swagger parameter đã bị loại bỏ |
-| P1-13 | Resolved | Toggle áp dụng self-like guard và transaction advisory lock theo `(user, post)`, trả trạng thái committed trước khi phát side effect |
+| P1-13 | Resolved | Post-like và comment-like toggle áp dụng self-like guard cùng transaction advisory lock theo cặp tài nguyên, trả trạng thái committed trước khi phát side effect |
 
 Tác động triển khai của P1:
 

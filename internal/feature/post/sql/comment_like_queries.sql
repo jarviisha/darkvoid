@@ -1,3 +1,9 @@
+-- name: LockCommentLike :exec
+SELECT pg_advisory_xact_lock(hashtextextended(
+    sqlc.arg('user_id')::text || ':' || sqlc.arg('comment_id')::text,
+    0
+));
+
 -- name: LikeComment :exec
 INSERT INTO post.comment_likes (user_id, comment_id)
 VALUES ($1, $2)

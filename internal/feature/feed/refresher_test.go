@@ -25,7 +25,7 @@ type mockRefreshPostReader struct {
 	err       error
 }
 
-func (m *mockRefreshPostReader) GetFollowingPostsWithCursor(_ context.Context, _ []uuid.UUID, _ *FollowingCursor, limit int32) ([]*feedentity.Post, error) {
+func (m *mockRefreshPostReader) GetFollowingPostsWithCursor(_ context.Context, _ []uuid.UUID, _ uuid.UUID, _ *FollowingCursor, limit int32) ([]*feedentity.Post, error) {
 	m.lastLimit = limit
 	if m.err != nil {
 		return nil, m.err

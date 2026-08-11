@@ -45,7 +45,7 @@ func Auth(jwtService *jwt.Service) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 
-			// Extract token from header or query param
+			// Extract the bearer token from the Authorization header.
 			tokenString := extractToken(r)
 			if tokenString == "" {
 				logger.Warn(ctx, "missing authorization token")

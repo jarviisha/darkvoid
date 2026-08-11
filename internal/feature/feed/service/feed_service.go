@@ -422,7 +422,7 @@ func (s *FeedService) collectMixedCandidates(ctx context.Context, userID uuid.UU
 	recWindow := recommendationWindow{start: recommendationOffset, end: recommendationOffset}
 	candidates := make([]feedCandidate, 0, pageSize*fetchMultiplier)
 
-	followingPosts, err := s.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, cursor.FollowingPosition(), pageSize*fetchMultiplier)
+	followingPosts, err := s.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, userID, cursor.FollowingPosition(), pageSize*fetchMultiplier)
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get following posts", "user_id", userID)
 		return nil, recWindow, false, false, errors.NewInternalError(err)

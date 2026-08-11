@@ -331,27 +331,13 @@ func (m *mockNotificationEmitter) EmitMention(ctx context.Context, actorID, reci
 // --------------------------------------------------------------------------
 
 type mockCommentLikeRepo struct {
-	like               func(ctx context.Context, userID, commentID uuid.UUID) error
-	unlike             func(ctx context.Context, userID, commentID uuid.UUID) error
-	isLiked            func(ctx context.Context, userID, commentID uuid.UUID) (bool, error)
+	toggle             func(ctx context.Context, userID, commentID uuid.UUID) (bool, error)
 	getLikedCommentIDs func(ctx context.Context, userID uuid.UUID, commentIDs []uuid.UUID) ([]uuid.UUID, error)
 }
 
-func (m *mockCommentLikeRepo) Like(ctx context.Context, userID, commentID uuid.UUID) error {
-	if m.like != nil {
-		return m.like(ctx, userID, commentID)
-	}
-	return nil
-}
-func (m *mockCommentLikeRepo) Unlike(ctx context.Context, userID, commentID uuid.UUID) error {
-	if m.unlike != nil {
-		return m.unlike(ctx, userID, commentID)
-	}
-	return nil
-}
-func (m *mockCommentLikeRepo) IsLiked(ctx context.Context, userID, commentID uuid.UUID) (bool, error) {
-	if m.isLiked != nil {
-		return m.isLiked(ctx, userID, commentID)
+func (m *mockCommentLikeRepo) Toggle(ctx context.Context, userID, commentID uuid.UUID) (bool, error) {
+	if m.toggle != nil {
+		return m.toggle(ctx, userID, commentID)
 	}
 	return false, nil
 }

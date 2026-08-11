@@ -281,16 +281,18 @@ SELECT id, author_id, content, visibility, created_at, updated_at, deleted_at, l
 FROM post.posts
 WHERE author_id = ANY($1::uuid[])
 	AND deleted_at IS NULL
-  AND (created_at < $2::timestamptz
-       OR (created_at = $2::timestamptz AND id < $3::uuid))
+  AND (visibility IN ('public', 'followers') OR author_id = $2::uuid)
+  AND (created_at < $3::timestamptz
+       OR (created_at = $3::timestamptz AND id < $4::uuid))
 ORDER BY created_at DESC, id DESC
-LIMIT $4
+LIMIT $5
 `
 
 type GetFollowingPostsWithCursorParams struct {
 	Column1 []uuid.UUID        `json:"column_1"`
-	Column2 pgtype.Timestamptz `json:"column_2"`
-	Column3 uuid.UUID          `json:"column_3"`
+	Column2 uuid.UUID          `json:"column_2"`
+	Column3 pgtype.Timestamptz `json:"column_3"`
+	Column4 uuid.UUID          `json:"column_4"`
 	Limit   int32              `json:"limit"`
 }
 
@@ -311,6 +313,7 @@ func (q *Queries) GetFollowingPostsWithCursor(ctx context.Context, arg GetFollow
 		arg.Column1,
 		arg.Column2,
 		arg.Column3,
+		arg.Column4,
 		arg.Limit,
 	)
 	if err != nil {

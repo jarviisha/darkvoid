@@ -95,7 +95,8 @@ SELECT id, author_id, content, visibility, created_at, updated_at, deleted_at, l
 FROM post.posts
 WHERE author_id = ANY($1::uuid[])
 	AND deleted_at IS NULL
-  AND (created_at < $2::timestamptz
-       OR (created_at = $2::timestamptz AND id < $3::uuid))
+  AND (visibility IN ('public', 'followers') OR author_id = $2::uuid)
+  AND (created_at < $3::timestamptz
+       OR (created_at = $3::timestamptz AND id < $4::uuid))
 ORDER BY created_at DESC, id DESC
-LIMIT $4;
+LIMIT $5;

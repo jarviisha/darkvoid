@@ -14,9 +14,10 @@ import (
 const outboxMaxAttempts = 10
 
 type outboxEntry struct {
-	ID       uuid.UUID
-	Event    Event
-	Attempts int
+	ID        uuid.UUID
+	Event     Event
+	Attempts  int
+	DecodeErr error
 }
 
 // PostgresOutbox durably stores feed events in the same transaction as the
@@ -48,7 +49,7 @@ WITH picked AS (
 )
 UPDATE usr.feed_outbox AS outbox
 SET attempts = outbox.attempts + 1,
-    available_at = NOW() + INTERVAL '30 seconds'
+    available_at = NOW() + INTERVAL '1 minute'
 FROM picked
 WHERE outbox.id = picked.id
 RETURNING outbox.id, outbox.event, outbox.attempts`, limit)
@@ -64,7 +65,7 @@ RETURNING outbox.id, outbox.event, outbox.attempts`, limit)
 			return nil, fmt.Errorf("scan feed outbox event: %w", err)
 		}
 		if err := json.Unmarshal(payload, &entry.Event); err != nil {
-			return nil, fmt.Errorf("decode feed outbox event %s: %w", entry.ID, err)
+			entry.DecodeErr = fmt.Errorf("decode feed outbox event %s: %w", entry.ID, err)
 		}
 		entries = append(entries, entry)
 	}

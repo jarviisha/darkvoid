@@ -72,9 +72,7 @@ type commentMediaRepo interface {
 // commentLikeRepo defines the repository operations needed by CommentLikeService.
 // *repository.CommentLikeRepository satisfies this interface.
 type commentLikeRepo interface {
-	Like(ctx context.Context, userID, commentID uuid.UUID) error
-	Unlike(ctx context.Context, userID, commentID uuid.UUID) error
-	IsLiked(ctx context.Context, userID, commentID uuid.UUID) (bool, error)
+	Toggle(ctx context.Context, userID, commentID uuid.UUID) (bool, error)
 	GetLikedCommentIDs(ctx context.Context, userID uuid.UUID, commentIDs []uuid.UUID) ([]uuid.UUID, error)
 }
 

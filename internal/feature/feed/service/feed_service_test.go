@@ -33,7 +33,7 @@ type mockPostReader struct {
 	trendingGate  chan struct{}
 }
 
-func (m *mockPostReader) GetFollowingPostsWithCursor(_ context.Context, _ []uuid.UUID, cursor *feed.FollowingCursor, limit int32) ([]*feedentity.Post, error) {
+func (m *mockPostReader) GetFollowingPostsWithCursor(_ context.Context, _ []uuid.UUID, _ uuid.UUID, cursor *feed.FollowingCursor, limit int32) ([]*feedentity.Post, error) {
 	return applyFollowingCursor(m.following, cursor, int(limit)), nil
 }
 
@@ -472,6 +472,29 @@ func TestGetFeed_TimelineFiltersStaleVisibilityAndFollowState(t *testing.T) {
 	}
 	if len(page) != 1 || page[0].Post.ID != visible.ID {
 		t.Fatalf("expected only visible followed post, got %+v", page)
+	}
+}
+
+func TestGetFeed_TimelineIncludesOwnersPrivatePost(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	private := testPost(now)
+	private.AuthorID = userID
+	private.Visibility = "private"
+
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{private.ID: private}}
+	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: []feed.TimelineEntry{
+		{PostID: private.ID, Score: feed.PackTimelineScore(30, private.CreatedAt)},
+	}}}}
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	svc.WithTimelineStore(store)
+
+	page, _, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != 1 || page[0].Post.ID != private.ID {
+		t.Fatalf("private owner timeline page = %+v, want post %s", page, private.ID)
 	}
 }
 

@@ -76,7 +76,7 @@ func (r *PreparedTimelineRefresher) refreshOne(ctx context.Context, userID uuid.
 		return err
 	}
 	authorIDs = append(authorIDs, userID)
-	posts, err := r.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, nil, int32(r.maxItems())) //nolint:gosec // bounded to 1..10000 by the settings.feed CHECK and entity.Validate.
+	posts, err := r.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, userID, nil, int32(r.maxItems())) //nolint:gosec // bounded to 1..10000 by the settings.feed CHECK and entity.Validate.
 	if err != nil {
 		return err
 	}

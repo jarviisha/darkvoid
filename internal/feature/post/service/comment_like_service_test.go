@@ -524,12 +524,11 @@ func TestToggleCommentLike_Like_WhenNotLiked(t *testing.T) {
 	commentID := uuid.New()
 	authorID := uuid.New()
 	userID := uuid.New()
-	var likeCalled bool
+	var toggleCalled bool
 	clr := &mockCommentLikeRepo{
-		isLiked: func(_ context.Context, _, _ uuid.UUID) (bool, error) { return false, nil },
-		like: func(_ context.Context, _, _ uuid.UUID) error {
-			likeCalled = true
-			return nil
+		toggle: func(_ context.Context, _, _ uuid.UUID) (bool, error) {
+			toggleCalled = true
+			return true, nil
 		},
 	}
 	svc := newCommentLikeService(clr, commentExists(authorID))
@@ -541,8 +540,8 @@ func TestToggleCommentLike_Like_WhenNotLiked(t *testing.T) {
 	if !liked {
 		t.Error("expected liked=true")
 	}
-	if !likeCalled {
-		t.Error("expected Like to be called")
+	if !toggleCalled {
+		t.Error("expected Toggle to be called")
 	}
 }
 
@@ -550,12 +549,11 @@ func TestToggleCommentLike_Unlike_WhenAlreadyLiked(t *testing.T) {
 	commentID := uuid.New()
 	authorID := uuid.New()
 	userID := uuid.New()
-	var unlikeCalled bool
+	var toggleCalled bool
 	clr := &mockCommentLikeRepo{
-		isLiked: func(_ context.Context, _, _ uuid.UUID) (bool, error) { return true, nil },
-		unlike: func(_ context.Context, _, _ uuid.UUID) error {
-			unlikeCalled = true
-			return nil
+		toggle: func(_ context.Context, _, _ uuid.UUID) (bool, error) {
+			toggleCalled = true
+			return false, nil
 		},
 	}
 	svc := newCommentLikeService(clr, commentExists(authorID))
@@ -567,8 +565,8 @@ func TestToggleCommentLike_Unlike_WhenAlreadyLiked(t *testing.T) {
 	if liked {
 		t.Error("expected liked=false after unlike")
 	}
-	if !unlikeCalled {
-		t.Error("expected Unlike to be called")
+	if !toggleCalled {
+		t.Error("expected Toggle to be called")
 	}
 }
 
@@ -602,27 +600,11 @@ func TestToggleCommentLike_SelfLike(t *testing.T) {
 	}
 }
 
-func TestToggleCommentLike_IsLikedError(t *testing.T) {
+func TestToggleCommentLike_RepoError(t *testing.T) {
 	authorID := uuid.New()
 	clr := &mockCommentLikeRepo{
-		isLiked: func(_ context.Context, _, _ uuid.UUID) (bool, error) {
+		toggle: func(_ context.Context, _, _ uuid.UUID) (bool, error) {
 			return false, pkgerrors.NewInternalError(pkgerrors.ErrInternal)
-		},
-	}
-	svc := newCommentLikeService(clr, commentExists(authorID))
-
-	_, err := svc.Toggle(context.Background(), uuid.New(), uuid.New())
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestToggleCommentLike_LikeRepoError(t *testing.T) {
-	authorID := uuid.New()
-	clr := &mockCommentLikeRepo{
-		isLiked: func(_ context.Context, _, _ uuid.UUID) (bool, error) { return false, nil },
-		like: func(_ context.Context, _, _ uuid.UUID) error {
-			return pkgerrors.NewInternalError(pkgerrors.ErrInternal)
 		},
 	}
 	svc := newCommentLikeService(clr, commentExists(authorID))

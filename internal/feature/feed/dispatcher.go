@@ -70,6 +70,7 @@ type EventDispatcher struct {
 	closed         bool
 	wg             sync.WaitGroup
 	outbox         *PostgresOutbox
+	outboxWorkers  int
 	stopOutbox     chan struct{}
 	outboxWG       sync.WaitGroup
 	outboxStopOnce sync.Once
@@ -94,9 +95,10 @@ func NewEventDispatcher(settings *Settings, workers int, queueSize int, handler 
 		queueSize = 1
 	}
 	d := &EventDispatcher{
-		settings: settings,
-		jobs:     make(chan Event, queueSize),
-		handler:  handler,
+		settings:      settings,
+		jobs:          make(chan Event, queueSize),
+		handler:       handler,
+		outboxWorkers: workers,
 	}
 	if handler != nil {
 		for i := 0; i < workers; i++ {
@@ -188,31 +190,51 @@ func (d *EventDispatcher) consumeOutbox() {
 }
 
 func (d *EventDispatcher) consumeOutboxBatch() {
-	ctx, cancel := context.WithTimeout(context.Background(), eventHandlerTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	entries, err := d.outbox.claim(ctx, 50)
+	entries, err := d.outbox.claim(ctx, d.outboxWorkers)
 	if err != nil {
 		logger.LogError(ctx, err, "feed outbox claim failed")
 		return
 	}
+
+	var wg sync.WaitGroup
 	for _, entry := range entries {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.processOutboxEntry(entry)
+		}()
+	}
+	wg.Wait()
+}
+
+func (d *EventDispatcher) processOutboxEntry(entry outboxEntry) {
+	eventErr := entry.DecodeErr
+	if eventErr == nil {
 		if entry.Event.Score == 0 && (entry.Event.Type == EventPostCreated || entry.Event.Type == EventVisibilityChanged) {
 			entry.Event.Score = PackTimelineScore(d.writeScore(), entry.Event.CreatedAt)
 		}
-		if err := d.handler.HandleFeedEvent(ctx, entry.Event); err != nil {
-			logger.LogError(ctx, err, "feed outbox event failed", "event_type", entry.Event.Type, "attempt", entry.Attempts)
-			CountOutboxRetry()
-			if entry.Attempts >= outboxMaxAttempts {
-				CountOutboxDeadLetter()
-			}
-			if failErr := d.outbox.fail(ctx, entry, err); failErr != nil {
-				logger.LogError(ctx, failErr, "feed outbox retry scheduling failed", "event_id", entry.ID)
-			}
-			continue
+		handlerCtx, cancel := context.WithTimeout(context.Background(), eventHandlerTimeout)
+		eventErr = d.handler.HandleFeedEvent(handlerCtx, entry.Event)
+		cancel()
+	}
+
+	persistCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if eventErr != nil {
+		logger.LogError(persistCtx, eventErr, "feed outbox event failed", "event_id", entry.ID, "event_type", entry.Event.Type, "attempt", entry.Attempts)
+		CountOutboxRetry()
+		if entry.Attempts >= outboxMaxAttempts {
+			CountOutboxDeadLetter()
 		}
-		if err := d.outbox.complete(ctx, entry.ID); err != nil {
-			logger.LogError(ctx, err, "feed outbox completion failed", "event_id", entry.ID)
+		if failErr := d.outbox.fail(persistCtx, entry, eventErr); failErr != nil {
+			logger.LogError(persistCtx, failErr, "feed outbox retry scheduling failed", "event_id", entry.ID)
 		}
+		return
+	}
+	if err := d.outbox.complete(persistCtx, entry.ID); err != nil {
+		logger.LogError(persistCtx, err, "feed outbox completion failed", "event_id", entry.ID)
 	}
 }
 

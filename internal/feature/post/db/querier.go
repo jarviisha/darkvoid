@@ -76,6 +76,7 @@ type Querier interface {
 	LikeComment(ctx context.Context, arg LikeCommentParams) error
 	LikePost(ctx context.Context, arg LikePostParams) error
 	LinkPostHashtag(ctx context.Context, arg LinkPostHashtagParams) error
+	LockCommentLike(ctx context.Context, arg LockCommentLikeParams) error
 	// Like Queries
 	LockPostLike(ctx context.Context, arg LockPostLikeParams) error
 	SearchHashtagsByPrefix(ctx context.Context, arg SearchHashtagsByPrefixParams) ([]string, error)

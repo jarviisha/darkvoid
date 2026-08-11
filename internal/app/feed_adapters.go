@@ -108,7 +108,7 @@ type postReader struct {
 }
 
 type feedPostRepo interface {
-	GetFollowingPostsWithCursor(ctx context.Context, authorIDs []uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorID uuid.UUID, limit int32) ([]*postentity.Post, error)
+	GetFollowingPostsWithCursor(ctx context.Context, authorIDs []uuid.UUID, viewerID uuid.UUID, cursorCreatedAt pgtype.Timestamptz, cursorID uuid.UUID, limit int32) ([]*postentity.Post, error)
 	GetTrendingPosts(ctx context.Context, limit int32) ([]*postentity.Post, error)
 	GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*postentity.Post, error)
 	GetDiscoverWithCursor(ctx context.Context, cursorCreatedAt pgtype.Timestamptz, cursorID uuid.UUID, limit int32) ([]*postentity.Post, error)
@@ -122,7 +122,7 @@ type feedLikeRepo interface {
 	GetLikedPostIDs(ctx context.Context, userID uuid.UUID, postIDs []uuid.UUID) ([]uuid.UUID, error)
 }
 
-func (r *postReader) GetFollowingPostsWithCursor(ctx context.Context, authorIDs []uuid.UUID, cursor *feed.FollowingCursor, limit int32) ([]*feedentity.Post, error) {
+func (r *postReader) GetFollowingPostsWithCursor(ctx context.Context, authorIDs []uuid.UUID, viewerID uuid.UUID, cursor *feed.FollowingCursor, limit int32) ([]*feedentity.Post, error) {
 	var cursorTS pgtype.Timestamptz
 	var cursorID uuid.UUID
 
@@ -136,7 +136,7 @@ func (r *postReader) GetFollowingPostsWithCursor(ctx context.Context, authorIDs 
 		cursorTS, cursorID = feed.DefaultDiscoverPgParams()
 	}
 
-	posts, err := r.postRepo.GetFollowingPostsWithCursor(ctx, authorIDs, cursorTS, cursorID, limit)
+	posts, err := r.postRepo.GetFollowingPostsWithCursor(ctx, authorIDs, viewerID, cursorTS, cursorID, limit)
 	if err != nil {
 		return nil, pkgerrors.NewInternalError(err)
 	}

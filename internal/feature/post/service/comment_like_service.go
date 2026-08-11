@@ -57,26 +57,18 @@ func (s *CommentLikeService) Toggle(ctx context.Context, userID, commentID uuid.
 		return false, post.ErrSelfLike
 	}
 
-	liked, err := s.commentLikeRepo.IsLiked(ctx, userID, commentID)
+	liked, err := s.commentLikeRepo.Toggle(ctx, userID, commentID)
 	if err != nil {
-		logger.LogError(ctx, err, "failed to check comment like status", "user_id", userID, "comment_id", commentID)
+		logger.LogError(ctx, err, "failed to toggle comment like", "user_id", userID, "comment_id", commentID)
 		return false, errors.NewInternalError(err)
 	}
 
-	if liked {
-		if err := s.commentLikeRepo.Unlike(ctx, userID, commentID); err != nil {
-			logger.LogError(ctx, err, "failed to unlike comment", "user_id", userID, "comment_id", commentID)
-			return false, errors.NewInternalError(err)
-		}
+	if !liked {
 		s.deleteCommentLikeNotification(ctx, userID, commentID)
 		logger.Info(ctx, "comment unliked", "user_id", userID, "comment_id", commentID)
 		return false, nil
 	}
 
-	if err := s.commentLikeRepo.Like(ctx, userID, commentID); err != nil {
-		logger.LogError(ctx, err, "failed to like comment", "user_id", userID, "comment_id", commentID)
-		return false, errors.NewInternalError(err)
-	}
 	s.emitCommentLikeNotification(ctx, userID, c.AuthorID, commentID)
 	logger.Info(ctx, "comment liked", "user_id", userID, "comment_id", commentID)
 	return true, nil
