@@ -52,6 +52,7 @@ Các finding P2 đã được sửa trong worktree ngày 2026-08-11:
 | P2-03 | Resolved | Forwarded client IP chỉ được nhận từ `TRUSTED_PROXY_CIDRS`; chuỗi proxy được duyệt từ phải sang trái, header lỗi fail-closed và production Compose chỉ bind loopback theo mặc định |
 | P2-04 | Resolved | Common responses có `nosniff`, anti-frame, no-referrer và Permissions Policy; API/health/metrics dùng CSP khóa resource context, static upload dùng CSP sandbox riêng, Swagger giữ policy tương thích UI |
 | P2-05 | Resolved | Access middleware tạo request-scoped state đồng bộ; required/optional auth cập nhật `user_id` qua cùng pointer để final access log luôn đọc được identity sau khi handler hoàn tất |
+| P2-06 | Resolved | JSON response được encode hoàn chỉnh vào buffer trước khi commit status; lỗi encode trả contract `INTERNAL_ERROR` sạch với HTTP 500 |
 
 Tác động triển khai của P2:
 
@@ -585,11 +586,13 @@ Khuyến nghị dùng response/request state chung hoặc context carrier có po
 
 ---
 
-### P2-06: JSON response xử lý encode error sau khi đã gửi status
+### P2-06: JSON response xử lý encode error sau khi đã gửi status — Resolved
 
 **Mức độ:** Low
 
-`WriteJSON` gửi status trước, sau đó gọi `http.Error` nếu encode thất bại: [`internal/http/response.go:12`](../internal/http/response.go#L12). Khi header/body đã bắt đầu, status không thể đổi thành 500 và response có thể bị trộn JSON/plain text.
+> Đã sửa bằng cách encode payload hoàn chỉnh vào buffer trước khi commit header/status. Payload không encode được sẽ bị loại bỏ và trả JSON `INTERNAL_ERROR` với HTTP 500; regression test xác nhận response không bị trộn plain text. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, `WriteJSON` gửi status trước, sau đó gọi `http.Error` nếu encode thất bại: [`internal/http/response.go:12`](../internal/http/response.go#L12). Khi header/body đã bắt đầu, status không thể đổi thành 500 và response có thể bị trộn JSON/plain text.
 
 Khuyến nghị encode vào buffer trước khi commit header, hoặc chỉ log lỗi sau khi streaming đã bắt đầu.
 
