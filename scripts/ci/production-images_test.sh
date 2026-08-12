@@ -29,8 +29,8 @@ while IFS= read -r reference; do
 		*) assert_pinned_reference docker-compose.prod.yml "$reference" ;;
 	esac
 done < <(sed -n 's/^[[:space:]]*image:[[:space:]]*//p' "$compose_file")
-if [ "$compose_image_count" -ne 6 ]; then
-	fail "expected 6 production image declarations, found $compose_image_count"
+if [ "$compose_image_count" -ne 7 ]; then
+	fail "expected 7 production image declarations, found $compose_image_count"
 fi
 
 if grep -Eq 'APP_TAG|:[[:space:]]*latest([@[:space:]]|$)|:-latest' "$compose_file"; then

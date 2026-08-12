@@ -202,17 +202,53 @@ services:
 
   migrate-bot:
     <<: *migrate
-    command:
-      [
-        "-path",
-        "/migrations/bot",
-        "-database",
-        "postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_bot",
-        "up",
-      ]
+    # Normal deploys may create/update the retired bot schema through 000008,
+    # but never execute 000009 (DROP SCHEMA) and never downgrade a DB already at
+    # 000009. The separate profile below is the only destructive path.
+    entrypoint: ["/bin/sh", "/migration-guard/run-bot-safe.sh"]
+    volumes:
+      - ./migrations:/migrations:ro
+      - ./scripts/migrations:/migration-guard:ro
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      MIGRATION_DATABASE_URL: postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_bot
+      MIGRATION_PATH: /migrations/bot
+      BOT_SAFE_MIGRATION_VERSION: "8"
+      BOT_RETIRED_MIGRATION_VERSION: "9"
     depends_on:
       migrate-notification:
         condition: service_completed_successfully
+
+  # Explicit data-destruction path. This service is absent from a normal `up`;
+  # use only through the protected manual workflow/runbook. It independently
+  # validates approval, a handoff reference and fresh backup/restore evidence.
+  migrate-bot-destructive:
+    image: migrate/migrate:v4.19.1@sha256:cc4ad8e19d66791e3689405d9a028ce6e9614f32032db14acda1469f7201d6e4
+    profiles: [destructive-migration]
+    restart: "no"
+    logging: *logging
+    <<: *hardening
+    entrypoint: ["/bin/sh", "/migration-guard/run-bot-destructive.sh"]
+    volumes:
+      - ./migrations:/migrations:ro
+      - ./scripts/migrations:/migration-guard:ro
+      - backup_state:/backup-state:ro
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      MIGRATION_DATABASE_URL: postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_bot
+      MIGRATION_PATH: /migrations/bot
+      BOT_SAFE_MIGRATION_VERSION: "8"
+      BOT_RETIRED_MIGRATION_VERSION: "9"
+      BOT_SCHEMA_DROP_APPROVAL: ${BOT_SCHEMA_DROP_APPROVAL:-}
+      BOT_DATA_HANDOFF_REFERENCE: ${BOT_DATA_HANDOFF_REFERENCE:-}
+      BOT_DROP_BACKUP_MAX_AGE_SECONDS: ${BOT_DROP_BACKUP_MAX_AGE_SECONDS:-172800}
+      BOT_DROP_RESTORE_MAX_AGE_SECONDS: ${BOT_DROP_RESTORE_MAX_AGE_SECONDS:-604800}
+      BACKUP_STATE_DIR: /backup-state
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pg-backup:
+        condition: service_healthy
 
   migrate-settings:
     <<: *migrate

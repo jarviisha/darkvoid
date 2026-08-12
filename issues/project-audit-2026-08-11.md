@@ -2,11 +2,10 @@
 
 ## Kết luận
 
-Dự án có cấu trúc modular monolith tương đối rõ ràng. Toàn bộ finding P0, P1 và P2-01 đến P2-11 đã được khắc phục, bao gồm phân quyền nội dung, upload, shared object storage, automated off-host backup, reproducible container selection, error handling, feed/notification consistency, session hardening và các truy vấn/enrichment order-sensitive. Các kiểm tra tự động được ghi nhận trong audit đều đạt.
+Dự án có cấu trúc modular monolith tương đối rõ ràng. Toàn bộ finding P0, P1 và P2-01 đến P2-12 đã được khắc phục, bao gồm phân quyền nội dung, upload, shared object storage, automated off-host backup, reproducible container selection, destructive-migration gating, error handling, feed/notification consistency, session hardening và các truy vấn/enrichment order-sensitive. Các kiểm tra tự động được ghi nhận trong audit đều đạt.
 
-Dự án không còn blocker bảo mật/correctness đã biết trong phạm vi P0–P2-11, nhưng vẫn chưa production-ready hoàn toàn cho tới khi xử lý các finding vận hành và test coverage còn lại:
+Dự án không còn blocker bảo mật/correctness đã biết trong phạm vi P0–P2-12, nhưng vẫn chưa production-ready hoàn toàn cho tới khi xử lý finding test coverage còn lại:
 
-- Migration xóa schema bot cần backup, restore verification và approval gate riêng.
 - Test coverage vẫn thiếu ở một số package rủi ro cao; Redis integration test phụ thuộc môi trường chạy.
 
 ## Trạng thái khắc phục
@@ -53,6 +52,7 @@ Các finding P2 đã được sửa trong worktree đến ngày 2026-08-12:
 | P2-09 | Resolved | Thêm S3-compatible shared storage và bucket health probe; production từ chối local storage, localhost URL và URL không dùng HTTPS |
 | P2-10 | Resolved | Backup PostgreSQL chạy tự động vào Restic repository mã hóa/off-host, có daily/weekly/monthly retention, restore drill định kỳ, health state và failure/recovery webhook |
 | P2-11 | Resolved | PostgreSQL, Redis, migrate và mọi Dockerfile base image dùng exact tag kèm manifest digest; app/backup deploy bằng build digest, CD lưu digest vào `.env` và CI từ chối floating reference |
+| P2-12 | Resolved | Bot `000009` bị loại khỏi automatic migration path, có session SQL guard, protected manual workflow, handoff reference và fresh backup/restore evidence; generic down không còn giả làm data rollback |
 
 Tác động triển khai của P2:
 
@@ -61,6 +61,7 @@ Tác động triển khai của P2:
 - Production bắt buộc `STORAGE_PROVIDER=s3`, public `STORAGE_BASE_URL` dùng HTTPS, region và bucket dùng chung. Access key/secret có thể bỏ trống để dùng IAM role/workload identity; principal cần quyền probe bucket, upload multipart và delete object. Bucket/CDN read policy nằm ngoài ứng dụng và phải được operator cấu hình.
 - Production Compose bắt buộc `BACKUP_RESTIC_REPOSITORY`, `BACKUP_RESTIC_PASSWORD` và HTTPS `BACKUP_ALERT_WEBHOOK_URL`; repository filesystem/cùng host bị từ chối. Backup principal cần read/write/list/delete trên prefix riêng, còn database role cần `CREATEDB` để restore drill vào database cô lập. CD build app/backup từ cùng commit và deploy đúng cặp digest registry trả về; hướng dẫn vận hành và khôi phục nằm tại [`docs/production-backup-runbook.md`](../docs/production-backup-runbook.md).
 - Production không còn chấp nhận `APP_TAG` hay fallback `latest`. CD lấy `APP_DIGEST`/`BACKUP_DIGEST` từ kết quả build-push và lưu cả hai vào `.env`; rollback phải khôi phục đúng cặp digest từ cùng deployment. Nâng cấp PostgreSQL, Redis, migrate, Go hoặc Alpine phải cập nhật đồng thời exact tag và manifest digest; `make test-production-images` ngăn reference thiếu digest quay lại.
+- Trước khi chạy bot schema retirement một lần, phải cấu hình GitHub environment `production` với required reviewers, prevent self-review, VPS secrets và `DEPLOY_DIR`; sau đó dùng workflow `Retire legacy bot schema` cùng change/handoff reference. Normal deploy và `make migrate-up-bot` chỉ dừng ở `000008`. Recovery dữ liệu chỉ từ snapshot theo [`docs/bot-schema-retirement-runbook.md`](../docs/bot-schema-retirement-runbook.md), không dùng down migration.
 
 Tác động triển khai của P1:
 
@@ -688,9 +689,11 @@ Khuyến nghị pin version patch hoặc digest, đặc biệt cho production de
 
 ---
 
-### P2-12: Migration bot phá hủy dữ liệu nằm trong migration chain tự động
+### P2-12: Migration bot phá hủy dữ liệu nằm trong migration chain tự động — Resolved
 
 **Mức độ:** High operational risk
+
+> Đã tách migration `000009` khỏi deploy thường: safe runner chỉ tiến tới `000008`, no-op khi DB đã ở `000009`, và từ chối downgrade/version mới hơn/dirty state. Đường phá hủy là Compose profile riêng được gọi từ workflow thủ công qua GitHub `production` environment; runner yêu cầu exact confirmation, reference bàn giao external bot, backup ≤48 giờ và restore drill ≤7 ngày. SQL `000009` còn kiểm tra session-only approval trước `DROP SCHEMA`. Generic `make migrate-down` không còn chạy bot vì down chỉ tạo schema rỗng; runbook mô tả recovery từ snapshot thay vì data rollback giả. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
 
 - Up migration chạy `DROP SCHEMA IF EXISTS bot CASCADE`: [`migrations/bot/000009_drop_bot_schema.up.sql:22`](../migrations/bot/000009_drop_bot_schema.up.sql#L22).
 - Down migration chỉ tái tạo schema rỗng và không thể phục hồi dữ liệu: [`migrations/bot/000009_drop_bot_schema.down.sql:1`](../migrations/bot/000009_drop_bot_schema.down.sql#L1).
