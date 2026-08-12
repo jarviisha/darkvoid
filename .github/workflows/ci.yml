@@ -23,3 +23,6 @@ jobs:
 
       - name: Run tests
         run: go test -race ./...
+
+      - name: Test production backup scheduler
+        run: make test-backup

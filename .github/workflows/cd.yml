@@ -43,6 +43,15 @@ jobs:
             type=sha,prefix=
             type=raw,value=latest
 
+      - name: Extract backup image metadata
+        id: backup-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backup
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -50,6 +59,15 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build and push backup image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/backup/Dockerfile
+          push: true
+          tags: ${{ steps.backup-meta.outputs.tags }}
+          labels: ${{ steps.backup-meta.outputs.labels }}
 
   deploy:
     if: github.event.workflow_run.conclusion == 'success'
@@ -103,7 +121,7 @@ jobs:
             # repo-linked package — no long-lived PAT on the server.
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            $COMPOSE pull app
+            $COMPOSE pull app pg-backup
 
             # Migrations run automatically: app depends_on the tail of the
             # migrate-* chain with service_completed_successfully, so it only

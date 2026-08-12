@@ -2,11 +2,10 @@
 
 ## Kết luận
 
-Dự án có cấu trúc modular monolith tương đối rõ ràng. Toàn bộ finding P0, P1 và P2-01 đến P2-09 đã được khắc phục, bao gồm phân quyền nội dung, upload, shared object storage, error handling, feed/notification consistency, session hardening và các truy vấn/enrichment order-sensitive. Các kiểm tra tự động được ghi nhận trong audit đều đạt.
+Dự án có cấu trúc modular monolith tương đối rõ ràng. Toàn bộ finding P0, P1 và P2-01 đến P2-10 đã được khắc phục, bao gồm phân quyền nội dung, upload, shared object storage, automated off-host backup, error handling, feed/notification consistency, session hardening và các truy vấn/enrichment order-sensitive. Các kiểm tra tự động được ghi nhận trong audit đều đạt.
 
-Dự án không còn blocker bảo mật/correctness đã biết trong phạm vi P0–P2-09, nhưng vẫn chưa production-ready hoàn toàn cho tới khi xử lý các finding vận hành và test coverage còn lại:
+Dự án không còn blocker bảo mật/correctness đã biết trong phạm vi P0–P2-10, nhưng vẫn chưa production-ready hoàn toàn cho tới khi xử lý các finding vận hành và test coverage còn lại:
 
-- Backup vẫn thủ công, cùng host và chưa có restore drill định kỳ.
 - Container image còn dùng floating tag nên deployment chưa reproducible hoàn toàn.
 - Migration xóa schema bot cần backup, restore verification và approval gate riêng.
 - Test coverage vẫn thiếu ở một số package rủi ro cao; Redis integration test phụ thuộc môi trường chạy.
@@ -53,12 +52,14 @@ Các finding P2 đã được sửa trong worktree đến ngày 2026-08-12:
 | P2-07 | Resolved | Feed service chỉ còn điều phối; timeline, mixed blend, trending, discovery, follow resolution và enrichment được tách thành component riêng, cursor transition có table-driven tests |
 | P2-08 | Resolved | Post listing batch-check quan hệ follow trong một query; trending và follower/following listing dùng ID làm deterministic tie-breaker |
 | P2-09 | Resolved | Thêm S3-compatible shared storage và bucket health probe; production từ chối local storage, localhost URL và URL không dùng HTTPS |
+| P2-10 | Resolved | Backup PostgreSQL chạy tự động vào Restic repository mã hóa/off-host, có daily/weekly/monthly retention, restore drill định kỳ, health state và failure/recovery webhook |
 
 Tác động triển khai của P2:
 
 - `JWT_AUDIENCE` mặc định là `darkvoid-api`; mọi API instance phải dùng cùng giá trị. Access token cũ không có claim `aud` sẽ bị từ chối sau khi deploy và client cần dùng refresh token để lấy access token mới; refresh token không bị ảnh hưởng.
 - Production Compose đổi `SERVER_BIND` mặc định từ `0.0.0.0` sang `127.0.0.1`. Deployment dùng reverse proxy phải cấu hình `TRUSTED_PROXY_CIDRS` theo source CIDR mà app thực sự nhìn thấy và proxy phải overwrite hoặc append đúng `X-Forwarded-For`; chỉ mở bind ra interface khác khi firewall/private load-balancer network đã chặn truy cập trực tiếp.
 - Production bắt buộc `STORAGE_PROVIDER=s3`, public `STORAGE_BASE_URL` dùng HTTPS, region và bucket dùng chung. Access key/secret có thể bỏ trống để dùng IAM role/workload identity; principal cần quyền probe bucket, upload multipart và delete object. Bucket/CDN read policy nằm ngoài ứng dụng và phải được operator cấu hình.
+- Production Compose bắt buộc `BACKUP_RESTIC_REPOSITORY`, `BACKUP_RESTIC_PASSWORD` và HTTPS `BACKUP_ALERT_WEBHOOK_URL`; repository filesystem/cùng host bị từ chối. Backup principal cần read/write/list/delete trên prefix riêng, còn database role cần `CREATEDB` để restore drill vào database cô lập. CD phát hành/pull backup image cùng commit SHA với app; hướng dẫn vận hành và khôi phục nằm tại [`docs/production-backup-runbook.md`](../docs/production-backup-runbook.md).
 
 Tác động triển khai của P1:
 
@@ -657,9 +658,11 @@ Khuyến nghị triển khai object storage/CDN thật, health check storage và
 
 ---
 
-### P2-10: Backup production là opt-in, một lần và cùng host
+### P2-10: Backup production là opt-in, một lần và cùng host — Resolved
 
 **Mức độ:** Medium/High
+
+> Đã thay one-shot profile bằng scheduler luôn chạy trong production stack. Mỗi cycle stream PostgreSQL custom dump vào Restic repository từ xa được mã hóa, áp retention ngày/tuần/tháng, và định kỳ restore chính snapshot vừa tạo vào database cô lập để xác minh. Backup thất bại/config lỗi được gửi tới HTTPS webhook, lần chạy phục hồi gửi recovery event, và health check phát hiện cycle quá hạn. Local volume chỉ còn timestamp/cache có thể tái tạo, không chứa snapshot. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
 
 Compose ghi rõ backup chỉ chạy thủ công và lưu local volume: [`docker-compose.prod.yml:333`](../docker-compose.prod.yml#L333).
 
@@ -715,6 +718,8 @@ Các package hiện không có test đáng kể:
 - `pkg/logger`
 
 `pkg/storage` nay có unit test cho local/S3 factory, upload metadata, delete, URL và health propagation; integration test với bucket S3/MinIO thật vẫn cần được bổ sung trong P2-13.
+
+Backup scheduler có shell contract test và end-to-end drill bằng PostgreSQL/Restic container tạm; đường truyền tới repository off-host và failure/recovery webhook thật vẫn cần được xác minh trong môi trường staging có credentials production-like.
 
 Redis timeline integration tests bị skip nếu `REDIS_TEST_ADDR` không được cấu hình: [`internal/feature/feed/cache/redis_timeline_store_test.go:26`](../internal/feature/feed/cache/redis_timeline_store_test.go#L26).
 

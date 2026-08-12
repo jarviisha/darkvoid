@@ -47,8 +47,8 @@ func (app *Application) setupInfrastructure(ctx context.Context) (storage.Storag
 	if !ok {
 		return nil, nil, fmt.Errorf("storage provider %q does not implement health checks", app.cfg.Storage.Provider)
 	}
-	if err := health.HealthCheck(ctx); err != nil {
-		return nil, nil, fmt.Errorf("storage health check failed: %w", err)
+	if healthErr := health.HealthCheck(ctx); healthErr != nil {
+		return nil, nil, fmt.Errorf("storage health check failed: %w", healthErr)
 	}
 	app.storageHealth = health
 	app.log.Info("storage initialized", "provider", app.cfg.Storage.Provider, "base_url", app.cfg.Storage.BaseURL)

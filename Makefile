@@ -4,7 +4,7 @@ SHELL := /bin/bash
 .PHONY: help \
 	sqlc-generate sqlc-clean swagger-init swagger-generate swagger-serve generate \
 	build run dev ctl clean \
-	test test-v test-cover test-cover-html test-feature lint deps \
+	test test-v test-cover test-cover-html test-feature test-backup lint deps \
 	docker-up docker-up-app docker-seed docker-seed-reset \
 	docker-down docker-down-app docker-logs docker-logs-app \
 	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-up-bot migrate-up-settings migrate-down-notification migrate-create migrate-status migrate-force \
@@ -134,8 +134,12 @@ ctl: ## Run the operator CLI (usage: make ctl CTL_ARGS="user list")
 clean: ## Clean build artifacts
 	rm -rf $(BIN_DIR) $(COVERAGE_FILE)
 
-test: ## Run all tests
+test: test-backup ## Run all tests
 	$(GO) test ./...
+
+test-backup: ## Validate the production backup scheduler
+	bash -n scripts/backup/postgres-restic.sh
+	bash scripts/backup/postgres-restic_test.sh
 
 test-v: ## Run all tests with verbose output
 	$(GO) test -v ./...
