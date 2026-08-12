@@ -93,14 +93,14 @@ func TestCookieSameSiteMode_Mapping(t *testing.T) {
 // can change one field and attribute the failure to that field.
 func validCookieConfig() *Config {
 	cfg := &Config{}
-	cfg.App = AppConfig{Name: "darkvoid", Environment: "production"}
+	cfg.App = AppConfig{Name: "darkvoid", Environment: "development"}
 	cfg.Database = DatabaseConfig{Host: "localhost", Port: 5432, User: "postgres", Database: "darkvoid", MaxConns: 25, MinConns: 5}
 	cfg.Logger = LoggerConfig{Level: "info", Format: "json"}
 	cfg.Server = ServerConfig{Port: 8080}
 	cfg.Cookie = CookieConfig{SameSite: "lax", Secure: true}
 	cfg.JWT = JWTConfig{Secret: "secret", Issuer: "darkvoid", Audience: "darkvoid-api", AccessTokenExpiry: 15 * 60 * 1e9}
 	cfg.RefreshToken = RefreshTokenConfig{Expiry: 24 * 60 * 60 * 1e9}
-	cfg.Storage = StorageConfig{Provider: "local", LocalDir: "./uploads"}
+	cfg.Storage = StorageConfig{Provider: "local", BaseURL: "http://localhost:8080/static", LocalDir: "./uploads"}
 	cfg.FeedFanout = FeedFanoutConfig{Workers: 1, QueueSize: 1}
 	cfg.Settings = SettingsConfig{RefreshInterval: 30 * 1e9}
 	return cfg
@@ -108,7 +108,7 @@ func validCookieConfig() *Config {
 
 func TestValidate_RejectsUnsupportedStorageProvider(t *testing.T) {
 	cfg := validCookieConfig()
-	cfg.Storage.Provider = "s3"
+	cfg.Storage.Provider = "gcs"
 
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "storage provider") {

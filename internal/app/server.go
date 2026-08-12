@@ -17,6 +17,7 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
+	"github.com/jarviisha/darkvoid/pkg/storage"
 )
 
 // Server wraps HTTP server
@@ -27,17 +28,19 @@ type Server struct {
 	log        *logger.Logger
 	pool       *pgxpool.Pool    // Database pool for health checks
 	redis      *pkgredis.Client // Redis client for health checks
-	codohue    *codohueStatus   // Recommender state reported by /health; nil when unset
-	startTime  time.Time        // Server start time for uptime calculation
+	storage    storage.HealthChecker
+	codohue    *codohueStatus // Recommender state reported by /health; nil when unset
+	startTime  time.Time      // Server start time for uptime calculation
 }
 
 // NewServer creates an HTTP server with its global middleware policy.
-func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis *pkgredis.Client, codohue *codohueStatus) (*Server, error) {
+func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis *pkgredis.Client, storageHealth storage.HealthChecker, codohue *codohueStatus) (*Server, error) {
 	s := &Server{
 		cfg:       cfg,
 		log:       log,
 		pool:      pool,
 		redis:     redis,
+		storage:   storageHealth,
 		codohue:   codohue,
 		startTime: time.Now(),
 	}
@@ -140,6 +143,9 @@ type HealthCheckResponse struct {
 	// Pub/Sub, so an instance that cannot reach it serves a different feed rather
 	// than a slower one, and should be taken out of rotation.
 	Redis string `json:"redis"`
+	// Storage is "up" or "down". Upload success and media availability depend
+	// on every instance reaching the same backend, so down removes the instance.
+	Storage string `json:"storage"`
 	// Codohue is "off", "active", or "degraded". Degraded does not make the
 	// service unhealthy — the feed falls back to local scoring and the API is
 	// fully functional — but it has to be reported somewhere a monitor can see,
@@ -156,6 +162,7 @@ func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 		Status:   "healthy",
 		Database: "up",
 		Redis:    "up",
+		Storage:  "up",
 	}
 	if s.codohue != nil {
 		response.Codohue, response.CodohueReason = s.codohue.get()
@@ -175,6 +182,13 @@ func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 			s.log.Error("redis health check failed", "error", err)
 			response.Status = "unhealthy"
 			response.Redis = "down"
+		}
+	}
+	if s.storage != nil {
+		if err := s.storage.HealthCheck(ctx); err != nil {
+			s.log.Error("storage health check failed", "error", err)
+			response.Status = "unhealthy"
+			response.Storage = "down"
 		}
 	}
 

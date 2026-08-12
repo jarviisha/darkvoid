@@ -24,6 +24,7 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/jwt"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
+	"github.com/jarviisha/darkvoid/pkg/storage"
 	swaggerFiles "github.com/swaggo/files"
 	"github.com/swaggo/swag"
 )
@@ -45,6 +46,9 @@ type Application struct {
 	// codohue is the reported health of the recommender integration. Read by the
 	// health handler, written by startup and the degraded-state monitor.
 	codohue *codohueStatus
+	// storageHealth is the shared backend probe exposed through /health. It is
+	// set during context setup after the startup probe succeeds.
+	storageHealth storage.HealthChecker
 
 	// Bounded Contexts
 	User         *UserContext
@@ -344,7 +348,7 @@ func (app *Application) bootstrapRootUser(ctx context.Context) error {
 func (app *Application) setupServer() error {
 	app.log.Info("initializing HTTP server")
 
-	server, err := NewServer(app.cfg, app.log, app.pool, app.redis, app.codohue)
+	server, err := NewServer(app.cfg, app.log, app.pool, app.redis, app.storageHealth, app.codohue)
 	if err != nil {
 		return err
 	}

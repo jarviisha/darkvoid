@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 
@@ -136,7 +138,8 @@ type RootConfig struct {
 
 // StorageConfig holds file storage configuration
 type StorageConfig struct {
-	// Provider selects the storage backend. Only "local" is currently supported.
+	// Provider selects the storage backend: "local" for development or "s3"
+	// for shared production object storage.
 	Provider string
 
 	// BaseURL is the public base URL used to build file URLs from keys.
@@ -145,6 +148,22 @@ type StorageConfig struct {
 
 	// Local provider settings
 	LocalDir string // e.g. "./uploads"
+
+	// S3 contains AWS S3 or S3-compatible provider settings.
+	S3 S3StorageConfig
+}
+
+// S3StorageConfig configures shared object storage. Endpoint is empty for AWS
+// S3 and set for compatible providers such as MinIO. Empty static credentials
+// use the AWS default credential chain.
+type S3StorageConfig struct {
+	Endpoint        string
+	Region          string
+	Bucket          string
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
+	UsePathStyle    bool
 }
 
 // MailerConfig holds email sending configuration.
@@ -392,11 +411,8 @@ func (c *Config) Validate() error {
 	if c.RefreshToken.Expiry <= 0 {
 		return fmt.Errorf("refresh token expiry must be positive")
 	}
-	if c.Storage.Provider != "local" {
-		return fmt.Errorf("invalid storage provider %q: only local is currently supported", c.Storage.Provider)
-	}
-	if strings.TrimSpace(c.Storage.LocalDir) == "" {
-		return fmt.Errorf("storage local directory is required")
+	if err := c.validateStorage(); err != nil {
+		return err
 	}
 	if c.FeedFanout.Workers < 1 {
 		return fmt.Errorf("feed fanout workers must be at least 1")
@@ -414,6 +430,58 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+func (c *Config) validateStorage() error {
+	parsedBaseURL, err := url.Parse(c.Storage.BaseURL)
+	if err != nil || parsedBaseURL.Scheme == "" || parsedBaseURL.Host == "" || (parsedBaseURL.Scheme != "http" && parsedBaseURL.Scheme != "https") {
+		return fmt.Errorf("storage base URL must be an absolute HTTP(S) URL")
+	}
+
+	isProduction := strings.EqualFold(strings.TrimSpace(c.App.Environment), "production")
+	if isProduction {
+		if c.Storage.Provider != "s3" {
+			return fmt.Errorf("production storage provider must be s3 for shared multi-instance media")
+		}
+		if parsedBaseURL.Scheme != "https" {
+			return fmt.Errorf("production storage base URL must use HTTPS")
+		}
+		hostname := parsedBaseURL.Hostname()
+		if strings.EqualFold(hostname, "localhost") || isLoopbackHost(hostname) {
+			return fmt.Errorf("production storage base URL must be publicly reachable, not %q", hostname)
+		}
+	}
+
+	switch c.Storage.Provider {
+	case "local":
+		if strings.TrimSpace(c.Storage.LocalDir) == "" {
+			return fmt.Errorf("storage local directory is required")
+		}
+	case "s3":
+		if strings.TrimSpace(c.Storage.S3.Region) == "" {
+			return fmt.Errorf("storage S3 region is required")
+		}
+		if strings.TrimSpace(c.Storage.S3.Bucket) == "" {
+			return fmt.Errorf("storage S3 bucket is required")
+		}
+		if (c.Storage.S3.AccessKeyID == "") != (c.Storage.S3.SecretAccessKey == "") {
+			return fmt.Errorf("storage S3 access key ID and secret access key must be set together")
+		}
+		if endpoint := strings.TrimSpace(c.Storage.S3.Endpoint); endpoint != "" {
+			parsedEndpoint, endpointErr := url.Parse(endpoint)
+			if endpointErr != nil || parsedEndpoint.Scheme == "" || parsedEndpoint.Host == "" || (parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https") {
+				return fmt.Errorf("storage S3 endpoint must be an absolute HTTP(S) URL")
+			}
+		}
+	default:
+		return fmt.Errorf("invalid storage provider %q: want local or s3", c.Storage.Provider)
+	}
+	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // IsDevelopment checks if running in development environment

@@ -281,13 +281,19 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
 
       # Storage
-      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
-      STORAGE_BASE_URL: ${STORAGE_BASE_URL:-http://localhost:8080/static}
-      STORAGE_LOCAL_DIR: /app/uploads
+      # Production is deliberately S3-only: a container-local/named volume is
+      # not shared across hosts and makes rolling replacement lose media.
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:?set STORAGE_PROVIDER=s3}
+      STORAGE_BASE_URL: ${STORAGE_BASE_URL:?set the public HTTPS CDN/object URL}
+      STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-}
+      STORAGE_S3_REGION: ${STORAGE_S3_REGION:?set the S3 region}
+      STORAGE_S3_BUCKET: ${STORAGE_S3_BUCKET:?set the shared media bucket}
+      STORAGE_S3_ACCESS_KEY_ID: ${STORAGE_S3_ACCESS_KEY_ID:-}
+      STORAGE_S3_SECRET_ACCESS_KEY: ${STORAGE_S3_SECRET_ACCESS_KEY:-}
+      STORAGE_S3_SESSION_TOKEN: ${STORAGE_S3_SESSION_TOKEN:-}
+      STORAGE_S3_USE_PATH_STYLE: ${STORAGE_S3_USE_PATH_STYLE:-false}
       # Mailer
       MAILER_PROVIDER: ${MAILER_PROVIDER:-nop}
-    volumes:
-      - uploads:/app/uploads
     deploy:
       resources:
         limits:
@@ -370,5 +376,4 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  uploads:
   pg_backups:

@@ -2,11 +2,10 @@
 
 ## Kết luận
 
-Dự án có cấu trúc modular monolith tương đối rõ ràng. Toàn bộ finding P0, P1 và P2-01 đến P2-08 đã được khắc phục, bao gồm phân quyền nội dung, upload, storage fail-closed, error handling, feed/notification consistency, session hardening và các truy vấn/enrichment order-sensitive. Các kiểm tra tự động được ghi nhận trong audit đều đạt.
+Dự án có cấu trúc modular monolith tương đối rõ ràng. Toàn bộ finding P0, P1 và P2-01 đến P2-09 đã được khắc phục, bao gồm phân quyền nội dung, upload, shared object storage, error handling, feed/notification consistency, session hardening và các truy vấn/enrichment order-sensitive. Các kiểm tra tự động được ghi nhận trong audit đều đạt.
 
-Dự án không còn blocker bảo mật/correctness đã biết trong phạm vi P0–P2-08, nhưng vẫn chưa production-ready cho mô hình multi-instance cho tới khi xử lý các finding vận hành và test coverage còn lại:
+Dự án không còn blocker bảo mật/correctness đã biết trong phạm vi P0–P2-09, nhưng vẫn chưa production-ready hoàn toàn cho tới khi xử lý các finding vận hành và test coverage còn lại:
 
-- Local storage chưa dùng chung giữa các instance và chưa có object storage/CDN production.
 - Backup vẫn thủ công, cùng host và chưa có restore drill định kỳ.
 - Container image còn dùng floating tag nên deployment chưa reproducible hoàn toàn.
 - Migration xóa schema bot cần backup, restore verification và approval gate riêng.
@@ -53,11 +52,13 @@ Các finding P2 đã được sửa trong worktree đến ngày 2026-08-12:
 | P2-06 | Resolved | JSON response được encode hoàn chỉnh vào buffer trước khi commit status; lỗi encode trả contract `INTERNAL_ERROR` sạch với HTTP 500 |
 | P2-07 | Resolved | Feed service chỉ còn điều phối; timeline, mixed blend, trending, discovery, follow resolution và enrichment được tách thành component riêng, cursor transition có table-driven tests |
 | P2-08 | Resolved | Post listing batch-check quan hệ follow trong một query; trending và follower/following listing dùng ID làm deterministic tie-breaker |
+| P2-09 | Resolved | Thêm S3-compatible shared storage và bucket health probe; production từ chối local storage, localhost URL và URL không dùng HTTPS |
 
 Tác động triển khai của P2:
 
 - `JWT_AUDIENCE` mặc định là `darkvoid-api`; mọi API instance phải dùng cùng giá trị. Access token cũ không có claim `aud` sẽ bị từ chối sau khi deploy và client cần dùng refresh token để lấy access token mới; refresh token không bị ảnh hưởng.
 - Production Compose đổi `SERVER_BIND` mặc định từ `0.0.0.0` sang `127.0.0.1`. Deployment dùng reverse proxy phải cấu hình `TRUSTED_PROXY_CIDRS` theo source CIDR mà app thực sự nhìn thấy và proxy phải overwrite hoặc append đúng `X-Forwarded-For`; chỉ mở bind ra interface khác khi firewall/private load-balancer network đã chặn truy cập trực tiếp.
+- Production bắt buộc `STORAGE_PROVIDER=s3`, public `STORAGE_BASE_URL` dùng HTTPS, region và bucket dùng chung. Access key/secret có thể bỏ trống để dùng IAM role/workload identity; principal cần quyền probe bucket, upload multipart và delete object. Bucket/CDN read policy nằm ngoài ứng dụng và phải được operator cấu hình.
 
 Tác động triển khai của P1:
 
@@ -638,9 +639,11 @@ Khuyến nghị batch follow lookup và dùng deterministic ordering `(score/tim
 
 ---
 
-### P2-09: Local storage không phù hợp horizontal scaling
+### P2-09: Local storage không phù hợp horizontal scaling — Resolved
 
 **Mức độ:** Medium/High tùy topology
+
+> Đã sửa bằng AWS SDK v2 S3-compatible provider dùng chung cho mọi instance, hỗ trợ AWS default credential chain và custom endpoint/path-style cho MinIO. Storage được probe khi boot và trên `/health`; production config fail-closed nếu dùng local provider, URL không phải public HTTPS, hoặc thiếu region/bucket. Production Compose không còn mount upload volume và bắt buộc khai báo object storage. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
 
 Production compose mặc định dùng local named volume và `STORAGE_BASE_URL=http://localhost:8080/static`: [`docker-compose.prod.yml:282`](../docker-compose.prod.yml#L282).
 
@@ -710,7 +713,8 @@ Các package hiện không có test đáng kể:
 - `pkg/errors`
 - `pkg/jwt`
 - `pkg/logger`
-- `pkg/storage`
+
+`pkg/storage` nay có unit test cho local/S3 factory, upload metadata, delete, URL và health propagation; integration test với bucket S3/MinIO thật vẫn cần được bổ sung trong P2-13.
 
 Redis timeline integration tests bị skip nếu `REDIS_TEST_ADDR` không được cấu hình: [`internal/feature/feed/cache/redis_timeline_store_test.go:26`](../internal/feature/feed/cache/redis_timeline_store_test.go#L26).
 

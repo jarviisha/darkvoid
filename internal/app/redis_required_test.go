@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +15,10 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/logger"
 	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
 )
+
+type storageHealthStub struct{ err error }
+
+func (s storageHealthStub) HealthCheck(context.Context) error { return s.err }
 
 // Redis stopped being optional: it holds the feed cache, the materialized
 // timeline and the notification Pub/Sub, so an instance that cannot reach one
@@ -114,5 +119,24 @@ func TestHealthCheck_UnhealthyWhenRedisIsDown(t *testing.T) {
 	// of Redis being down — the point of naming both is telling them apart.
 	if got.Database != "up" {
 		t.Errorf("database = %q, want %q", got.Database, "up")
+	}
+}
+
+func TestHealthCheck_UnhealthyWhenStorageIsDown(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
+	server := testServer(nil)
+	server.storage = storageHealthStub{err: errors.New("bucket unavailable")}
+	server.healthCheckHandler(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	var got HealthCheckResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got.Status != "unhealthy" || got.Storage != "down" {
+		t.Fatalf("health = %+v, want unhealthy storage down", got)
 	}
 }
