@@ -157,6 +157,53 @@ func TestGenerateToken_EmitsRequiredClaims(t *testing.T) {
 	}
 }
 
+func TestGenerateTokenWithClaims_RejectsClaimsOutsideTrustBoundary(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService(t)
+	token, err := service.GenerateTokenWithClaims(NewClaims("user-1"))
+
+	if token != "" {
+		t.Fatalf("token = %q, want empty", token)
+	}
+	if !errors.Is(err, ErrInvalidClaims) {
+		t.Fatalf("GenerateTokenWithClaims() error = %v, want ErrInvalidClaims", err)
+	}
+}
+
+func TestGenerateTokenWithClaims_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	type roleClaims struct {
+		Role string `json:"role"`
+		jwtlib.RegisteredClaims
+	}
+
+	service := newTestService(t)
+	issued := &roleClaims{
+		Role: "admin",
+		RegisteredClaims: jwtlib.RegisteredClaims{
+			Issuer:    testIssuer,
+			Audience:  jwtlib.ClaimStrings{testAudience},
+			Subject:   "user-1",
+			IssuedAt:  jwtlib.NewNumericDate(time.Now()),
+			ExpiresAt: jwtlib.NewNumericDate(time.Now().Add(time.Minute)),
+		},
+	}
+
+	token, err := service.GenerateTokenWithClaims(issued)
+	if err != nil {
+		t.Fatalf("GenerateTokenWithClaims() error = %v", err)
+	}
+	var parsed roleClaims
+	if err := service.ValidateTokenWithClaims(token, &parsed); err != nil {
+		t.Fatalf("ValidateTokenWithClaims() error = %v", err)
+	}
+	if parsed.Subject != issued.Subject || parsed.Role != issued.Role {
+		t.Fatalf("parsed claims = %#v, want subject %q and role %q", parsed, issued.Subject, issued.Role)
+	}
+}
+
 func TestConfigValidate_RequiresTrustBoundary(t *testing.T) {
 	t.Parallel()
 

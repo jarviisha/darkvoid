@@ -47,8 +47,14 @@ func (s *Service) GenerateToken(subject string) (string, error) {
 	return signedToken, nil
 }
 
-// GenerateTokenWithClaims generates a JWT token with custom claims
+// GenerateTokenWithClaims generates a JWT token with custom claims. The claims
+// must satisfy the configured issuer, audience, expiration, temporal, and any
+// custom validation requirements before they are signed.
 func (s *Service) GenerateTokenWithClaims(claims jwt.Claims) (string, error) {
+	if err := s.validateClaimsForIssuance(claims); err != nil {
+		return "", err
+	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
 	signedToken, err := token.SignedString(s.cfg.Secret)
@@ -91,17 +97,36 @@ func (s *Service) ValidateTokenWithClaims(tokenString string, claims jwt.Claims)
 }
 
 func (s *Service) parseWithClaims(tokenString string, claims jwt.Claims) (*jwt.Token, error) {
+	options := append(
+		[]jwt.ParserOption{jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()})},
+		s.claimsValidationOptions()...,
+	)
 	return jwt.ParseWithClaims(
 		tokenString,
 		claims,
 		func(_ *jwt.Token) (any, error) {
 			return s.cfg.Secret, nil
 		},
-		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		options...,
+	)
+}
+
+func (s *Service) validateClaimsForIssuance(claims jwt.Claims) error {
+	if claims == nil {
+		return fmt.Errorf("%w: claims are required", ErrInvalidClaims)
+	}
+	if err := jwt.NewValidator(s.claimsValidationOptions()...).Validate(claims); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidClaims, err)
+	}
+	return nil
+}
+
+func (s *Service) claimsValidationOptions() []jwt.ParserOption {
+	return []jwt.ParserOption{
 		jwt.WithIssuer(s.cfg.Issuer),
 		jwt.WithAudience(s.cfg.Audience),
 		jwt.WithExpirationRequired(),
-	)
+	}
 }
 
 // ParseToken parses a token without validating it (for debugging/inspection)
