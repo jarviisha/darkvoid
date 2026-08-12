@@ -48,6 +48,20 @@ func (r *FollowRepository) IsFollowing(ctx context.Context, followerID, followee
 	return ok, nil
 }
 
+func (r *FollowRepository) GetFollowingAmong(ctx context.Context, followerID uuid.UUID, followeeIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if len(followeeIDs) == 0 {
+		return nil, nil
+	}
+	ids, err := r.queries.GetFollowingAmong(ctx, db.GetFollowingAmongParams{
+		FollowerID:  followerID,
+		FolloweeIds: followeeIDs,
+	})
+	if err != nil {
+		return nil, database.MapDBError(err)
+	}
+	return ids, nil
+}
+
 func (r *FollowRepository) GetFollowers(ctx context.Context, followeeID uuid.UUID, limit, offset int32) ([]*entity.Follow, error) {
 	rows, err := r.queries.GetFollowers(ctx, db.GetFollowersParams{
 		FolloweeID: followeeID,

@@ -2,17 +2,15 @@
 
 ## Kết luận
 
-Dự án có cấu trúc modular monolith tương đối rõ ràng và các kiểm tra tự động hiện tại đều đạt. Tuy nhiên, dự án chưa nên public hoặc triển khai production trước khi xử lý các vấn đề P0 về phân quyền nội dung, upload, storage và error handling.
+Dự án có cấu trúc modular monolith tương đối rõ ràng. Toàn bộ finding P0, P1 và P2-01 đến P2-08 đã được khắc phục, bao gồm phân quyền nội dung, upload, storage fail-closed, error handling, feed/notification consistency, session hardening và các truy vấn/enrichment order-sensitive. Các kiểm tra tự động được ghi nhận trong audit đều đạt.
 
-Các vùng rủi ro chính:
+Dự án không còn blocker bảo mật/correctness đã biết trong phạm vi P0–P2-08, nhưng vẫn chưa production-ready cho mô hình multi-instance cho tới khi xử lý các finding vận hành và test coverage còn lại:
 
-- Quyền truy cập post/comment chưa bảo vệ visibility.
-- Upload avatar/cover có thể tạo stored XSS.
-- Cấu hình storage không được hỗ trợ có thể làm mất file âm thầm.
-- Materialized feed có thể mất event, lặp hoặc bỏ sót dữ liệu.
-- Notification/SSE có lỗi concurrency và cache consistency.
-- Refresh-token lifecycle chưa atomic và token được lưu dạng raw.
-- Cấu hình production chưa phù hợp với multi-instance và quy trình backup an toàn.
+- Local storage chưa dùng chung giữa các instance và chưa có object storage/CDN production.
+- Backup vẫn thủ công, cùng host và chưa có restore drill định kỳ.
+- Container image còn dùng floating tag nên deployment chưa reproducible hoàn toàn.
+- Migration xóa schema bot cần backup, restore verification và approval gate riêng.
+- Test coverage vẫn thiếu ở một số package rủi ro cao; Redis integration test phụ thuộc môi trường chạy.
 
 ## Trạng thái khắc phục
 
@@ -43,7 +41,7 @@ Các finding P1 đã được sửa trong worktree ngày 2026-08-11:
 | P1-12 | Resolved | Auth middleware chỉ nhận Bearer token qua `Authorization`; query-token và Swagger parameter đã bị loại bỏ |
 | P1-13 | Resolved | Post-like và comment-like toggle áp dụng self-like guard cùng transaction advisory lock theo cặp tài nguyên, trả trạng thái committed trước khi phát side effect |
 
-Các finding P2 đã được sửa trong worktree ngày 2026-08-11:
+Các finding P2 đã được sửa trong worktree đến ngày 2026-08-12:
 
 | ID | Trạng thái | Thay đổi chính |
 |---|---|---|
@@ -54,6 +52,7 @@ Các finding P2 đã được sửa trong worktree ngày 2026-08-11:
 | P2-05 | Resolved | Access middleware tạo request-scoped state đồng bộ; required/optional auth cập nhật `user_id` qua cùng pointer để final access log luôn đọc được identity sau khi handler hoàn tất |
 | P2-06 | Resolved | JSON response được encode hoàn chỉnh vào buffer trước khi commit status; lỗi encode trả contract `INTERNAL_ERROR` sạch với HTTP 500 |
 | P2-07 | Resolved | Feed service chỉ còn điều phối; timeline, mixed blend, trending, discovery, follow resolution và enrichment được tách thành component riêng, cursor transition có table-driven tests |
+| P2-08 | Resolved | Post listing batch-check quan hệ follow trong một query; trending và follower/following listing dùng ID làm deterministic tie-breaker |
 
 Tác động triển khai của P2:
 
@@ -625,9 +624,11 @@ Các file lớn khác cần xem xét dần: `internal/app/app.go`, `pkg/config/c
 
 ---
 
-### P2-08: Một số truy vấn/enrichment có nguy cơ N+1 hoặc pagination không ổn định
+### P2-08: Một số truy vấn/enrichment có nguy cơ N+1 hoặc pagination không ổn định — Resolved
 
 **Mức độ:** Medium
+
+> Đã sửa bằng batch relationship lookup cho toàn bộ unique author của một response và deterministic ordering `(like_count, id)`/`(created_at, user_id)`. API follower/following giữ nguyên contract `limit`/`offset`; ID duy nhất loại bỏ thứ tự không xác định khi nhiều record có cùng timestamp. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
 
 - Post enrichment kiểm tra follow theo từng author ở các post listing thông thường.
 - Trending query chỉ `ORDER BY like_count DESC`, không có tie-break ID: [`internal/feature/post/sql/post_queries.sql:76`](../internal/feature/post/sql/post_queries.sql#L76).

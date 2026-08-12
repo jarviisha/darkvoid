@@ -39,6 +39,7 @@ type mockQuerier struct {
 	getEmailTokenByToken                func(context.Context, string) (db.UsrEmailToken, error)
 	getFollowers                        func(context.Context, db.GetFollowersParams) ([]db.UsrFollow, error)
 	getFollowing                        func(context.Context, db.GetFollowingParams) ([]db.UsrFollow, error)
+	getFollowingAmong                   func(context.Context, db.GetFollowingAmongParams) ([]uuid.UUID, error)
 	getRefreshTokenByToken              func(context.Context, string) (db.UsrRefreshToken, error)
 	getUserByEmail                      func(context.Context, string) (db.UsrUser, error)
 	getUserByID                         func(context.Context, uuid.UUID) (db.UsrUser, error)
@@ -278,6 +279,13 @@ func (m *mockQuerier) GetFollowers(ctx context.Context, arg db.GetFollowersParam
 func (m *mockQuerier) GetFollowing(ctx context.Context, arg db.GetFollowingParams) ([]db.UsrFollow, error) {
 	if m.getFollowing != nil {
 		return m.getFollowing(ctx, arg)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) GetFollowingAmong(ctx context.Context, arg db.GetFollowingAmongParams) ([]uuid.UUID, error) {
+	if m.getFollowingAmong != nil {
+		return m.getFollowingAmong(ctx, arg)
 	}
 	return nil, nil
 }

@@ -50,6 +50,7 @@ type Querier interface {
 	GetEmailTokenByToken(ctx context.Context, token string) (UsrEmailToken, error)
 	GetFollowers(ctx context.Context, arg GetFollowersParams) ([]UsrFollow, error)
 	GetFollowing(ctx context.Context, arg GetFollowingParams) ([]UsrFollow, error)
+	GetFollowingAmong(ctx context.Context, arg GetFollowingAmongParams) ([]uuid.UUID, error)
 	GetRefreshTokenByToken(ctx context.Context, tokenHash string) (UsrRefreshToken, error)
 	GetUserByEmail(ctx context.Context, email string) (UsrUser, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (UsrUser, error)

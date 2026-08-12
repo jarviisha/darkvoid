@@ -223,7 +223,8 @@ func (m *mockUserReader) GetAuthorsByIDs(ctx context.Context, ids []uuid.UUID) (
 }
 
 type mockFollowChecker struct {
-	isFollowing func(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error)
+	isFollowing       func(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error)
+	getFollowingAmong func(ctx context.Context, followerID uuid.UUID, followeeIDs []uuid.UUID) ([]uuid.UUID, error)
 }
 
 func (m *mockFollowChecker) IsFollowing(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error) {
@@ -231,6 +232,13 @@ func (m *mockFollowChecker) IsFollowing(ctx context.Context, followerID, followe
 		return m.isFollowing(ctx, followerID, followeeID)
 	}
 	return false, nil
+}
+
+func (m *mockFollowChecker) GetFollowingAmong(ctx context.Context, followerID uuid.UUID, followeeIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if m.getFollowingAmong != nil {
+		return m.getFollowingAmong(ctx, followerID, followeeIDs)
+	}
+	return nil, nil
 }
 
 type mockHashtagRepo struct {

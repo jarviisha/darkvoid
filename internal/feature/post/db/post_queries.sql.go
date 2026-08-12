@@ -416,7 +416,7 @@ SELECT id, author_id, content, visibility, created_at, updated_at, deleted_at, l
 WHERE created_at > NOW() - INTERVAL '24 hours'
   AND visibility = 'public'
   AND deleted_at IS NULL
-ORDER BY like_count DESC
+ORDER BY like_count DESC, id DESC
 LIMIT $1
 `
 

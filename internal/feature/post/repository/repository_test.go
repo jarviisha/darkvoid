@@ -242,6 +242,16 @@ func TestFollowingSQL_IncludesPrivatePostsOnlyForViewer(t *testing.T) {
 	}
 }
 
+func TestTrendingSQL_UsesDeterministicLikeAndIDOrder(t *testing.T) {
+	raw, err := os.ReadFile("../sql/post_queries.sql")
+	if err != nil {
+		t.Fatalf("read post query source: %v", err)
+	}
+	if !strings.Contains(string(raw), "ORDER BY like_count DESC, id DESC") {
+		t.Fatal("trending query must use post ID as the deterministic like-count tie-breaker")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // HashtagRepository.UpsertAndLink — empty-names guard (no DB call)
 // ---------------------------------------------------------------------------
