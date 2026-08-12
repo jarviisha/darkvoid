@@ -15,10 +15,10 @@
 #
 # Requires production secrets in .env or the shell.
 #
-# Rollback: CD tags every image with its commit SHA as well as `latest`, so
-# pinning the tag is all a rollback needs — no edit to this file:
-#   echo 'APP_TAG=<sha>' >> .env && dv up -d app
-# Leaving APP_TAG unset keeps the previous behaviour (`latest`).
+# Rollback: CD records the immutable app and backup image digests in .env. Set
+# both digests to a previously verified deployment, then recreate the services:
+#   dv pull app pg-backup && dv up -d
+# Tags are published for traceability only; Compose always deploys by digest.
 
 # ---------------------------------------------------------------------------
 # Shared fragments
@@ -45,7 +45,7 @@ x-hardening: &hardening
 # which version table they record it in — everything else is identical, so it
 # lives here. Adding a module is now a ~10-line service, not a ~20-line copy.
 x-migrate: &migrate
-  image: migrate/migrate:4
+  image: migrate/migrate:v4.19.1@sha256:cc4ad8e19d66791e3689405d9a028ce6e9614f32032db14acda1469f7201d6e4
   # Bounded, not bare `on-failure`. An unbounded restart on a genuinely broken
   # migration (bad SQL, dirty version) retries forever, and because the app gates
   # on service_completed_successfully the deploy hangs instead of failing — with
@@ -61,7 +61,7 @@ x-migrate: &migrate
     # Out of band rather than inside the -database URL: a credential in argv is
     # visible to anyone who can run `docker inspect`, and a password inside a
     # postgres:// string is what secret scanners match on — by shape, whatever
-    # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
+    # value sits there. lib/pq reads PGPASSWORD, verified against migrate 4.19.1.
     PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
 
 x-redis-command: &redis-command
@@ -95,7 +95,7 @@ x-redis-healthcheck: &redis-healthcheck
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     restart: unless-stopped
     logging: *logging
     <<: *hardening
@@ -131,7 +131,7 @@ services:
           memory: ${POSTGRES_MEMORY_LIMIT:-1g}
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
     restart: unless-stopped
     logging: *logging
     <<: *hardening
@@ -229,7 +229,7 @@ services:
         condition: service_completed_successfully
 
   app:
-    image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}:${APP_TAG:-latest}
+    image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}@${APP_DIGEST:?set APP_DIGEST to the deployed sha256 digest}
     restart: unless-stopped
     logging: *logging
     <<: *hardening
@@ -317,7 +317,7 @@ services:
   # hand-installed binary. Usage:
   #   docker compose -f docker-compose.prod.yml --profile tools run --rm ctl user list
   ctl:
-    image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}:${APP_TAG:-latest}
+    image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}@${APP_DIGEST:?set APP_DIGEST to the deployed sha256 digest}
     profiles: [tools]
     restart: "no"
     logging: *logging
@@ -342,7 +342,7 @@ services:
   # container also applies retention and periodically restores the newest dump
   # into an isolated database; only scheduler state/cache remains on this host.
   pg-backup:
-    image: ${BACKUP_IMAGE:-ghcr.io/jarviisha/darkvoid-backup}:${APP_TAG:-latest}
+    image: ${BACKUP_IMAGE:-ghcr.io/jarviisha/darkvoid-backup}@${BACKUP_DIGEST:?set BACKUP_DIGEST to the deployed sha256 digest}
     restart: unless-stopped
     logging: *logging
     <<: *hardening

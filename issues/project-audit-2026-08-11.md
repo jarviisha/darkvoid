@@ -2,11 +2,10 @@
 
 ## Kết luận
 
-Dự án có cấu trúc modular monolith tương đối rõ ràng. Toàn bộ finding P0, P1 và P2-01 đến P2-10 đã được khắc phục, bao gồm phân quyền nội dung, upload, shared object storage, automated off-host backup, error handling, feed/notification consistency, session hardening và các truy vấn/enrichment order-sensitive. Các kiểm tra tự động được ghi nhận trong audit đều đạt.
+Dự án có cấu trúc modular monolith tương đối rõ ràng. Toàn bộ finding P0, P1 và P2-01 đến P2-11 đã được khắc phục, bao gồm phân quyền nội dung, upload, shared object storage, automated off-host backup, reproducible container selection, error handling, feed/notification consistency, session hardening và các truy vấn/enrichment order-sensitive. Các kiểm tra tự động được ghi nhận trong audit đều đạt.
 
-Dự án không còn blocker bảo mật/correctness đã biết trong phạm vi P0–P2-10, nhưng vẫn chưa production-ready hoàn toàn cho tới khi xử lý các finding vận hành và test coverage còn lại:
+Dự án không còn blocker bảo mật/correctness đã biết trong phạm vi P0–P2-11, nhưng vẫn chưa production-ready hoàn toàn cho tới khi xử lý các finding vận hành và test coverage còn lại:
 
-- Container image còn dùng floating tag nên deployment chưa reproducible hoàn toàn.
 - Migration xóa schema bot cần backup, restore verification và approval gate riêng.
 - Test coverage vẫn thiếu ở một số package rủi ro cao; Redis integration test phụ thuộc môi trường chạy.
 
@@ -53,13 +52,15 @@ Các finding P2 đã được sửa trong worktree đến ngày 2026-08-12:
 | P2-08 | Resolved | Post listing batch-check quan hệ follow trong một query; trending và follower/following listing dùng ID làm deterministic tie-breaker |
 | P2-09 | Resolved | Thêm S3-compatible shared storage và bucket health probe; production từ chối local storage, localhost URL và URL không dùng HTTPS |
 | P2-10 | Resolved | Backup PostgreSQL chạy tự động vào Restic repository mã hóa/off-host, có daily/weekly/monthly retention, restore drill định kỳ, health state và failure/recovery webhook |
+| P2-11 | Resolved | PostgreSQL, Redis, migrate và mọi Dockerfile base image dùng exact tag kèm manifest digest; app/backup deploy bằng build digest, CD lưu digest vào `.env` và CI từ chối floating reference |
 
 Tác động triển khai của P2:
 
 - `JWT_AUDIENCE` mặc định là `darkvoid-api`; mọi API instance phải dùng cùng giá trị. Access token cũ không có claim `aud` sẽ bị từ chối sau khi deploy và client cần dùng refresh token để lấy access token mới; refresh token không bị ảnh hưởng.
 - Production Compose đổi `SERVER_BIND` mặc định từ `0.0.0.0` sang `127.0.0.1`. Deployment dùng reverse proxy phải cấu hình `TRUSTED_PROXY_CIDRS` theo source CIDR mà app thực sự nhìn thấy và proxy phải overwrite hoặc append đúng `X-Forwarded-For`; chỉ mở bind ra interface khác khi firewall/private load-balancer network đã chặn truy cập trực tiếp.
 - Production bắt buộc `STORAGE_PROVIDER=s3`, public `STORAGE_BASE_URL` dùng HTTPS, region và bucket dùng chung. Access key/secret có thể bỏ trống để dùng IAM role/workload identity; principal cần quyền probe bucket, upload multipart và delete object. Bucket/CDN read policy nằm ngoài ứng dụng và phải được operator cấu hình.
-- Production Compose bắt buộc `BACKUP_RESTIC_REPOSITORY`, `BACKUP_RESTIC_PASSWORD` và HTTPS `BACKUP_ALERT_WEBHOOK_URL`; repository filesystem/cùng host bị từ chối. Backup principal cần read/write/list/delete trên prefix riêng, còn database role cần `CREATEDB` để restore drill vào database cô lập. CD phát hành/pull backup image cùng commit SHA với app; hướng dẫn vận hành và khôi phục nằm tại [`docs/production-backup-runbook.md`](../docs/production-backup-runbook.md).
+- Production Compose bắt buộc `BACKUP_RESTIC_REPOSITORY`, `BACKUP_RESTIC_PASSWORD` và HTTPS `BACKUP_ALERT_WEBHOOK_URL`; repository filesystem/cùng host bị từ chối. Backup principal cần read/write/list/delete trên prefix riêng, còn database role cần `CREATEDB` để restore drill vào database cô lập. CD build app/backup từ cùng commit và deploy đúng cặp digest registry trả về; hướng dẫn vận hành và khôi phục nằm tại [`docs/production-backup-runbook.md`](../docs/production-backup-runbook.md).
+- Production không còn chấp nhận `APP_TAG` hay fallback `latest`. CD lấy `APP_DIGEST`/`BACKUP_DIGEST` từ kết quả build-push và lưu cả hai vào `.env`; rollback phải khôi phục đúng cặp digest từ cùng deployment. Nâng cấp PostgreSQL, Redis, migrate, Go hoặc Alpine phải cập nhật đồng thời exact tag và manifest digest; `make test-production-images` ngăn reference thiếu digest quay lại.
 
 Tác động triển khai của P1:
 
@@ -675,9 +676,11 @@ Khuyến nghị:
 
 ---
 
-### P2-11: Container image/tag chưa reproducible hoàn toàn
+### P2-11: Container image/tag chưa reproducible hoàn toàn — Resolved
 
 **Mức độ:** Low/Medium
+
+> Đã pin image public bằng exact patch tag và multi-platform manifest digest: PostgreSQL 16.14, Redis 7.4.10, golang-migrate 4.19.1, Go 1.26.5/Alpine 3.24 build stage và Alpine 3.22.5 runtime. App/backup không còn `latest`; CD publish full commit-SHA tag để truy vết nhưng Compose deploy bằng immutable digest do registry trả về và persist digest vào `.env`. CI contract test từ chối floating Compose/Dockerfile reference hoặc CD bỏ digest. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
 
 Production dùng các floating tag như `migrate/migrate:4`, `postgres:16-alpine`, `redis:7-alpine` và application `latest` mặc định: [`docker-compose.prod.yml:48`](../docker-compose.prod.yml#L48), [`docker-compose.prod.yml:232`](../docker-compose.prod.yml#L232).
 

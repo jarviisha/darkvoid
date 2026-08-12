@@ -26,11 +26,12 @@ Restic password outside that storage account: losing it makes every snapshot
 unrecoverable, while exposing it together with the repository defeats the
 separation between encrypted data and its key.
 
-The backup image is tagged with the same commit SHA as the application image.
-`APP_TAG=<sha>` therefore rolls both components back together. Other Restic
-remote backends (`sftp`, REST over HTTPS, Azure and GCS) are accepted by
-the scheduler, but need a deployment-specific Compose override for their
-credential files or environment variables.
+CD publishes both images with a full commit-SHA tag for traceability, then
+records the immutable `APP_DIGEST` and `BACKUP_DIGEST` returned by the registry
+in the deployment `.env`. Rollbacks must restore both digests from the same
+verified deployment. Other Restic remote backends (`sftp`, REST over HTTPS,
+Azure and GCS) are accepted by the scheduler, but need a deployment-specific
+Compose override for their credential files or environment variables.
 
 ## Schedule, retention and health
 

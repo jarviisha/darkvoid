@@ -1,6 +1,6 @@
-ARG POSTGRES_VERSION=16-alpine
+ARG POSTGRES_IMAGE=postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
 
-FROM postgres:${POSTGRES_VERSION}
+FROM ${POSTGRES_IMAGE}
 
 RUN apk add --no-cache bash ca-certificates curl jq restic tzdata \
 	&& mkdir -p /state/cache \
