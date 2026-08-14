@@ -2,11 +2,11 @@
 
 ## Kết luận
 
-Dự án có cấu trúc modular monolith tương đối rõ ràng. Toàn bộ finding P0, P1 và P2-01 đến P2-12 đã được khắc phục, bao gồm phân quyền nội dung, upload, shared object storage, automated off-host backup, reproducible container selection, destructive-migration gating, error handling, feed/notification consistency, session hardening và các truy vấn/enrichment order-sensitive. Các kiểm tra tự động được ghi nhận trong audit đều đạt.
+Dự án có cấu trúc modular monolith tương đối rõ ràng. Toàn bộ finding P0, P1 và P2 đã được khắc phục, bao gồm phân quyền nội dung, upload, shared object storage, automated off-host backup, reproducible container selection, destructive-migration gating, error handling, feed/notification consistency, session hardening, các truy vấn/enrichment order-sensitive và test coverage ở các vùng rủi ro cao. Các kiểm tra tự động được ghi nhận trong audit đều đạt.
 
-Dự án không còn blocker bảo mật/correctness đã biết trong phạm vi P0–P2-12, nhưng vẫn chưa production-ready hoàn toàn cho tới khi xử lý finding test coverage còn lại:
+Dự án không còn finding mở hoặc blocker bảo mật/correctness đã biết trong phạm vi audit. Codebase đã đạt production-readiness gate của audit; rollout production vẫn phải hoàn tất các điều kiện vận hành đã document, đặc biệt là protected environment, credentials production-like và staging drill cho backup/restore cùng webhook thật.
 
-- Test coverage vẫn thiếu ở một số package rủi ro cao; Redis integration test phụ thuộc môi trường chạy.
+CI nay chủ động cấp Redis và MinIO, nên các test timeline/SSE và object-storage integration không còn bị skip trên nhánh chính hoặc pull request.
 
 ## Trạng thái khắc phục
 
@@ -53,6 +53,7 @@ Các finding P2 đã được sửa trong worktree đến ngày 2026-08-12:
 | P2-10 | Resolved | Backup PostgreSQL chạy tự động vào Restic repository mã hóa/off-host, có daily/weekly/monthly retention, restore drill định kỳ, health state và failure/recovery webhook |
 | P2-11 | Resolved | PostgreSQL, Redis, migrate và mọi Dockerfile base image dùng exact tag kèm manifest digest; app/backup deploy bằng build digest, CD lưu digest vào `.env` và CI từ chối floating reference |
 | P2-12 | Resolved | Bot `000009` bị loại khỏi automatic migration path, có session SQL guard, protected manual workflow, handoff reference và fresh backup/restore evidence; generic down không còn giả làm data rollback |
+| P2-13 | Resolved | Bổ sung unit/race/integration tests cho notification, search, media, errors/logger/storage; CI cấp Redis và MinIO đã ghim digest để bắt buộc chạy timeline, SSE Pub/Sub và S3 bucket lifecycle |
 
 Tác động triển khai của P2:
 
@@ -62,6 +63,7 @@ Tác động triển khai của P2:
 - Production Compose bắt buộc `BACKUP_RESTIC_REPOSITORY`, `BACKUP_RESTIC_PASSWORD` và HTTPS `BACKUP_ALERT_WEBHOOK_URL`; repository filesystem/cùng host bị từ chối. Backup principal cần read/write/list/delete trên prefix riêng, còn database role cần `CREATEDB` để restore drill vào database cô lập. CD build app/backup từ cùng commit và deploy đúng cặp digest registry trả về; hướng dẫn vận hành và khôi phục nằm tại [`docs/production-backup-runbook.md`](../docs/production-backup-runbook.md).
 - Production không còn chấp nhận `APP_TAG` hay fallback `latest`. CD lấy `APP_DIGEST`/`BACKUP_DIGEST` từ kết quả build-push và lưu cả hai vào `.env`; rollback phải khôi phục đúng cặp digest từ cùng deployment. Nâng cấp PostgreSQL, Redis, migrate, Go hoặc Alpine phải cập nhật đồng thời exact tag và manifest digest; `make test-production-images` ngăn reference thiếu digest quay lại.
 - Trước khi chạy bot schema retirement một lần, phải cấu hình GitHub environment `production` với required reviewers, prevent self-review, VPS secrets và `DEPLOY_DIR`; sau đó dùng workflow `Retire legacy bot schema` cùng change/handoff reference. Normal deploy và `make migrate-up-bot` chỉ dừng ở `000008`. Recovery dữ liệu chỉ từ snapshot theo [`docs/bot-schema-retirement-runbook.md`](../docs/bot-schema-retirement-runbook.md), không dùng down migration.
+- CI test job cần Docker service support và localhost ports `6379`/`9000` còn trống trên runner. Redis 7.4.10 và MinIO `RELEASE.2025-09-07T16-13-09Z` đều được ghim manifest digest; test job cấu hình `REDIS_TEST_ADDR` và `S3_TEST_*` để integration tests không thể âm thầm skip.
 
 Tác động triển khai của P1:
 
@@ -69,7 +71,7 @@ Tác động triển khai của P1:
 - Client SSE không còn được gửi JWT trong query string. Client phải dùng request streaming có `Authorization: Bearer ...`; native `EventSource` cần chuyển sang cookie/ticket ngắn hạn trong một thay đổi riêng nếu được sử dụng.
 - `GET /users/{userKey}` nay là account-detail self-only; dữ liệu public của user khác tiếp tục đi qua profile endpoint.
 
-Xác minh thay đổi P1: `make generate`, `make build`, `make test`, `go test -race ./...`, `go vet ./...` và `golangci-lint run ./...` đều đạt. Redis integration test cho atomic replacement và tie-score block đã được thêm nhưng bị skip trong lần chạy này do không cấu hình `REDIS_TEST_ADDR`.
+Xác minh thay đổi P1: `make generate`, `make build`, `make test`, `go test -race ./...`, `go vet ./...` và `golangci-lint run ./...` đều đạt. Redis integration tests cho atomic replacement, tie-score pagination và SSE Pub/Sub đã chạy dưới race detector; S3-compatible bucket lifecycle đã chạy với MinIO thật.
 
 Các thay đổi đã qua `make build`, `make test`, `go test -race ./...`, `go vet ./...` và `golangci-lint run ./...`.
 
@@ -98,7 +100,7 @@ Kết quả xác minh:
 | `golangci-lint` | Đạt | 21 linters, 0 issue khi dùng writable cache |
 | Package documentation | Đạt | Không phát hiện package thiếu `docs.go` |
 
-> Lưu ý: kết quả test/race xanh không bao phủ các package không có test, đặc biệt là notification broker/cache/service, search, storage, `pkg/errors`, JWT và logger. Các integration test của Redis timeline cũng bị skip nếu không có `REDIS_TEST_ADDR`.
+> Các package rủi ro cao có coverage đo được: notification broker 87,1% khi chạy Redis integration, cache 94,1%, service 72,9%; search handler 100%, service 78,8%; storage handler 100%, service 95,5%; `pkg/errors` 100%, JWT 71,9%, logger trên 90% và `pkg/storage` trên 80%. Đây là package-level statement coverage, không phải một mục tiêu coverage toàn repository.
 
 ## P0 — phải sửa trước khi production
 
@@ -708,9 +710,11 @@ Migration có chủ ý và được document tốt, nhưng cần deployment gate
 
 ---
 
-### P2-13: Test coverage thiếu ở các vùng có rủi ro cao
+### P2-13: Test coverage thiếu ở các vùng có rủi ro cao — Resolved
 
 **Mức độ:** High engineering risk
+
+> Đã bổ sung table-driven/unit tests cho notification unread cache và service fallback/enrichment/mutation, search validation/focused/all-mode cùng handler parsing, media handler và type-specific size/storage failures, error/logger contracts, local storage lifecycle. Redis broker có Pub/Sub round-trip test; S3 storage có smoke test tạo bucket thật, upload và đọc lại metadata/body, health check, URL, delete. CI cấp Redis và MinIO đã ghim digest, đặt các biến test bắt buộc và chạy toàn suite dưới race detector. Coverage trọng điểm hiện đạt từ 71,9% đến 100%, riêng broker đạt 87,1% khi integration bật; phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
 
 Các package hiện không có test đáng kể:
 
@@ -723,11 +727,11 @@ Các package hiện không có test đáng kể:
 - `pkg/jwt`
 - `pkg/logger`
 
-`pkg/storage` nay có unit test cho local/S3 factory, upload metadata, delete, URL và health propagation; integration test với bucket S3/MinIO thật vẫn cần được bổ sung trong P2-13.
+`pkg/storage` nay có cả unit test local/S3 và integration test với bucket MinIO thật trong CI.
 
 Backup scheduler có shell contract test và end-to-end drill bằng PostgreSQL/Restic container tạm; đường truyền tới repository off-host và failure/recovery webhook thật vẫn cần được xác minh trong môi trường staging có credentials production-like.
 
-Redis timeline integration tests bị skip nếu `REDIS_TEST_ADDR` không được cấu hình: [`internal/feature/feed/cache/redis_timeline_store_test.go:26`](../internal/feature/feed/cache/redis_timeline_store_test.go#L26).
+Redis timeline integration tests vẫn skip có chủ ý ở môi trường unit-test không có Redis, nhưng CI luôn cấu hình `REDIS_TEST_ADDR`; thiếu service hoặc integration failure làm job thất bại.
 
 Khuyến nghị ưu tiên test theo rủi ro:
 
