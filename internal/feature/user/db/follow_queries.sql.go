@@ -57,7 +57,7 @@ const getFollowers = `-- name: GetFollowers :many
 SELECT follower_id, followee_id, created_at
 FROM usr.follows
 WHERE followee_id = $1
-ORDER BY created_at DESC
+ORDER BY created_at DESC, follower_id DESC
 LIMIT $3 OFFSET $2
 `
 
@@ -91,7 +91,7 @@ const getFollowing = `-- name: GetFollowing :many
 SELECT follower_id, followee_id, created_at
 FROM usr.follows
 WHERE follower_id = $1
-ORDER BY created_at DESC
+ORDER BY created_at DESC, followee_id DESC
 LIMIT $3 OFFSET $2
 `
 
@@ -114,6 +114,38 @@ func (q *Queries) GetFollowing(ctx context.Context, arg GetFollowingParams) ([]U
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFollowingAmong = `-- name: GetFollowingAmong :many
+SELECT followee_id
+FROM usr.follows
+WHERE follower_id = $1
+  AND followee_id = ANY($2::uuid[])
+`
+
+type GetFollowingAmongParams struct {
+	FollowerID  uuid.UUID   `json:"follower_id"`
+	FolloweeIds []uuid.UUID `json:"followee_ids"`
+}
+
+func (q *Queries) GetFollowingAmong(ctx context.Context, arg GetFollowingAmongParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, getFollowingAmong, arg.FollowerID, arg.FolloweeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var followee_id uuid.UUID
+		if err := rows.Scan(&followee_id); err != nil {
+			return nil, err
+		}
+		items = append(items, followee_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

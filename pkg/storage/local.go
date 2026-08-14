@@ -74,3 +74,21 @@ func (l *localStorage) Delete(_ context.Context, key string) error {
 func (l *localStorage) URL(key string) string {
 	return fmt.Sprintf("%s/%s", l.baseURL, key)
 }
+
+// HealthCheck verifies that the shared process path is still writable. The
+// probe file is removed immediately and never exposed through the static route.
+func (l *localStorage) HealthCheck(_ context.Context) error {
+	f, err := os.CreateTemp(l.dir, ".storage-health-*")
+	if err != nil {
+		return fmt.Errorf("storage/local: create health probe in %q: %w", l.dir, err)
+	}
+	name := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("storage/local: close health probe %q: %w", name, err)
+	}
+	if err := os.Remove(name); err != nil {
+		return fmt.Errorf("storage/local: remove health probe %q: %w", name, err)
+	}
+	return nil
+}

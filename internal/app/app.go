@@ -24,6 +24,7 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/jwt"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
+	"github.com/jarviisha/darkvoid/pkg/storage"
 	swaggerFiles "github.com/swaggo/files"
 	"github.com/swaggo/swag"
 )
@@ -45,6 +46,9 @@ type Application struct {
 	// codohue is the reported health of the recommender integration. Read by the
 	// health handler, written by startup and the degraded-state monitor.
 	codohue *codohueStatus
+	// storageHealth is the shared backend probe exposed through /health. It is
+	// set during context setup after the startup probe succeeds.
+	storageHealth storage.HealthChecker
 
 	// Bounded Contexts
 	User         *UserContext
@@ -123,7 +127,9 @@ func New(ctx context.Context, cfg *config.Config) (app *Application, err error) 
 	}
 
 	// Setup HTTP server
-	app.setupServer()
+	if err = app.setupServer(); err != nil {
+		return app, fmt.Errorf("failed to setup HTTP server: %w", err)
+	}
 
 	app.log.Info("application initialized successfully")
 	return app, nil
@@ -278,12 +284,11 @@ func (app *Application) codohueEventsClient() *pkgredis.Client {
 func (app *Application) setupJWT() error {
 	app.log.Info("initializing JWT service")
 
-	// TODO: Get JWT secret from config or environment
-	// For now using a placeholder - CHANGE THIS IN PRODUCTION!
 	jwtConfig := jwt.Config{
-		Secret: []byte(app.cfg.JWT.Secret),
-		Issuer: app.cfg.JWT.Issuer,
-		Expiry: app.cfg.JWT.AccessTokenExpiry,
+		Secret:   []byte(app.cfg.JWT.Secret),
+		Issuer:   app.cfg.JWT.Issuer,
+		Audience: app.cfg.JWT.Audience,
+		Expiry:   app.cfg.JWT.AccessTokenExpiry,
 	}
 
 	jwtService, err := jwt.NewService(jwtConfig)
@@ -295,6 +300,7 @@ func (app *Application) setupJWT() error {
 
 	app.log.Info("JWT service initialized",
 		"issuer", jwtConfig.Issuer,
+		"audience", jwtConfig.Audience,
 		"expiry", jwtConfig.Expiry,
 	)
 
@@ -339,10 +345,14 @@ func (app *Application) bootstrapRootUser(ctx context.Context) error {
 }
 
 // setupServer initializes HTTP server and registers routes
-func (app *Application) setupServer() {
+func (app *Application) setupServer() error {
 	app.log.Info("initializing HTTP server")
 
-	app.server = NewServer(app.cfg, app.log, app.pool, app.redis, app.codohue)
+	server, err := NewServer(app.cfg, app.log, app.pool, app.redis, app.storageHealth, app.codohue)
+	if err != nil {
+		return err
+	}
+	app.server = server
 
 	// Register routes
 	app.registerRoutes()
@@ -351,6 +361,7 @@ func (app *Application) setupServer() {
 		"host", app.cfg.Server.Host,
 		"port", app.cfg.Server.Port,
 	)
+	return nil
 }
 
 // registerRoutes registers all HTTP routes
@@ -397,6 +408,8 @@ func (app *Application) registerRoutes() {
 	//
 	// Group B (with timeout): all regular REST endpoints.
 	router.Route("/api/v1", func(r chi.Router) {
+		r.Use(middleware.APIHeaders)
+
 		// Group A — SSE, no request timeout
 		r.Group(func(r chi.Router) {
 			app.Notification.RegisterSSERoute(r, auth)

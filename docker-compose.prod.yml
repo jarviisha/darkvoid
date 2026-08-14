@@ -15,10 +15,10 @@
 #
 # Requires production secrets in .env or the shell.
 #
-# Rollback: CD tags every image with its commit SHA as well as `latest`, so
-# pinning the tag is all a rollback needs — no edit to this file:
-#   echo 'APP_TAG=<sha>' >> .env && dv up -d app
-# Leaving APP_TAG unset keeps the previous behaviour (`latest`).
+# Rollback: CD records the immutable app and backup image digests in .env. Set
+# both digests to a previously verified deployment, then recreate the services:
+#   dv pull app pg-backup && dv up -d
+# Tags are published for traceability only; Compose always deploys by digest.
 
 # ---------------------------------------------------------------------------
 # Shared fragments
@@ -45,7 +45,7 @@ x-hardening: &hardening
 # which version table they record it in — everything else is identical, so it
 # lives here. Adding a module is now a ~10-line service, not a ~20-line copy.
 x-migrate: &migrate
-  image: migrate/migrate:4
+  image: migrate/migrate:v4.19.1@sha256:cc4ad8e19d66791e3689405d9a028ce6e9614f32032db14acda1469f7201d6e4
   # Bounded, not bare `on-failure`. An unbounded restart on a genuinely broken
   # migration (bad SQL, dirty version) retries forever, and because the app gates
   # on service_completed_successfully the deploy hangs instead of failing — with
@@ -61,7 +61,7 @@ x-migrate: &migrate
     # Out of band rather than inside the -database URL: a credential in argv is
     # visible to anyone who can run `docker inspect`, and a password inside a
     # postgres:// string is what secret scanners match on — by shape, whatever
-    # value sits there. lib/pq reads PGPASSWORD, verified against migrate/migrate:4.
+    # value sits there. lib/pq reads PGPASSWORD, verified against migrate 4.19.1.
     PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
 
 x-redis-command: &redis-command
@@ -95,7 +95,7 @@ x-redis-healthcheck: &redis-healthcheck
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     restart: unless-stopped
     logging: *logging
     <<: *hardening
@@ -131,7 +131,7 @@ services:
           memory: ${POSTGRES_MEMORY_LIMIT:-1g}
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
     restart: unless-stopped
     logging: *logging
     <<: *hardening
@@ -202,17 +202,53 @@ services:
 
   migrate-bot:
     <<: *migrate
-    command:
-      [
-        "-path",
-        "/migrations/bot",
-        "-database",
-        "postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_bot",
-        "up",
-      ]
+    # Normal deploys may create/update the retired bot schema through 000008,
+    # but never execute 000009 (DROP SCHEMA) and never downgrade a DB already at
+    # 000009. The separate profile below is the only destructive path.
+    entrypoint: ["/bin/sh", "/migration-guard/run-bot-safe.sh"]
+    volumes:
+      - ./migrations:/migrations:ro
+      - ./scripts/migrations:/migration-guard:ro
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      MIGRATION_DATABASE_URL: postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_bot
+      MIGRATION_PATH: /migrations/bot
+      BOT_SAFE_MIGRATION_VERSION: "8"
+      BOT_RETIRED_MIGRATION_VERSION: "9"
     depends_on:
       migrate-notification:
         condition: service_completed_successfully
+
+  # Explicit data-destruction path. This service is absent from a normal `up`;
+  # use only through the protected manual workflow/runbook. It independently
+  # validates approval, a handoff reference and fresh backup/restore evidence.
+  migrate-bot-destructive:
+    image: migrate/migrate:v4.19.1@sha256:cc4ad8e19d66791e3689405d9a028ce6e9614f32032db14acda1469f7201d6e4
+    profiles: [destructive-migration]
+    restart: "no"
+    logging: *logging
+    <<: *hardening
+    entrypoint: ["/bin/sh", "/migration-guard/run-bot-destructive.sh"]
+    volumes:
+      - ./migrations:/migrations:ro
+      - ./scripts/migrations:/migration-guard:ro
+      - backup_state:/backup-state:ro
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      MIGRATION_DATABASE_URL: postgres://${DB_USER:-postgres}@postgres:5432/${DB_NAME:-darkvoid}?sslmode=disable&x-migrations-table=schema_migrations_bot
+      MIGRATION_PATH: /migrations/bot
+      BOT_SAFE_MIGRATION_VERSION: "8"
+      BOT_RETIRED_MIGRATION_VERSION: "9"
+      BOT_SCHEMA_DROP_APPROVAL: ${BOT_SCHEMA_DROP_APPROVAL:-}
+      BOT_DATA_HANDOFF_REFERENCE: ${BOT_DATA_HANDOFF_REFERENCE:-}
+      BOT_DROP_BACKUP_MAX_AGE_SECONDS: ${BOT_DROP_BACKUP_MAX_AGE_SECONDS:-172800}
+      BOT_DROP_RESTORE_MAX_AGE_SECONDS: ${BOT_DROP_RESTORE_MAX_AGE_SECONDS:-604800}
+      BACKUP_STATE_DIR: /backup-state
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pg-backup:
+        condition: service_healthy
 
   migrate-settings:
     <<: *migrate
@@ -229,7 +265,7 @@ services:
         condition: service_completed_successfully
 
   app:
-    image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}:${APP_TAG:-latest}
+    image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}@${APP_DIGEST:?set APP_DIGEST to the deployed sha256 digest}
     restart: unless-stopped
     logging: *logging
     <<: *hardening
@@ -241,9 +277,9 @@ services:
     stop_grace_period: 40s
     ports:
       # Bind address is a variable so a deployment that puts a reverse proxy in
-      # front can set SERVER_BIND=127.0.0.1 and stop publishing the app on every
-      # interface, without editing this file. Default preserves today's binding.
-      - "${SERVER_BIND:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
+      # front can keep the app off public interfaces without editing this file.
+      # Opening it beyond loopback requires an explicit deployment decision.
+      - "${SERVER_BIND:-127.0.0.1}:${SERVER_PORT:-8080}:8080"
     healthcheck:
       # GET, not --spider: /health only registers GET; wget --spider sends
       # HEAD, which chi answers with 405 and the check reports a broken link.
@@ -260,6 +296,7 @@ services:
     environment:
       # App
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-}"
 
       # Database — points to the postgres container
       DB_HOST: postgres
@@ -280,13 +317,19 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
 
       # Storage
-      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
-      STORAGE_BASE_URL: ${STORAGE_BASE_URL:-http://localhost:8080/static}
-      STORAGE_LOCAL_DIR: /app/uploads
+      # Production is deliberately S3-only: a container-local/named volume is
+      # not shared across hosts and makes rolling replacement lose media.
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:?set STORAGE_PROVIDER=s3}
+      STORAGE_BASE_URL: ${STORAGE_BASE_URL:?set the public HTTPS CDN/object URL}
+      STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-}
+      STORAGE_S3_REGION: ${STORAGE_S3_REGION:?set the S3 region}
+      STORAGE_S3_BUCKET: ${STORAGE_S3_BUCKET:?set the shared media bucket}
+      STORAGE_S3_ACCESS_KEY_ID: ${STORAGE_S3_ACCESS_KEY_ID:-}
+      STORAGE_S3_SECRET_ACCESS_KEY: ${STORAGE_S3_SECRET_ACCESS_KEY:-}
+      STORAGE_S3_SESSION_TOKEN: ${STORAGE_S3_SESSION_TOKEN:-}
+      STORAGE_S3_USE_PATH_STYLE: ${STORAGE_S3_USE_PATH_STYLE:-false}
       # Mailer
       MAILER_PROVIDER: ${MAILER_PROVIDER:-nop}
-    volumes:
-      - uploads:/app/uploads
     deploy:
       resources:
         limits:
@@ -310,7 +353,7 @@ services:
   # hand-installed binary. Usage:
   #   docker compose -f docker-compose.prod.yml --profile tools run --rm ctl user list
   ctl:
-    image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}:${APP_TAG:-latest}
+    image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}@${APP_DIGEST:?set APP_DIGEST to the deployed sha256 digest}
     profiles: [tools]
     restart: "no"
     logging: *logging
@@ -330,31 +373,64 @@ services:
       postgres:
         condition: service_healthy
 
-  # Postgres backup — opt-in one-shot, never runs as part of a deploy:
-  #   dv --profile backup run --rm pg-backup
-  # Cron it on the host for a schedule. Uses the same image as the server so
-  # pg_dump can never be older than the server it dumps. Writes to a named
-  # volume; ship those files off the host to have an actual backup.
+  # PostgreSQL backup is part of the production stack, not an operator profile.
+  # Restic encrypts before uploading to a required remote repository. The
+  # container also applies retention and periodically restores the newest dump
+  # into an isolated database; only scheduler state/cache remains on this host.
   pg-backup:
-    image: postgres:16-alpine
-    profiles: [backup]
-    restart: "no"
+    image: ${BACKUP_IMAGE:-ghcr.io/jarviisha/darkvoid-backup}@${BACKUP_DIGEST:?set BACKUP_DIGEST to the deployed sha256 digest}
+    restart: unless-stopped
     logging: *logging
     <<: *hardening
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    stop_grace_period: 30s
     environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${DB_USER:-postgres}
       PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      PGDATABASE: ${DB_NAME:-darkvoid}
+
+      # The repository must be off-host (s3/sftp/rest+HTTPS/azure/gs).
+      # Restic encrypts every snapshot with this independent backup secret.
+      RESTIC_REPOSITORY: ${BACKUP_RESTIC_REPOSITORY:?set an off-host Restic repository}
+      RESTIC_PASSWORD: ${BACKUP_RESTIC_PASSWORD:?set a dedicated Restic encryption password}
+      RESTIC_CACHE_DIR: /state/cache
+
+      # Separate least-privilege credentials are recommended for backup data.
+      AWS_ACCESS_KEY_ID: ${BACKUP_AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${BACKUP_AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${BACKUP_AWS_SESSION_TOKEN:-}
+      AWS_DEFAULT_REGION: ${BACKUP_AWS_REGION:-us-east-1}
+
+      BACKUP_ALERT_WEBHOOK_URL: ${BACKUP_ALERT_WEBHOOK_URL:?set an HTTPS backup alert webhook}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RESTORE_DRILL_INTERVAL_SECONDS: ${BACKUP_RESTORE_DRILL_INTERVAL_SECONDS:-604800}
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-14}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-8}
+      BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-12}
+      BACKUP_RESTIC_TAG: ${BACKUP_RESTIC_TAG:-darkvoid-postgres}
+      # Stable across container replacement so retention groups old/new cycles
+      # together instead of treating every random container hostname separately.
+      BACKUP_RESTIC_HOST: ${BACKUP_RESTIC_HOST:-darkvoid-production}
+      BACKUP_RESTORE_DATABASE: ${BACKUP_RESTORE_DATABASE:-}
+      BACKUP_MAX_AGE_SECONDS: ${BACKUP_MAX_AGE_SECONDS:-172800}
+      BACKUP_STATE_DIR: /state
     volumes:
-      - pg_backups:/backups
-    entrypoint:
-      - sh
-      - -c
-      - |
-        set -eu
-        out="/backups/${DB_NAME:-darkvoid}-$$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
-        pg_dump -h postgres -U "${DB_USER:-postgres}" -d "${DB_NAME:-darkvoid}" \
-          --clean --if-exists | gzip -9 > "$$out"
-        echo "wrote $$out"
-        ls -1t /backups/*.sql.gz | tail -n +$$(( ${BACKUP_KEEP:-14} + 1 )) | xargs -r rm -f
+      - backup_state:/state
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'test -r /state/last-success && now=$$(date +%s) && last=$$(cat /state/last-success) && test $$((now - last)) -le "$$BACKUP_MAX_AGE_SECONDS"',
+        ]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      # The first backup and immediate restore drill can be large.
+      start_period: ${BACKUP_START_PERIOD:-30m}
     depends_on:
       postgres:
         condition: service_healthy
@@ -369,5 +445,6 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  uploads:
-  pg_backups:
+  # Scheduler timestamps and a disposable Restic cache only. Backup snapshots
+  # live exclusively in RESTIC_REPOSITORY and survive loss of this host.
+  backup_state:

@@ -1,7 +1,7 @@
-ARG GO_VERSION=1.26
-ARG ALPINE_VERSION=3.22
+ARG GO_IMAGE=golang:1.26.5-alpine3.24@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
+ARG RUNTIME_IMAGE=alpine:3.22.5@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 
-FROM golang:${GO_VERSION}-alpine AS builder
+FROM ${GO_IMAGE} AS builder
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/darkvoi
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/seed ./cmd/seed
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/darkvoidctl ./cmd/darkvoidctl
 
-FROM alpine:${ALPINE_VERSION}
+FROM ${RUNTIME_IMAGE}
 
 WORKDIR /app
 

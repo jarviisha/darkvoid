@@ -14,14 +14,15 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push:
+  build_and_push:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     outputs:
-      image_tag: ${{ steps.meta.outputs.tags }}
+      app_digest: ${{ steps.build.outputs.digest }}
+      backup_digest: ${{ steps.build_backup.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,10 +41,18 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,prefix=
-            type=raw,value=latest
+            type=sha,prefix=,format=long
+
+      - name: Extract backup image metadata
+        id: backup_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backup
+          tags: |
+            type=sha,prefix=,format=long
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -51,10 +60,20 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Build and push backup image
+        id: build_backup
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/backup/Dockerfile
+          push: true
+          tags: ${{ steps.backup_meta.outputs.tags }}
+          labels: ${{ steps.backup_meta.outputs.labels }}
+
   deploy:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: build_and_push
     # main deploys to development. When a production environment lands, switch
     # to the codohue pattern: pick environment + DEPLOY_DIR off head_branch/tag.
     environment: development
@@ -103,7 +122,15 @@ jobs:
             # repo-linked package — no long-lived PAT on the server.
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            $COMPOSE pull app
+            APP_DIGEST='${{ needs.build_and_push.outputs.app_digest }}'
+            BACKUP_DIGEST='${{ needs.build_and_push.outputs.backup_digest }}'
+            if [ "$(printf '%s\n%s\n' "$APP_DIGEST" "$BACKUP_DIGEST" | grep -Ec '^sha256:[0-9a-f]{64}$')" -ne 2 ]; then
+              echo "Build did not produce valid image digests" >&2
+              exit 1
+            fi
+            export APP_DIGEST BACKUP_DIGEST
+
+            $COMPOSE pull app pg-backup
 
             # Migrations run automatically: app depends_on the tail of the
             # migrate-* chain with service_completed_successfully, so it only
@@ -112,6 +139,11 @@ jobs:
             # five, and a deploy step that describes the wrong chain is worse
             # than one that describes the mechanism.
             $COMPOSE up -d
+
+            # Persist the pair atomically only after Compose accepts it. A
+            # failed pull/deploy leaves .env on the last working deployment;
+            # app and backup can never be recorded from different builds.
+            bash scripts/set-deployment-image-digests.sh .env "$APP_DIGEST" "$BACKUP_DIGEST"
 
             # Install the operator wrappers system-wide so they stay in sync with
             # the repo (no more hand-edited /usr/local/bin scripts). dv is the

@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/jarviisha/darkvoid/internal/feature/user/dto"
@@ -46,8 +45,8 @@ func (h *EmailHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var req dto.VerifyEmailRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errors.WriteJSON(w, errors.NewBadRequestError("invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 
@@ -76,8 +75,8 @@ func (h *EmailHandler) ResendVerification(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 
 	var req dto.ResendVerificationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errors.WriteJSON(w, errors.NewBadRequestError("invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 
@@ -107,8 +106,8 @@ func (h *EmailHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var req dto.ForgotPasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errors.WriteJSON(w, errors.NewBadRequestError("invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 
@@ -139,8 +138,8 @@ func (h *EmailHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var req dto.ResetPasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errors.WriteJSON(w, errors.NewBadRequestError("invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 

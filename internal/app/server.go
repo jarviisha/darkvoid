@@ -17,6 +17,7 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
+	"github.com/jarviisha/darkvoid/pkg/storage"
 )
 
 // Server wraps HTTP server
@@ -27,27 +28,33 @@ type Server struct {
 	log        *logger.Logger
 	pool       *pgxpool.Pool    // Database pool for health checks
 	redis      *pkgredis.Client // Redis client for health checks
-	codohue    *codohueStatus   // Recommender state reported by /health; nil when unset
-	startTime  time.Time        // Server start time for uptime calculation
+	storage    storage.HealthChecker
+	codohue    *codohueStatus // Recommender state reported by /health; nil when unset
+	startTime  time.Time      // Server start time for uptime calculation
 }
 
-// NewServer a new HTTP server
-func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis *pkgredis.Client, codohue *codohueStatus) *Server {
+// NewServer creates an HTTP server with its global middleware policy.
+func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis *pkgredis.Client, storageHealth storage.HealthChecker, codohue *codohueStatus) (*Server, error) {
 	s := &Server{
 		cfg:       cfg,
 		log:       log,
 		pool:      pool,
 		redis:     redis,
+		storage:   storageHealth,
 		codohue:   codohue,
 		startTime: time.Now(),
 	}
 
 	router := chi.NewRouter()
+	trustedRealIP, err := appmiddleware.TrustedRealIP(cfg.Server.TrustedProxyCIDRs)
+	if err != nil {
+		return nil, fmt.Errorf("configure trusted proxy IP resolution: %w", err)
+	}
 
 	// Global middlewares
 	// Note: middleware.RequestID is intentionally omitted — HTTPMiddleware is the
 	// sole source of request ID generation and X-Request-ID header propagation.
-	router.Use(chimiddleware.RealIP)
+	router.Use(trustedRealIP)
 	router.Use(logger.HTTPMiddleware(log))
 	router.Use(chimiddleware.Recoverer)
 	router.Use(errors.ErrorHandler)
@@ -71,10 +78,10 @@ func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis
 	// connections like SSE streams can opt out.
 
 	// Health check endpoint
-	router.Get("/health", s.healthCheckHandler)
+	router.With(appmiddleware.APIHeaders).Get("/health", s.healthCheckHandler)
 
 	// Metrics endpoint
-	router.Get("/metrics", s.metricsHandler)
+	router.With(appmiddleware.APIHeaders).Get("/metrics", s.metricsHandler)
 
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
@@ -87,7 +94,7 @@ func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis
 	s.httpServer = httpServer
 	s.router = router
 
-	return s
+	return s, nil
 }
 
 // Router returns the chi router for registering routes
@@ -136,6 +143,9 @@ type HealthCheckResponse struct {
 	// Pub/Sub, so an instance that cannot reach it serves a different feed rather
 	// than a slower one, and should be taken out of rotation.
 	Redis string `json:"redis"`
+	// Storage is "up" or "down". Upload success and media availability depend
+	// on every instance reaching the same backend, so down removes the instance.
+	Storage string `json:"storage"`
 	// Codohue is "off", "active", or "degraded". Degraded does not make the
 	// service unhealthy — the feed falls back to local scoring and the API is
 	// fully functional — but it has to be reported somewhere a monitor can see,
@@ -152,6 +162,7 @@ func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 		Status:   "healthy",
 		Database: "up",
 		Redis:    "up",
+		Storage:  "up",
 	}
 	if s.codohue != nil {
 		response.Codohue, response.CodohueReason = s.codohue.get()
@@ -171,6 +182,13 @@ func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 			s.log.Error("redis health check failed", "error", err)
 			response.Status = "unhealthy"
 			response.Redis = "down"
+		}
+	}
+	if s.storage != nil {
+		if err := s.storage.HealthCheck(ctx); err != nil {
+			s.log.Error("storage health check failed", "error", err)
+			response.Status = "unhealthy"
+			response.Storage = "down"
 		}
 	}
 

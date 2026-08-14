@@ -98,9 +98,10 @@ func (m *mockAccessTokenService) GetExpiryDuration() time.Duration {
 func newTestJWT(t *testing.T) *jwt.Service {
 	t.Helper()
 	svc, err := jwt.NewService(jwt.Config{
-		Secret: []byte("test-secret-key-32-bytes-minimum!!"),
-		Issuer: "test",
-		Expiry: 15 * time.Minute,
+		Secret:   []byte("test-secret-key-32-bytes-minimum!!"),
+		Issuer:   "test",
+		Audience: "test-api",
+		Expiry:   15 * time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("failed to create JWT service: %v", err)

@@ -82,10 +82,11 @@ type userReader interface {
 	GetAuthorsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]*entity.Author, error)
 }
 
-// followChecker checks whether a user follows another user.
+// followChecker checks whether a user follows one or more other users.
 // Implemented at the app layer to avoid cross-context imports.
 type followChecker interface {
 	IsFollowing(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error)
+	GetFollowingAmong(ctx context.Context, followerID uuid.UUID, followeeIDs []uuid.UUID) ([]uuid.UUID, error)
 }
 
 // hashtagRepo defines the repository operations needed by PostService and HashtagService.

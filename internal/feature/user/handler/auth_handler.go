@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -93,9 +92,8 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var req dto.RegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Warn(ctx, "invalid request body", "error", err)
-		errors.WriteJSON(w, errors.NewBadRequestError("Invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 
@@ -136,8 +134,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var req dto.LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errors.WriteJSON(w, errors.NewBadRequestError("Invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 
@@ -180,8 +178,8 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var tokenString string
 	if mobile {
 		var req dto.RefreshTokenRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			errors.WriteJSON(w, errors.NewBadRequestError("Invalid request body"))
+		if err := httputil.DecodeJSON(w, r, &req); err != nil {
+			errors.WriteJSON(w, err)
 			return
 		}
 		tokenString = req.RefreshToken
@@ -233,8 +231,8 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	var tokenString string
 	if mobile {
 		var req dto.LogoutRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			errors.WriteJSON(w, errors.NewBadRequestError("Invalid request body"))
+		if err := httputil.DecodeJSON(w, r, &req); err != nil {
+			errors.WriteJSON(w, err)
 			return
 		}
 		tokenString = req.RefreshToken
@@ -348,8 +346,8 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dto.ChangePasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errors.WriteJSON(w, errors.NewBadRequestError("Invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 

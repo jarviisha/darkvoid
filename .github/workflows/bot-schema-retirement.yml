@@ -1,0 +1,80 @@
+name: Retire legacy bot schema
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type drop-bot-schema-000009 exactly
+        required: true
+        type: string
+      data_handoff_reference:
+        description: Approved change/ticket proving external-bot data handoff
+        required: true
+        type: string
+
+jobs:
+  retire_bot_schema:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: read
+    # Configure required reviewers and prevent self-review on this environment.
+    # Its secrets are intentionally unavailable before that approval completes.
+    environment: production
+    env:
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+      BOT_SCHEMA_DROP_APPROVAL: ${{ inputs.confirmation }}
+      BOT_DATA_HANDOFF_REFERENCE: ${{ inputs.data_handoff_reference }}
+    steps:
+      - name: Verify production environment protection
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          environment_json="$(gh api "repos/${GITHUB_REPOSITORY}/environments/production")"
+          reviewer_count="$(jq '[.protection_rules[]? | select(.type == "required_reviewers") | .reviewers[]?] | length' <<< "$environment_json")"
+          prevent_self_review="$(jq -r '[.protection_rules[]? | select(.type == "required_reviewers") | .prevent_self_review] | any' <<< "$environment_json")"
+          if [ "$reviewer_count" -lt 1 ] || [ "$prevent_self_review" != true ]; then
+            echo "production must require a reviewer and prevent self-review" >&2
+            exit 1
+          fi
+
+      - name: Validate explicit confirmation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$BOT_SCHEMA_DROP_APPROVAL" != "drop-bot-schema-000009" ]; then
+            echo "confirmation must exactly equal drop-bot-schema-000009" >&2
+            exit 1
+          fi
+          case "$BOT_DATA_HANDOFF_REFERENCE" in
+            ""|true|TRUE|yes|YES)
+              echo "data_handoff_reference must identify an approved change or ticket" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Run guarded migration
+        uses: appleboy/ssh-action@v1
+        env:
+          DEPLOY_DIR: ${{ env.DEPLOY_DIR }}
+          BOT_SCHEMA_DROP_APPROVAL: ${{ env.BOT_SCHEMA_DROP_APPROVAL }}
+          BOT_DATA_HANDOFF_REFERENCE: ${{ env.BOT_DATA_HANDOFF_REFERENCE }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          envs: DEPLOY_DIR,BOT_SCHEMA_DROP_APPROVAL,BOT_DATA_HANDOFF_REFERENCE
+          script: |
+            set -eu
+            : "${DEPLOY_DIR:?configure DEPLOY_DIR on the production GitHub environment}"
+            cd "$DEPLOY_DIR"
+
+            COMPOSE="docker compose -f docker-compose.prod.yml"
+            if grep -qs 'docker-compose\.codohue\.yml' .env; then
+              COMPOSE="$COMPOSE -f docker-compose.codohue.yml"
+            fi
+            export BOT_SCHEMA_DROP_APPROVAL BOT_DATA_HANDOFF_REFERENCE
+            $COMPOSE --profile destructive-migration run --rm migrate-bot-destructive

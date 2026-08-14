@@ -11,6 +11,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
     steps:
       - uses: actions/checkout@v4
 
@@ -21,5 +31,34 @@ jobs:
       - name: Run vet
         run: go vet ./...
 
+      - name: Start S3-compatible integration store
+        run: |
+          docker run --detach --rm --name darkvoid-ci-minio \
+            --publish 9000:9000 \
+            --env MINIO_ROOT_USER=darkvoid-test \
+            --env MINIO_ROOT_PASSWORD=darkvoid-test-secret \
+            minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs darkvoid-ci-minio
+          exit 1
+
       - name: Run tests
+        env:
+          REDIS_TEST_ADDR: 127.0.0.1:6379
+          S3_TEST_ENDPOINT: http://127.0.0.1:9000
+          S3_TEST_ACCESS_KEY_ID: darkvoid-test
+          S3_TEST_SECRET_ACCESS_KEY: darkvoid-test-secret
         run: go test -race ./...
+
+      - name: Stop S3-compatible integration store
+        if: always()
+        run: docker stop darkvoid-ci-minio || true
+
+      - name: Test production operation contracts
+        run: make test-ops

@@ -2,17 +2,11 @@
 
 ## Kết luận
 
-Dự án có cấu trúc modular monolith tương đối rõ ràng và các kiểm tra tự động hiện tại đều đạt. Tuy nhiên, dự án chưa nên public hoặc triển khai production trước khi xử lý các vấn đề P0 về phân quyền nội dung, upload, storage và error handling.
+Dự án có cấu trúc modular monolith tương đối rõ ràng. Toàn bộ finding P0, P1 và P2 đã được khắc phục, bao gồm phân quyền nội dung, upload, shared object storage, automated off-host backup, reproducible container selection, destructive-migration gating, error handling, feed/notification consistency, session hardening, các truy vấn/enrichment order-sensitive và test coverage ở các vùng rủi ro cao. Các kiểm tra tự động được ghi nhận trong audit đều đạt.
 
-Các vùng rủi ro chính:
+Dự án không còn finding mở hoặc blocker bảo mật/correctness đã biết trong phạm vi audit. Codebase đã đạt production-readiness gate của audit; rollout production vẫn phải hoàn tất các điều kiện vận hành đã document, đặc biệt là protected environment, credentials production-like và staging drill cho backup/restore cùng webhook thật.
 
-- Quyền truy cập post/comment chưa bảo vệ visibility.
-- Upload avatar/cover có thể tạo stored XSS.
-- Cấu hình storage không được hỗ trợ có thể làm mất file âm thầm.
-- Materialized feed có thể mất event, lặp hoặc bỏ sót dữ liệu.
-- Notification/SSE có lỗi concurrency và cache consistency.
-- Refresh-token lifecycle chưa atomic và token được lưu dạng raw.
-- Cấu hình production chưa phù hợp với multi-instance và quy trình backup an toàn.
+CI nay chủ động cấp Redis và MinIO, nên các test timeline/SSE và object-storage integration không còn bị skip trên nhánh chính hoặc pull request.
 
 ## Trạng thái khắc phục
 
@@ -43,13 +37,41 @@ Các finding P1 đã được sửa trong worktree ngày 2026-08-11:
 | P1-12 | Resolved | Auth middleware chỉ nhận Bearer token qua `Authorization`; query-token và Swagger parameter đã bị loại bỏ |
 | P1-13 | Resolved | Post-like và comment-like toggle áp dụng self-like guard cùng transaction advisory lock theo cặp tài nguyên, trả trạng thái committed trước khi phát side effect |
 
+Các finding P2 đã được sửa trong worktree đến ngày 2026-08-12:
+
+| ID | Trạng thái | Thay đổi chính |
+|---|---|---|
+| P2-01 | Resolved | Mọi JSON handler dùng decoder chung với body limit 1 MiB, từ chối field lạ và nhiều JSON document, đồng thời trả lỗi syntax/type/size theo một contract thống nhất |
+| P2-02 | Resolved | Access token chỉ chấp nhận HS256 và bắt buộc đúng issuer, audience, expiration; thêm cấu hình `JWT_AUDIENCE` cùng security regression tests cho cả validator chuẩn và custom claims |
+| P2-03 | Resolved | Forwarded client IP chỉ được nhận từ `TRUSTED_PROXY_CIDRS`; chuỗi proxy được duyệt từ phải sang trái, header lỗi fail-closed và production Compose chỉ bind loopback theo mặc định |
+| P2-04 | Resolved | Common responses có `nosniff`, anti-frame, no-referrer và Permissions Policy; API/health/metrics dùng CSP khóa resource context, static upload dùng CSP sandbox riêng, Swagger giữ policy tương thích UI |
+| P2-05 | Resolved | Access middleware tạo request-scoped state đồng bộ; required/optional auth cập nhật `user_id` qua cùng pointer để final access log luôn đọc được identity sau khi handler hoàn tất |
+| P2-06 | Resolved | JSON response được encode hoàn chỉnh vào buffer trước khi commit status; lỗi encode trả contract `INTERNAL_ERROR` sạch với HTTP 500 |
+| P2-07 | Resolved | Feed service chỉ còn điều phối; timeline, mixed blend, trending, discovery, follow resolution và enrichment được tách thành component riêng, cursor transition có table-driven tests |
+| P2-08 | Resolved | Post listing batch-check quan hệ follow trong một query; trending và follower/following listing dùng ID làm deterministic tie-breaker |
+| P2-09 | Resolved | Thêm S3-compatible shared storage và bucket health probe; production từ chối local storage, localhost URL và URL không dùng HTTPS |
+| P2-10 | Resolved | Backup PostgreSQL chạy tự động vào Restic repository mã hóa/off-host, có daily/weekly/monthly retention, restore drill định kỳ, health state và failure/recovery webhook |
+| P2-11 | Resolved | PostgreSQL, Redis, migrate và mọi Dockerfile base image dùng exact tag kèm manifest digest; app/backup deploy bằng build digest, CD lưu digest vào `.env` và CI từ chối floating reference |
+| P2-12 | Resolved | Bot `000009` bị loại khỏi automatic migration path, có session SQL guard, protected manual workflow, handoff reference và fresh backup/restore evidence; generic down không còn giả làm data rollback |
+| P2-13 | Resolved | Bổ sung unit/race/integration tests cho notification, search, media, errors/logger/storage; CI cấp Redis và MinIO đã ghim digest để bắt buộc chạy timeline, SSE Pub/Sub và S3 bucket lifecycle |
+
+Tác động triển khai của P2:
+
+- `JWT_AUDIENCE` mặc định là `darkvoid-api`; mọi API instance phải dùng cùng giá trị. Access token cũ không có claim `aud` sẽ bị từ chối sau khi deploy và client cần dùng refresh token để lấy access token mới; refresh token không bị ảnh hưởng.
+- Production Compose đổi `SERVER_BIND` mặc định từ `0.0.0.0` sang `127.0.0.1`. Deployment dùng reverse proxy phải cấu hình `TRUSTED_PROXY_CIDRS` theo source CIDR mà app thực sự nhìn thấy và proxy phải overwrite hoặc append đúng `X-Forwarded-For`; chỉ mở bind ra interface khác khi firewall/private load-balancer network đã chặn truy cập trực tiếp.
+- Production bắt buộc `STORAGE_PROVIDER=s3`, public `STORAGE_BASE_URL` dùng HTTPS, region và bucket dùng chung. Access key/secret có thể bỏ trống để dùng IAM role/workload identity; principal cần quyền probe bucket, upload multipart và delete object. Bucket/CDN read policy nằm ngoài ứng dụng và phải được operator cấu hình.
+- Production Compose bắt buộc `BACKUP_RESTIC_REPOSITORY`, `BACKUP_RESTIC_PASSWORD` và HTTPS `BACKUP_ALERT_WEBHOOK_URL`; repository filesystem/cùng host bị từ chối. Backup principal cần read/write/list/delete trên prefix riêng, còn database role cần `CREATEDB` để restore drill vào database cô lập. CD build app/backup từ cùng commit và deploy đúng cặp digest registry trả về; hướng dẫn vận hành và khôi phục nằm tại [`docs/production-backup-runbook.md`](../docs/production-backup-runbook.md).
+- Production không còn chấp nhận `APP_TAG` hay fallback `latest`. CD lấy `APP_DIGEST`/`BACKUP_DIGEST` từ kết quả build-push và lưu cả hai vào `.env`; rollback phải khôi phục đúng cặp digest từ cùng deployment. Nâng cấp PostgreSQL, Redis, migrate, Go hoặc Alpine phải cập nhật đồng thời exact tag và manifest digest; `make test-production-images` ngăn reference thiếu digest quay lại.
+- Trước khi chạy bot schema retirement một lần, phải cấu hình GitHub environment `production` với required reviewers, prevent self-review, VPS secrets và `DEPLOY_DIR`; sau đó dùng workflow `Retire legacy bot schema` cùng change/handoff reference. Normal deploy và `make migrate-up-bot` chỉ dừng ở `000008`. Recovery dữ liệu chỉ từ snapshot theo [`docs/bot-schema-retirement-runbook.md`](../docs/bot-schema-retirement-runbook.md), không dùng down migration.
+- CI test job cần Docker service support và localhost ports `6379`/`9000` còn trống trên runner. Redis 7.4.10 và MinIO `RELEASE.2025-09-07T16-13-09Z` đều được ghim manifest digest; test job cấu hình `REDIS_TEST_ADDR` và `S3_TEST_*` để integration tests không thể âm thầm skip.
+
 Tác động triển khai của P1:
 
 - Phải chạy migration user `000014` và `000015` trước khi chạy binary mới. `000014` chuyển token hiện hữu sang hash một chiều; down migration chỉ khôi phục cấu trúc bằng giá trị hash, không thể khôi phục raw token.
 - Client SSE không còn được gửi JWT trong query string. Client phải dùng request streaming có `Authorization: Bearer ...`; native `EventSource` cần chuyển sang cookie/ticket ngắn hạn trong một thay đổi riêng nếu được sử dụng.
 - `GET /users/{userKey}` nay là account-detail self-only; dữ liệu public của user khác tiếp tục đi qua profile endpoint.
 
-Xác minh thay đổi P1: `make generate`, `make build`, `make test`, `go test -race ./...`, `go vet ./...` và `golangci-lint run ./...` đều đạt. Redis integration test cho atomic replacement và tie-score block đã được thêm nhưng bị skip trong lần chạy này do không cấu hình `REDIS_TEST_ADDR`.
+Xác minh thay đổi P1: `make generate`, `make build`, `make test`, `go test -race ./...`, `go vet ./...` và `golangci-lint run ./...` đều đạt. Redis integration tests cho atomic replacement, tie-score pagination và SSE Pub/Sub đã chạy dưới race detector; S3-compatible bucket lifecycle đã chạy với MinIO thật.
 
 Các thay đổi đã qua `make build`, `make test`, `go test -race ./...`, `go vet ./...` và `golangci-lint run ./...`.
 
@@ -78,7 +100,7 @@ Kết quả xác minh:
 | `golangci-lint` | Đạt | 21 linters, 0 issue khi dùng writable cache |
 | Package documentation | Đạt | Không phát hiện package thiếu `docs.go` |
 
-> Lưu ý: kết quả test/race xanh không bao phủ các package không có test, đặc biệt là notification broker/cache/service, search, storage, `pkg/errors`, JWT và logger. Các integration test của Redis timeline cũng bị skip nếu không có `REDIS_TEST_ADDR`.
+> Các package rủi ro cao có coverage đo được: notification broker 87,1% khi chạy Redis integration, cache 94,1%, service 72,9%; search handler 100%, service 78,8%; storage handler 100%, service 95,5%; `pkg/errors` 100%, JWT 71,9%, logger trên 90% và `pkg/storage` trên 80%. Đây là package-level statement coverage, không phải một mục tiêu coverage toàn repository.
 
 ## P0 — phải sửa trước khi production
 
@@ -495,11 +517,13 @@ DB state có thể vẫn hợp lệ nhờ idempotent SQL, nhưng request đồng
 
 ## P2 — kiến trúc, hardening và vận hành
 
-### P2-01: Handler JSON không có body limit và strict decoding
+### P2-01: Handler JSON không có body limit và strict decoding — Resolved
 
 **Mức độ:** Medium
 
-Có nhiều handler gọi trực tiếp `json.NewDecoder(r.Body).Decode(...)`, ví dụ [`internal/feature/post/handler/post_handler.go:57`](../internal/feature/post/handler/post_handler.go#L57) và [`internal/feature/user/handler/auth_handler.go:96`](../internal/feature/user/handler/auth_handler.go#L96).
+> Đã sửa bằng strict JSON request decoder dùng chung trong `internal/http`, áp dụng cho toàn bộ handler nhận JSON. Decoder giới hạn body ở 1 MiB, từ chối field không được khai báo và nhiều JSON document, đồng thời chuẩn hóa lỗi parse thành `BAD_REQUEST` với nguyên nhân cụ thể. Webhook và multipart upload giữ luồng riêng vì đã có giới hạn và quy tắc xác thực chuyên biệt. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, có nhiều handler gọi trực tiếp `json.NewDecoder(r.Body).Decode(...)`, ví dụ [`internal/feature/post/handler/post_handler.go:57`](../internal/feature/post/handler/post_handler.go#L57) và [`internal/feature/user/handler/auth_handler.go:96`](../internal/feature/user/handler/auth_handler.go#L96).
 
 Khuyến nghị tạo helper chung:
 
@@ -510,11 +534,13 @@ Khuyến nghị tạo helper chung:
 
 ---
 
-### P2-02: JWT validation chấp nhận mọi HMAC algorithm
+### P2-02: JWT validation chấp nhận mọi HMAC algorithm — Resolved
 
 **Mức độ:** Medium
 
-JWT được ký bằng HS256 nhưng validate chỉ yêu cầu token method thuộc nhóm HMAC: [`pkg/jwt/jwt.go:61`](../pkg/jwt/jwt.go#L61), [`pkg/jwt/jwt.go:83`](../pkg/jwt/jwt.go#L83).
+> Đã sửa bằng parser policy chỉ cho phép chính xác HS256 và bắt buộc `iss`, `aud`, `exp` khớp cấu hình. Token mới luôn mang audience; cả `ValidateToken` và `ValidateTokenWithClaims` dùng chung policy. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, JWT được ký bằng HS256 nhưng validate chỉ yêu cầu token method thuộc nhóm HMAC: [`pkg/jwt/jwt.go:61`](../pkg/jwt/jwt.go#L61), [`pkg/jwt/jwt.go:83`](../pkg/jwt/jwt.go#L83).
 
 Khuyến nghị:
 
@@ -524,11 +550,13 @@ Khuyến nghị:
 
 ---
 
-### P2-03: Rate limiting phụ thuộc cấu hình reverse proxy
+### P2-03: Rate limiting phụ thuộc cấu hình reverse proxy — Resolved
 
 **Mức độ:** Medium, phụ thuộc deployment
 
-`middleware.RealIP` chạy trước rate limiter: [`internal/app/server.go:46`](../internal/app/server.go#L46). Nếu app được expose trực tiếp hoặc proxy không sanitize forwarded headers, client có thể spoof IP và vượt rate limit.
+> Đã sửa bằng trusted-proxy middleware fail-closed. Forwarded headers bị bỏ qua với peer không nằm trong `TRUSTED_PROXY_CIDRS`; multi-hop chain được duyệt từ phải sang trái và header chứa IP không hợp lệ không được dùng. Production Compose bind `127.0.0.1` theo mặc định để tránh expose app trực tiếp. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, `middleware.RealIP` chạy trước rate limiter: [`internal/app/server.go:46`](../internal/app/server.go#L46). Nếu app được expose trực tiếp hoặc proxy không sanitize forwarded headers, client có thể spoof IP và vượt rate limit.
 
 Khuyến nghị:
 
@@ -538,21 +566,25 @@ Khuyến nghị:
 
 ---
 
-### P2-04: Thiếu security headers
+### P2-04: Thiếu security headers — Resolved
 
 **Mức độ:** Medium
 
-Không thấy middleware thiết lập CSP, `X-Content-Type-Options`, `Referrer-Policy` hoặc các header bảo vệ liên quan. Rủi ro tăng lên vì static user uploads được phục vụ cùng origin.
+> Đã sửa bằng browser policy tách theo response boundary. Header chung áp dụng `nosniff`, anti-frame, no-referrer và Permissions Policy; `/api/v1`, `/health`, `/metrics` nhận CSP `default-src 'none'` cùng khóa base/form/frame; `/static` nhận CSP sandbox riêng. Swagger UI không nhận CSP khóa script/style nhưng vẫn nhận các header chung. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, không thấy middleware thiết lập CSP, `X-Content-Type-Options`, `Referrer-Policy` hoặc các header bảo vệ liên quan. Rủi ro tăng lên vì static user uploads được phục vụ cùng origin.
 
 Khuyến nghị thêm middleware security headers và có cấu hình riêng cho API/static upload.
 
 ---
 
-### P2-05: Access log không nhận được auth-enriched context
+### P2-05: Access log không nhận được auth-enriched context — Resolved
 
 **Mức độ:** Medium
 
-Comment nói access logger lấy logger mới nhất có `user_id`, nhưng middleware ngoài vẫn đọc context của request mà nó giữ tại [`pkg/logger/middleware.go:37`](../pkg/logger/middleware.go#L37). `r.WithContext` trong middleware phía trong không thay đổi request của middleware phía ngoài.
+> Đã sửa bằng request-scoped state pointer được tạo ở access middleware và chia sẻ qua mọi derived context. `logger.WithUserID` cập nhật state dưới lock đồng thời enrich context logger; final access log đọc state sau khi handler hoàn tất. Cả required và optional auth đều dùng cùng đường cập nhật và có integration tests. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, comment nói access logger lấy logger mới nhất có `user_id`, nhưng middleware ngoài vẫn đọc context của request mà nó giữ tại [`pkg/logger/middleware.go:37`](../pkg/logger/middleware.go#L37). `r.WithContext` trong middleware phía trong không thay đổi request của middleware phía ngoài.
 
 Ảnh hưởng: access log có thể thiếu `user_id`, làm giảm khả năng điều tra sự cố.
 
@@ -560,21 +592,25 @@ Khuyến nghị dùng response/request state chung hoặc context carrier có po
 
 ---
 
-### P2-06: JSON response xử lý encode error sau khi đã gửi status
+### P2-06: JSON response xử lý encode error sau khi đã gửi status — Resolved
 
 **Mức độ:** Low
 
-`WriteJSON` gửi status trước, sau đó gọi `http.Error` nếu encode thất bại: [`internal/http/response.go:12`](../internal/http/response.go#L12). Khi header/body đã bắt đầu, status không thể đổi thành 500 và response có thể bị trộn JSON/plain text.
+> Đã sửa bằng cách encode payload hoàn chỉnh vào buffer trước khi commit header/status. Payload không encode được sẽ bị loại bỏ và trả JSON `INTERNAL_ERROR` với HTTP 500; regression test xác nhận response không bị trộn plain text. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, `WriteJSON` gửi status trước, sau đó gọi `http.Error` nếu encode thất bại: [`internal/http/response.go:12`](../internal/http/response.go#L12). Khi header/body đã bắt đầu, status không thể đổi thành 500 và response có thể bị trộn JSON/plain text.
 
 Khuyến nghị encode vào buffer trước khi commit header, hoặc chỉ log lỗi sau khi streaming đã bắt đầu.
 
 ---
 
-### P2-07: Feed service quá lớn và gộp nhiều trách nhiệm
+### P2-07: Feed service quá lớn và gộp nhiều trách nhiệm — Resolved
 
 **Mức độ:** Medium
 
-`internal/feature/feed/service/feed_service.go` dài khoảng 962 dòng, đang xử lý:
+> Đã tách `FeedService` thành coordinator 163 dòng và các component chuyên trách: `timelineReader`, `mixedFeedBuilder`, `trendingSource`, `discoveryReader`, `followingResolver`, `feedEnricher`. Public constructor/API không đổi; singleflight thuộc về từng source, cursor transition là hàm thuần và có table-driven tests bên cạnh characterization suite hiện có. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
+
+Trước khi sửa, `internal/feature/feed/service/feed_service.go` dài 1.031 dòng và xử lý:
 
 - Timeline rollout và cache.
 - Timeline refresh/fallback.
@@ -594,9 +630,11 @@ Các file lớn khác cần xem xét dần: `internal/app/app.go`, `pkg/config/c
 
 ---
 
-### P2-08: Một số truy vấn/enrichment có nguy cơ N+1 hoặc pagination không ổn định
+### P2-08: Một số truy vấn/enrichment có nguy cơ N+1 hoặc pagination không ổn định — Resolved
 
 **Mức độ:** Medium
+
+> Đã sửa bằng batch relationship lookup cho toàn bộ unique author của một response và deterministic ordering `(like_count, id)`/`(created_at, user_id)`. API follower/following giữ nguyên contract `limit`/`offset`; ID duy nhất loại bỏ thứ tự không xác định khi nhiều record có cùng timestamp. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
 
 - Post enrichment kiểm tra follow theo từng author ở các post listing thông thường.
 - Trending query chỉ `ORDER BY like_count DESC`, không có tie-break ID: [`internal/feature/post/sql/post_queries.sql:76`](../internal/feature/post/sql/post_queries.sql#L76).
@@ -606,9 +644,11 @@ Khuyến nghị batch follow lookup và dùng deterministic ordering `(score/tim
 
 ---
 
-### P2-09: Local storage không phù hợp horizontal scaling
+### P2-09: Local storage không phù hợp horizontal scaling — Resolved
 
 **Mức độ:** Medium/High tùy topology
+
+> Đã sửa bằng AWS SDK v2 S3-compatible provider dùng chung cho mọi instance, hỗ trợ AWS default credential chain và custom endpoint/path-style cho MinIO. Storage được probe khi boot và trên `/health`; production config fail-closed nếu dùng local provider, URL không phải public HTTPS, hoặc thiếu region/bucket. Production Compose không còn mount upload volume và bắt buộc khai báo object storage. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
 
 Production compose mặc định dùng local named volume và `STORAGE_BASE_URL=http://localhost:8080/static`: [`docker-compose.prod.yml:282`](../docker-compose.prod.yml#L282).
 
@@ -622,9 +662,11 @@ Khuyến nghị triển khai object storage/CDN thật, health check storage và
 
 ---
 
-### P2-10: Backup production là opt-in, một lần và cùng host
+### P2-10: Backup production là opt-in, một lần và cùng host — Resolved
 
 **Mức độ:** Medium/High
+
+> Đã thay one-shot profile bằng scheduler luôn chạy trong production stack. Mỗi cycle stream PostgreSQL custom dump vào Restic repository từ xa được mã hóa, áp retention ngày/tuần/tháng, và định kỳ restore chính snapshot vừa tạo vào database cô lập để xác minh. Backup thất bại/config lỗi được gửi tới HTTPS webhook, lần chạy phục hồi gửi recovery event, và health check phát hiện cycle quá hạn. Local volume chỉ còn timestamp/cache có thể tái tạo, không chứa snapshot. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
 
 Compose ghi rõ backup chỉ chạy thủ công và lưu local volume: [`docker-compose.prod.yml:333`](../docker-compose.prod.yml#L333).
 
@@ -637,9 +679,11 @@ Khuyến nghị:
 
 ---
 
-### P2-11: Container image/tag chưa reproducible hoàn toàn
+### P2-11: Container image/tag chưa reproducible hoàn toàn — Resolved
 
 **Mức độ:** Low/Medium
+
+> Đã pin image public bằng exact patch tag và multi-platform manifest digest: PostgreSQL 16.14, Redis 7.4.10, golang-migrate 4.19.1, Go 1.26.5/Alpine 3.24 build stage và Alpine 3.22.5 runtime. App/backup không còn `latest`; CD publish full commit-SHA tag để truy vết nhưng Compose deploy bằng immutable digest do registry trả về và persist digest vào `.env`. CI contract test từ chối floating Compose/Dockerfile reference hoặc CD bỏ digest. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
 
 Production dùng các floating tag như `migrate/migrate:4`, `postgres:16-alpine`, `redis:7-alpine` và application `latest` mặc định: [`docker-compose.prod.yml:48`](../docker-compose.prod.yml#L48), [`docker-compose.prod.yml:232`](../docker-compose.prod.yml#L232).
 
@@ -647,9 +691,11 @@ Khuyến nghị pin version patch hoặc digest, đặc biệt cho production de
 
 ---
 
-### P2-12: Migration bot phá hủy dữ liệu nằm trong migration chain tự động
+### P2-12: Migration bot phá hủy dữ liệu nằm trong migration chain tự động — Resolved
 
 **Mức độ:** High operational risk
+
+> Đã tách migration `000009` khỏi deploy thường: safe runner chỉ tiến tới `000008`, no-op khi DB đã ở `000009`, và từ chối downgrade/version mới hơn/dirty state. Đường phá hủy là Compose profile riêng được gọi từ workflow thủ công qua GitHub `production` environment; runner yêu cầu exact confirmation, reference bàn giao external bot, backup ≤48 giờ và restore drill ≤7 ngày. SQL `000009` còn kiểm tra session-only approval trước `DROP SCHEMA`. Generic `make migrate-down` không còn chạy bot vì down chỉ tạo schema rỗng; runbook mô tả recovery từ snapshot thay vì data rollback giả. Phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
 
 - Up migration chạy `DROP SCHEMA IF EXISTS bot CASCADE`: [`migrations/bot/000009_drop_bot_schema.up.sql:22`](../migrations/bot/000009_drop_bot_schema.up.sql#L22).
 - Down migration chỉ tái tạo schema rỗng và không thể phục hồi dữ liệu: [`migrations/bot/000009_drop_bot_schema.down.sql:1`](../migrations/bot/000009_drop_bot_schema.down.sql#L1).
@@ -664,9 +710,11 @@ Migration có chủ ý và được document tốt, nhưng cần deployment gate
 
 ---
 
-### P2-13: Test coverage thiếu ở các vùng có rủi ro cao
+### P2-13: Test coverage thiếu ở các vùng có rủi ro cao — Resolved
 
 **Mức độ:** High engineering risk
+
+> Đã bổ sung table-driven/unit tests cho notification unread cache và service fallback/enrichment/mutation, search validation/focused/all-mode cùng handler parsing, media handler và type-specific size/storage failures, error/logger contracts, local storage lifecycle. Redis broker có Pub/Sub round-trip test; S3 storage có smoke test tạo bucket thật, upload và đọc lại metadata/body, health check, URL, delete. CI cấp Redis và MinIO đã ghim digest, đặt các biến test bắt buộc và chạy toàn suite dưới race detector. Coverage trọng điểm hiện đạt từ 71,9% đến 100%, riêng broker đạt 87,1% khi integration bật; phần bằng chứng dưới đây ghi nhận trạng thái trước khi sửa.
 
 Các package hiện không có test đáng kể:
 
@@ -678,9 +726,12 @@ Các package hiện không có test đáng kể:
 - `pkg/errors`
 - `pkg/jwt`
 - `pkg/logger`
-- `pkg/storage`
 
-Redis timeline integration tests bị skip nếu `REDIS_TEST_ADDR` không được cấu hình: [`internal/feature/feed/cache/redis_timeline_store_test.go:26`](../internal/feature/feed/cache/redis_timeline_store_test.go#L26).
+`pkg/storage` nay có cả unit test local/S3 và integration test với bucket MinIO thật trong CI.
+
+Backup scheduler có shell contract test và end-to-end drill bằng PostgreSQL/Restic container tạm; đường truyền tới repository off-host và failure/recovery webhook thật vẫn cần được xác minh trong môi trường staging có credentials production-like.
+
+Redis timeline integration tests vẫn skip có chủ ý ở môi trường unit-test không có Redis, nhưng CI luôn cấu hình `REDIS_TEST_ADDR`; thiếu service hoặc integration failure làm job thất bại.
 
 Khuyến nghị ưu tiên test theo rủi ro:
 

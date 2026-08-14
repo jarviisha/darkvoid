@@ -78,33 +78,38 @@ func (s *PostService) enrichAuthors(ctx context.Context, posts []*entity.Post) {
 	}
 }
 
-// enrichIsFollowingAuthor sets IsFollowingAuthor on each post for the given viewer.
-// Best-effort: on error, posts are returned as-is.
+// enrichIsFollowingAuthor sets IsFollowingAuthor on each post for the given
+// viewer with one batch lookup. Best-effort: on error, posts are returned as-is.
 func (s *PostService) enrichIsFollowingAuthor(ctx context.Context, posts []*entity.Post, viewerID *uuid.UUID) {
 	if s.followChecker == nil || viewerID == nil || len(posts) == 0 {
 		return
 	}
 
-	// Collect unique author IDs and batch-check by single calls (typically few unique authors).
-	seen := make(map[uuid.UUID]bool)
+	authorIDs := make([]uuid.UUID, 0, len(posts))
+	seen := make(map[uuid.UUID]bool, len(posts))
 	for _, p := range posts {
-		seen[p.AuthorID] = false
-	}
-
-	for authorID := range seen {
-		if authorID == *viewerID {
+		if p.AuthorID == *viewerID || seen[p.AuthorID] {
 			continue
 		}
-		ok, err := s.followChecker.IsFollowing(ctx, *viewerID, authorID)
-		if err != nil {
-			logger.LogError(ctx, err, "failed to check following for post enrichment", "author_id", authorID)
-			continue
-		}
-		seen[authorID] = ok
+		seen[p.AuthorID] = true
+		authorIDs = append(authorIDs, p.AuthorID)
+	}
+	if len(authorIDs) == 0 {
+		return
+	}
+
+	followingIDs, err := s.followChecker.GetFollowingAmong(ctx, *viewerID, authorIDs)
+	if err != nil {
+		logger.LogError(ctx, err, "failed to batch-check following for post enrichment", "author_count", len(authorIDs))
+		return
+	}
+	followingSet := make(map[uuid.UUID]bool, len(followingIDs))
+	for _, id := range followingIDs {
+		followingSet[id] = true
 	}
 
 	for _, p := range posts {
-		p.IsFollowingAuthor = seen[p.AuthorID]
+		p.IsFollowingAuthor = followingSet[p.AuthorID]
 	}
 }
 

@@ -1,8 +1,11 @@
 package httputil
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+
+	apperrors "github.com/jarviisha/darkvoid/pkg/errors"
 )
 
 // RESTful API Response Guidelines:
@@ -11,12 +14,15 @@ import (
 
 // WriteJSON writes JSON response with given status code
 func WriteJSON(w http.ResponseWriter, status int, data any) {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(data); err != nil {
+		apperrors.ErrInternal.WriteHTTP(w)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// Log the error or handle it appropriately
-		http.Error(w, "Failed to encode JSON response", http.StatusInternalServerError)
-	}
+	_, _ = w.Write(body.Bytes())
 }
 
 // MessageResponse represents a simple message response

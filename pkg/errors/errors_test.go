@@ -3,6 +3,7 @@ package errors
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,81 @@ func TestWithDetail_DoesNotMutateReceiver(t *testing.T) {
 	}
 	if got := second.Details["request"]; got != "second" {
 		t.Fatalf("second detail = %v, want second", got)
+	}
+}
+
+func TestAppError_WrapAndResponseLifecycle(t *testing.T) {
+	t.Parallel()
+	sentinel := stderrors.New("database unavailable")
+	wrapped := Wrap(sentinel, "DB_ERROR", "database failed", http.StatusServiceUnavailable).WithDetail("operation", "read")
+	if got := wrapped.Error(); !strings.Contains(got, sentinel.Error()) {
+		t.Fatalf("Error() = %q, want underlying error", got)
+	}
+	if !stderrors.Is(wrapped, sentinel) || Unwrap(wrapped) != sentinel || GetAppError(wrapped) != wrapped {
+		t.Fatal("wrapped error chain was not preserved")
+	}
+	var target *AppError
+	if !As(wrapped, &target) || target != wrapped || !Is(wrapped, sentinel) {
+		t.Fatal("As/Is did not traverse AppError")
+	}
+	if Wrap(nil, "IGNORED", "ignored", 500) != nil {
+		t.Fatal("Wrap(nil) must return nil")
+	}
+	if Wrap(wrapped, "OTHER", "other", 500) != wrapped {
+		t.Fatal("Wrap(AppError) must preserve the original error")
+	}
+
+	recorder := httptest.NewRecorder()
+	WriteJSON(recorder, wrapped)
+	if recorder.Code != http.StatusServiceUnavailable || recorder.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("response status/content type = %d/%q", recorder.Code, recorder.Header().Get("Content-Type"))
+	}
+	var response ErrorResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Error.Code != "DB_ERROR" || response.Error.Details["operation"] != "read" {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestWriteErrorResponse_HidesUnknownError(t *testing.T) {
+	t.Parallel()
+	recorder := httptest.NewRecorder()
+	WriteErrorResponse(recorder, stderrors.New("credential-secret"))
+	if recorder.Code != http.StatusInternalServerError || strings.Contains(recorder.Body.String(), "credential-secret") {
+		t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCommonErrorConstructors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		err    *AppError
+		code   string
+		status int
+	}{
+		{name: "validation", err: NewValidationError("email", "invalid"), code: "VALIDATION_ERROR", status: 400},
+		{name: "not found", err: NewNotFoundError("post"), code: "NOT_FOUND", status: 404},
+		{name: "conflict", err: NewConflictError("username"), code: "CONFLICT", status: 409},
+		{name: "unauthorized", err: NewUnauthorizedError("expired"), code: "UNAUTHORIZED", status: 401},
+		{name: "unauthorized empty", err: NewUnauthorizedError(""), code: "UNAUTHORIZED", status: 401},
+		{name: "forbidden", err: NewForbiddenError("admin only"), code: "FORBIDDEN", status: 403},
+		{name: "forbidden empty", err: NewForbiddenError(""), code: "FORBIDDEN", status: 403},
+		{name: "bad request", err: NewBadRequestError("invalid"), code: "BAD_REQUEST", status: 400},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.err.Code != tt.code || tt.err.HTTPStatus != tt.status || tt.err.Error() == "" {
+				t.Fatalf("error = %#v", tt.err)
+			}
+		})
+	}
+	joined := Join(stderrors.New("one"), stderrors.New("two"))
+	if joined == nil {
+		t.Fatal("Join() returned nil")
 	}
 }
 

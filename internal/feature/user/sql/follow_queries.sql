@@ -15,18 +15,24 @@ SELECT EXISTS(
     WHERE follower_id = $1 AND followee_id = $2
 );
 
+-- name: GetFollowingAmong :many
+SELECT followee_id
+FROM usr.follows
+WHERE follower_id = sqlc.arg('follower_id')
+  AND followee_id = ANY(sqlc.arg('followee_ids')::uuid[]);
+
 -- name: GetFollowers :many
 SELECT follower_id, followee_id, created_at
 FROM usr.follows
 WHERE followee_id = sqlc.arg('followee_id')
-ORDER BY created_at DESC
+ORDER BY created_at DESC, follower_id DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 
 -- name: GetFollowing :many
 SELECT follower_id, followee_id, created_at
 FROM usr.follows
 WHERE follower_id = sqlc.arg('follower_id')
-ORDER BY created_at DESC
+ORDER BY created_at DESC, followee_id DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 
 -- name: CountFollowers :one
