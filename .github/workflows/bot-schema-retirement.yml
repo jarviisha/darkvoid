@@ -54,6 +54,19 @@ jobs:
               exit 1
               ;;
           esac
+          # Both values are carried to the deployment host through ssh-action's
+          # `envs:`, which interpolates them into a remote shell. Restricting them
+          # to an identifier charset here is what stops a reference like
+          # "$(curl …)" from being expanded there — approval gates who can start
+          # this workflow, not what they can type into its inputs.
+          if [[ ! "$BOT_DATA_HANDOFF_REFERENCE" =~ ^[A-Za-z0-9][A-Za-z0-9._/#-]{2,99}$ ]]; then
+            echo "data_handoff_reference must be 3-100 characters of letters, digits, . _ / # or -" >&2
+            exit 1
+          fi
+          if [[ ! "$DEPLOY_DIR" =~ ^/[A-Za-z0-9._/-]{1,255}$ ]]; then
+            echo "DEPLOY_DIR must be an absolute path of letters, digits, . _ / or -" >&2
+            exit 1
+          fi
 
       - name: Run guarded migration
         uses: appleboy/ssh-action@v1
