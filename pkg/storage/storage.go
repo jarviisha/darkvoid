@@ -12,15 +12,35 @@ type Config struct {
 	Provider string
 	BaseURL  string
 	LocalDir string
+	S3       S3Config
+}
+
+// S3Config configures AWS S3 or an S3-compatible object store such as MinIO.
+type S3Config struct {
+	Endpoint        string
+	Region          string
+	Bucket          string
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
+	UsePathStyle    bool
 }
 
 // New creates a Storage from config, selecting the appropriate provider.
-// Only "local" is supported. Unknown or unimplemented providers fail closed so
-// an upload can never be reported successful without persisting its bytes.
+// Unknown providers fail closed so an upload can never be reported successful
+// without persisting its bytes.
 func New(cfg Config) (Storage, error) {
+	return NewWithContext(context.Background(), cfg)
+}
+
+// NewWithContext creates a Storage and allows provider configuration discovery
+// to be canceled during application startup.
+func NewWithContext(ctx context.Context, cfg Config) (Storage, error) {
 	switch cfg.Provider {
 	case "local":
 		return NewLocal(cfg.LocalDir, cfg.BaseURL)
+	case "s3":
+		return NewS3(ctx, cfg.S3, cfg.BaseURL)
 	default:
 		return nil, fmt.Errorf("storage: unsupported provider %q", cfg.Provider)
 	}
@@ -40,6 +60,12 @@ type Storage interface {
 	// URL builds the public-accessible URL for a given key.
 	// This is called at response time, never stored in the database.
 	URL(key string) string
+}
+
+// HealthChecker probes whether the configured storage backend is usable.
+// It is separate from Storage so feature-local test doubles remain minimal.
+type HealthChecker interface {
+	HealthCheck(ctx context.Context) error
 }
 
 // nopStorage is a test double that performs no I/O.
@@ -65,3 +91,5 @@ func (n *nopStorage) Delete(_ context.Context, _ string) error {
 func (n *nopStorage) URL(key string) string {
 	return fmt.Sprintf("%s/%s", n.baseURL, key)
 }
+
+func (n *nopStorage) HealthCheck(context.Context) error { return nil }

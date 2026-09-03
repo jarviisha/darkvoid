@@ -289,9 +289,9 @@ func TestEnrichIsFollowingAuthor_NoViewerID(t *testing.T) {
 	post1 := samplePost(uuid.New())
 
 	mockFC := &mockFollowChecker{
-		isFollowing: func(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error) {
-			t.Error("should not call IsFollowing when viewerID is nil")
-			return false, nil
+		getFollowingAmong: func(context.Context, uuid.UUID, []uuid.UUID) ([]uuid.UUID, error) {
+			t.Error("should not batch-check following when viewerID is nil")
+			return nil, nil
 		},
 	}
 
@@ -311,9 +311,9 @@ func TestEnrichIsFollowingAuthor_ViewerIsAuthor_Skipped(t *testing.T) {
 	post1 := samplePost(viewerID) // Viewer is the author
 
 	mockFC := &mockFollowChecker{
-		isFollowing: func(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error) {
-			t.Error("should not check if viewer is following themselves")
-			return false, nil
+		getFollowingAmong: func(context.Context, uuid.UUID, []uuid.UUID) ([]uuid.UUID, error) {
+			t.Error("should not batch-check when every post belongs to the viewer")
+			return nil, nil
 		},
 	}
 
@@ -333,19 +333,30 @@ func TestEnrichIsFollowingAuthor_Success(t *testing.T) {
 	post1 := samplePost(author1)
 	post2 := samplePost(author2)
 	post3 := samplePost(author1) // Same author as post1
+	batchCalls := 0
 
 	mockFC := &mockFollowChecker{
-		isFollowing: func(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error) {
+		getFollowingAmong: func(_ context.Context, followerID uuid.UUID, followeeIDs []uuid.UUID) ([]uuid.UUID, error) {
+			batchCalls++
 			if followerID != viewerID {
 				t.Errorf("expected followerID %s, got %s", viewerID, followerID)
 			}
-			// Viewer follows author1 but not author2
-			return followeeID == author1, nil
+			if len(followeeIDs) != 2 {
+				t.Fatalf("expected 2 unique author IDs, got %v", followeeIDs)
+			}
+			seen := map[uuid.UUID]bool{followeeIDs[0]: true, followeeIDs[1]: true}
+			if !seen[author1] || !seen[author2] {
+				t.Fatalf("batch author IDs = %v, want %s and %s", followeeIDs, author1, author2)
+			}
+			return []uuid.UUID{author1}, nil
 		},
 	}
 
 	svc := &PostService{followChecker: mockFC}
 	svc.enrichIsFollowingAuthor(ctx, []*entity.Post{post1, post2, post3}, &viewerID)
+	if batchCalls != 1 {
+		t.Fatalf("batch follow calls = %d, want 1", batchCalls)
+	}
 
 	if !post1.IsFollowingAuthor {
 		t.Error("expected post1 IsFollowingAuthor = true")
@@ -364,8 +375,8 @@ func TestEnrichIsFollowingAuthor_Error_NonFatal(t *testing.T) {
 	post1 := samplePost(uuid.New())
 
 	mockFC := &mockFollowChecker{
-		isFollowing: func(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error) {
-			return false, errors.New("follow service error")
+		getFollowingAmong: func(context.Context, uuid.UUID, []uuid.UUID) ([]uuid.UUID, error) {
+			return nil, errors.New("follow service error")
 		},
 	}
 

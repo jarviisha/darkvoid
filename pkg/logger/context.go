@@ -3,14 +3,42 @@ package logger
 import (
 	"context"
 	"log/slog"
+	"sync"
 )
 
 // Context keys for logger
 type contextKey string
 
 const (
-	loggerKey contextKey = "logger"
+	loggerKey       contextKey = "logger"
+	requestStateKey contextKey = "request_state"
 )
+
+type requestState struct {
+	mu     sync.RWMutex
+	userID string
+}
+
+func withRequestState(ctx context.Context, state *requestState) context.Context {
+	return context.WithValue(ctx, requestStateKey, state)
+}
+
+func requestStateFromContext(ctx context.Context) *requestState {
+	state, _ := ctx.Value(requestStateKey).(*requestState)
+	return state
+}
+
+func (s *requestState) setUserID(userID string) {
+	s.mu.Lock()
+	s.userID = userID
+	s.mu.Unlock()
+}
+
+func (s *requestState) getUserID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.userID
+}
 
 // WithLogger adds logger to context
 // Performance: Reuse logger from context instead of creating new ones
@@ -41,6 +69,10 @@ func WithRequestID(ctx context.Context, requestID string) context.Context {
 // WithUserID adds user ID to context and logger
 // Performance: Creates new logger with user_id, reuse this logger in context
 func WithUserID(ctx context.Context, userID string) context.Context {
+	if state := requestStateFromContext(ctx); state != nil {
+		state.setUserID(userID)
+	}
+
 	logger := FromContext(ctx)
 	// Append user_id to existing logger (which may already have request_id)
 	newLogger := logger.With("user_id", userID)

@@ -5,7 +5,7 @@ import "context"
 func (app *Application) setupContexts(ctx context.Context) error {
 	app.log.Info("initializing bounded contexts")
 
-	store, mail, err := app.setupInfrastructure()
+	store, mail, err := app.setupInfrastructure(ctx)
 	if err != nil {
 		return err
 	}

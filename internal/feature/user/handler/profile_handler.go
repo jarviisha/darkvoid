@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/jarviisha/darkvoid/internal/feature/user/dto"
@@ -84,10 +83,11 @@ func (h *ProfileHandler) UpdateMyProfile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Lenient: GET /me answers on this same path with eleven fields this update
+	// does not accept, so a read-modify-write client sends them back.
 	var req dto.UpdateProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Warn(ctx, "invalid request body", "error", err)
-		errors.WriteJSON(w, errors.NewBadRequestError("Invalid request body"))
+	if err := httputil.DecodeJSONLenient(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 

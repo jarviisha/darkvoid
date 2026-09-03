@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -57,8 +56,8 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dto.CreateCommentRequest
-	if err = json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errors.WriteJSON(w, errors.NewBadRequestError("Invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 

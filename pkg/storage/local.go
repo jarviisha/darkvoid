@@ -9,6 +9,12 @@ import (
 	"strings"
 )
 
+// healthProbePrefix names the file HealthCheck writes into the upload
+// directory. The leading dot is load-bearing: the static route refuses
+// dot-prefixed segments, which is what keeps the probe unreachable for the
+// moment it exists inside a directory that is otherwise served verbatim.
+const healthProbePrefix = ".storage-health-"
+
 // localStorage stores files on the local filesystem.
 // Files are served via a static file server mounted at BaseURL.
 type localStorage struct {
@@ -73,4 +79,27 @@ func (l *localStorage) Delete(_ context.Context, key string) error {
 // URL builds the public URL for a given key.
 func (l *localStorage) URL(key string) string {
 	return fmt.Sprintf("%s/%s", l.baseURL, key)
+}
+
+// HealthCheck verifies that the shared process path is still writable.
+//
+// The probe is written into the upload directory itself, because a different
+// directory would prove a different mount is writable. It is removed as soon as
+// it is created, and its dot-prefixed name keeps it unreachable through the
+// static route for the moment it exists: middleware.HiddenFileGuard answers 404
+// for any path segment beginning with a dot.
+func (l *localStorage) HealthCheck(_ context.Context) error {
+	f, err := os.CreateTemp(l.dir, healthProbePrefix+"*")
+	if err != nil {
+		return fmt.Errorf("storage/local: create health probe in %q: %w", l.dir, err)
+	}
+	name := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("storage/local: close health probe %q: %w", name, err)
+	}
+	if err := os.Remove(name); err != nil {
+		return fmt.Errorf("storage/local: remove health probe %q: %w", name, err)
+	}
+	return nil
 }

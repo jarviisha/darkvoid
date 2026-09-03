@@ -78,7 +78,7 @@ SELECT * FROM post.posts
 WHERE created_at > NOW() - INTERVAL '24 hours'
   AND visibility = 'public'
   AND deleted_at IS NULL
-ORDER BY like_count DESC
+ORDER BY like_count DESC, id DESC
 LIMIT sqlc.arg('limit');
 
 -- name: GetUserPostsWithCursor :many

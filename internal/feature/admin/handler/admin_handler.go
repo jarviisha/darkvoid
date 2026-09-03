@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -11,7 +10,6 @@ import (
 	httputil "github.com/jarviisha/darkvoid/internal/http"
 	"github.com/jarviisha/darkvoid/internal/pagination"
 	"github.com/jarviisha/darkvoid/pkg/errors"
-	"github.com/jarviisha/darkvoid/pkg/logger"
 )
 
 // AdminHandler handles all /admin/* HTTP endpoints.
@@ -135,9 +133,8 @@ func (h *AdminHandler) SetUserStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dto.AdminSetUserStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Warn(ctx, "admin: invalid status request body", "error", err)
-		errors.WriteJSON(w, errors.NewBadRequestError("invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 
@@ -233,9 +230,8 @@ func (h *AdminHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dto.AssignRoleRequest
-	if err = json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Warn(ctx, "admin: invalid assign role request body", "error", err)
-		errors.WriteJSON(w, errors.NewBadRequestError("invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 
@@ -347,9 +343,8 @@ func (h *AdminHandler) SendNotificationToUser(w http.ResponseWriter, r *http.Req
 	}
 
 	var req dto.AdminSendNotificationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Warn(ctx, "admin: invalid send notification request body", "error", err)
-		errors.WriteJSON(w, errors.NewBadRequestError("invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 
@@ -386,9 +381,8 @@ func (h *AdminHandler) BroadcastNotification(w http.ResponseWriter, r *http.Requ
 	}
 
 	var req dto.AdminSendNotificationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Warn(ctx, "admin: invalid broadcast notification request body", "error", err)
-		errors.WriteJSON(w, errors.NewBadRequestError("invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 

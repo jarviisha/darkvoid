@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	stderrors "errors"
 	"io"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ type recordingStorage struct {
 	key         string
 	contentType string
 	body        []byte
+	putErr      error
 }
 
 func (s *recordingStorage) Put(_ context.Context, key string, r io.Reader, _ int64, contentType string) error {
@@ -23,7 +25,43 @@ func (s *recordingStorage) Put(_ context.Context, key string, r io.Reader, _ int
 	s.key = key
 	s.contentType = contentType
 	s.body, _ = io.ReadAll(r)
-	return nil
+	return s.putErr
+}
+
+func TestUpload_EnforcesTypeSpecificSizeLimits(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		data []byte
+		size int64
+	}{
+		{name: "image", data: []byte("\x89PNG\r\n\x1a\n"), size: maxImageSize + 1},
+		{name: "video", data: []byte("\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom<\x06t\xbfmdat"), size: maxVideoSize + 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := &recordingStorage{}
+			_, err := NewMediaService(store).Upload(context.Background(), bytes.NewReader(tt.data), tt.size)
+			if !errors.Is(err, featurestorage.ErrFileTooLarge) {
+				t.Fatalf("Upload() error = %v, want ErrFileTooLarge", err)
+			}
+			if store.putCalls != 0 {
+				t.Fatalf("Put calls = %d, want 0", store.putCalls)
+			}
+		})
+	}
+}
+
+func TestUpload_WrapsStorageFailure(t *testing.T) {
+	t.Parallel()
+	sentinel := stderrors.New("storage unavailable")
+	store := &recordingStorage{putErr: sentinel}
+	_, err := NewMediaService(store).Upload(context.Background(), bytes.NewReader([]byte("GIF89a")), 6)
+	appErr := errors.GetAppError(err)
+	if appErr == nil || !stderrors.Is(appErr, sentinel) {
+		t.Fatalf("Upload() error = %v, want internal error wrapping sentinel", err)
+	}
 }
 
 func (*recordingStorage) Delete(context.Context, string) error { return nil }

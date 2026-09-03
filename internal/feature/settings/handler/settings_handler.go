@@ -1,13 +1,11 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/jarviisha/darkvoid/internal/feature/settings/dto"
 	httputil "github.com/jarviisha/darkvoid/internal/http"
 	"github.com/jarviisha/darkvoid/pkg/errors"
-	"github.com/jarviisha/darkvoid/pkg/logger"
 )
 
 // SettingsHandler serves the /admin/settings/* operator surface.
@@ -65,9 +63,8 @@ func (h *SettingsHandler) UpdateFeedSettings(w http.ResponseWriter, r *http.Requ
 	}
 
 	var req dto.UpdateFeedSettingsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Warn(r.Context(), "settings: invalid request body", "operation", "update feed settings", "error", err)
-		errors.WriteJSON(w, errors.NewBadRequestError("invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 

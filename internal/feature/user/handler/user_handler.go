@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -101,9 +100,12 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Lenient: GET /users/{userKey} answers on this same path with fourteen
+	// fields this update does not accept, so a read-modify-write client sends
+	// them back.
 	var req dto.UpdateUserRequest
-	if err = json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errors.WriteJSON(w, errors.NewBadRequestError("Invalid request body"))
+	if err := httputil.DecodeJSONLenient(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 

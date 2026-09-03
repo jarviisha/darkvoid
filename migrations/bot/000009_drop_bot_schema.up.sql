@@ -19,4 +19,20 @@
 -- has run this. Removing migrations/bot in the same change would leave the
 -- deployed databases holding an orphaned schema with nothing left in the repo to
 -- clean it up.
+--
+-- Defense in depth: the production runner stops automatically at 000008, and
+-- the explicit retirement runner sets this session parameter only after it has
+-- validated manual approval, the external-bot handoff reference, and fresh
+-- backup/restore-drill evidence. A direct or accidental `migrate up` therefore
+-- fails before the destructive statement.
+DO $migration_guard$
+BEGIN
+    IF current_setting('darkvoid.bot_schema_drop_approval', TRUE)
+        IS DISTINCT FROM 'drop-bot-schema-000009' THEN
+        RAISE EXCEPTION
+            'bot schema retirement requires the approved destructive migration runner';
+    END IF;
+END
+$migration_guard$;
+
 DROP SCHEMA IF EXISTS bot CASCADE;

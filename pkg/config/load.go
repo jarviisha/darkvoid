@@ -49,6 +49,7 @@ func loadServerConfig() ServerConfig {
 		IdleTimeout:       getEnvDuration("SERVER_IDLE_TIMEOUT", 120*time.Second),
 		RequestTimeout:    getEnvDuration("SERVER_REQUEST_TIMEOUT", 60*time.Second),
 		AllowedOrigins:    getEnvSlice("CORS_ALLOWED_ORIGINS", []string{"*"}),
+		TrustedProxyCIDRs: getEnvSlice("TRUSTED_PROXY_CIDRS", nil),
 		RateLimitRequests: getEnvInt("RATE_LIMIT_REQUESTS", 100),
 		RateLimitWindow:   getEnvDuration("RATE_LIMIT_WINDOW", 1*time.Minute),
 	}
@@ -74,9 +75,18 @@ func loadCookieConfig(secureDefault bool) CookieConfig {
 // loadStorageConfig loads storage configuration
 func loadStorageConfig() StorageConfig {
 	return StorageConfig{
-		Provider: getEnv("STORAGE_PROVIDER", "local"),
-		BaseURL:  getEnv("STORAGE_BASE_URL", "http://localhost:8080/static"),
-		LocalDir: getEnv("STORAGE_LOCAL_DIR", "./uploads"),
+		Provider: strings.ToLower(strings.TrimSpace(getEnv("STORAGE_PROVIDER", "local"))),
+		BaseURL:  strings.TrimSpace(getEnv("STORAGE_BASE_URL", "http://localhost:8080/static")),
+		LocalDir: strings.TrimSpace(getEnv("STORAGE_LOCAL_DIR", "./uploads")),
+		S3: S3StorageConfig{
+			Endpoint:        strings.TrimSpace(getEnv("STORAGE_S3_ENDPOINT", "")),
+			Region:          strings.TrimSpace(getEnv("STORAGE_S3_REGION", "us-east-1")),
+			Bucket:          strings.TrimSpace(getEnv("STORAGE_S3_BUCKET", "")),
+			AccessKeyID:     strings.TrimSpace(getEnv("STORAGE_S3_ACCESS_KEY_ID", "")),
+			SecretAccessKey: strings.TrimSpace(getEnv("STORAGE_S3_SECRET_ACCESS_KEY", "")),
+			SessionToken:    strings.TrimSpace(getEnv("STORAGE_S3_SESSION_TOKEN", "")),
+			UsePathStyle:    getEnvBool("STORAGE_S3_USE_PATH_STYLE", false),
+		},
 	}
 }
 
@@ -85,6 +95,7 @@ func loadJWTConfig() JWTConfig {
 	return JWTConfig{
 		Secret:            getEnv("JWT_SECRET", ""),
 		Issuer:            getEnv("JWT_ISSUER", "darkvoid"),
+		Audience:          getEnv("JWT_AUDIENCE", "darkvoid-api"),
 		AccessTokenExpiry: getEnvDuration("JWT_ACCESS_TOKEN_EXPIRY", 15*time.Minute),
 	}
 }

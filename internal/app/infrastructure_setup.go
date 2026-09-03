@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/jarviisha/darkvoid/internal/infrastructure/mailer"
@@ -24,15 +25,32 @@ type mailInfra struct {
 	baseURL  string
 }
 
-func (app *Application) setupInfrastructure() (storage.Storage, *mailInfra, error) {
-	store, err := storage.New(storage.Config{
+func (app *Application) setupInfrastructure(ctx context.Context) (storage.Storage, *mailInfra, error) {
+	store, err := storage.NewWithContext(ctx, storage.Config{
 		Provider: app.cfg.Storage.Provider,
 		BaseURL:  app.cfg.Storage.BaseURL,
 		LocalDir: app.cfg.Storage.LocalDir,
+		S3: storage.S3Config{
+			Endpoint:        app.cfg.Storage.S3.Endpoint,
+			Region:          app.cfg.Storage.S3.Region,
+			Bucket:          app.cfg.Storage.S3.Bucket,
+			AccessKeyID:     app.cfg.Storage.S3.AccessKeyID,
+			SecretAccessKey: app.cfg.Storage.S3.SecretAccessKey,
+			SessionToken:    app.cfg.Storage.S3.SessionToken,
+			UsePathStyle:    app.cfg.Storage.S3.UsePathStyle,
+		},
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to initialize storage: %w", err)
 	}
+	health, ok := store.(storage.HealthChecker)
+	if !ok {
+		return nil, nil, fmt.Errorf("storage provider %q does not implement health checks", app.cfg.Storage.Provider)
+	}
+	if healthErr := health.HealthCheck(ctx); healthErr != nil {
+		return nil, nil, fmt.Errorf("storage health check failed: %w", healthErr)
+	}
+	app.storageHealth = health
 	app.log.Info("storage initialized", "provider", app.cfg.Storage.Provider, "base_url", app.cfg.Storage.BaseURL)
 
 	m, err := mailer.New(mailer.Config{

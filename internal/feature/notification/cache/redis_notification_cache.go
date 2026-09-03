@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
@@ -17,7 +18,13 @@ func unreadKey(userID uuid.UUID) string {
 
 // RedisNotificationCache implements NotificationCache using Redis.
 type RedisNotificationCache struct {
-	client *pkgredis.Client
+	client redisNotificationClient
+}
+
+type redisNotificationClient interface {
+	Get(ctx context.Context, key string) *redis.StringCmd
+	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
+	Del(ctx context.Context, keys ...string) *redis.IntCmd
 }
 
 func NewRedisNotificationCache(client *pkgredis.Client) *RedisNotificationCache {

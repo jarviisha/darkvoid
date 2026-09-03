@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +135,41 @@ func TestFollowRepository_IsFollowing_True(t *testing.T) {
 	}
 }
 
+func TestFollowRepository_GetFollowingAmong_UsesOneBoundedQuery(t *testing.T) {
+	followerID := uuid.New()
+	followeeIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	want := []uuid.UUID{followeeIDs[0], followeeIDs[2]}
+	queryCalls := 0
+	q := &mockQuerier{
+		getFollowingAmong: func(_ context.Context, arg db.GetFollowingAmongParams) ([]uuid.UUID, error) {
+			queryCalls++
+			if arg.FollowerID != followerID {
+				t.Fatalf("follower ID = %s, want %s", arg.FollowerID, followerID)
+			}
+			if len(arg.FolloweeIds) != len(followeeIDs) {
+				t.Fatalf("followee IDs = %v, want %v", arg.FolloweeIds, followeeIDs)
+			}
+			return want, nil
+		},
+	}
+
+	got, err := (&FollowRepository{queries: q}).GetFollowingAmong(context.Background(), followerID, followeeIDs)
+	if err != nil {
+		t.Fatalf("GetFollowingAmong: %v", err)
+	}
+	if queryCalls != 1 || len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("result/calls = %v/%d, want %v/1", got, queryCalls, want)
+	}
+}
+
+func TestFollowRepository_GetFollowingAmong_EmptyInputSkipsQuery(t *testing.T) {
+	repo := &FollowRepository{queries: nil}
+	got, err := repo.GetFollowingAmong(context.Background(), uuid.New(), nil)
+	if err != nil || got != nil {
+		t.Fatalf("empty batch result = %v, %v; want nil, nil", got, err)
+	}
+}
+
 func TestFollowRepository_Unfollow_DBError(t *testing.T) {
 	sentinel := errors.New("connection lost")
 	q := &mockQuerier{
@@ -150,5 +187,23 @@ func TestFollowRepository_Unfollow_DBError(t *testing.T) {
 	}
 	if appErr.Code != "INTERNAL_ERROR" {
 		t.Errorf("expected INTERNAL_ERROR, got %s", appErr.Code)
+	}
+}
+
+func TestFollowSQL_UsesDeterministicOrdersAndBatchLookup(t *testing.T) {
+	raw, err := os.ReadFile("../sql/follow_queries.sql")
+	if err != nil {
+		t.Fatalf("read follow query source: %v", err)
+	}
+	query := string(raw)
+	required := []string{
+		"ORDER BY created_at DESC, follower_id DESC",
+		"ORDER BY created_at DESC, followee_id DESC",
+		"followee_id = ANY(sqlc.arg('followee_ids')::uuid[])",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(query, fragment) {
+			t.Fatalf("follow queries missing %q", fragment)
+		}
 	}
 }

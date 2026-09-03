@@ -18,13 +18,14 @@ import (
 // --------------------------------------------------------------------------
 
 type mockFollowRepo struct {
-	follow         func(ctx context.Context, followerID, followeeID uuid.UUID) error
-	unfollow       func(ctx context.Context, followerID, followeeID uuid.UUID) error
-	isFollowing    func(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error)
-	getFollowers   func(ctx context.Context, targetID uuid.UUID, limit, offset int32) ([]*entity.Follow, error)
-	getFollowing   func(ctx context.Context, targetID uuid.UUID, limit, offset int32) ([]*entity.Follow, error)
-	countFollowers func(ctx context.Context, targetID uuid.UUID) (int64, error)
-	countFollowing func(ctx context.Context, targetID uuid.UUID) (int64, error)
+	follow            func(ctx context.Context, followerID, followeeID uuid.UUID) error
+	unfollow          func(ctx context.Context, followerID, followeeID uuid.UUID) error
+	isFollowing       func(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error)
+	getFollowingAmong func(ctx context.Context, followerID uuid.UUID, followeeIDs []uuid.UUID) ([]uuid.UUID, error)
+	getFollowers      func(ctx context.Context, targetID uuid.UUID, limit, offset int32) ([]*entity.Follow, error)
+	getFollowing      func(ctx context.Context, targetID uuid.UUID, limit, offset int32) ([]*entity.Follow, error)
+	countFollowers    func(ctx context.Context, targetID uuid.UUID) (int64, error)
+	countFollowing    func(ctx context.Context, targetID uuid.UUID) (int64, error)
 }
 
 type mockFollowOutbox struct {
@@ -96,6 +97,12 @@ func (m *mockFollowRepo) IsFollowing(ctx context.Context, followerID, followeeID
 		return m.isFollowing(ctx, followerID, followeeID)
 	}
 	return false, nil
+}
+func (m *mockFollowRepo) GetFollowingAmong(ctx context.Context, followerID uuid.UUID, followeeIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if m.getFollowingAmong != nil {
+		return m.getFollowingAmong(ctx, followerID, followeeIDs)
+	}
+	return nil, nil
 }
 func (m *mockFollowRepo) GetFollowers(ctx context.Context, targetID uuid.UUID, limit, offset int32) ([]*entity.Follow, error) {
 	if m.getFollowers != nil {
@@ -318,6 +325,43 @@ func TestFollow_RepoError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 	assertServiceErrorCode(t, err, "INTERNAL_ERROR")
+}
+
+func TestGetFollowingAmong_DelegatesOneBatch(t *testing.T) {
+	followerID := uuid.New()
+	followeeIDs := []uuid.UUID{uuid.New(), uuid.New()}
+	batchCalls := 0
+	svc := newFollowService(&mockFollowRepo{
+		getFollowingAmong: func(_ context.Context, gotFollower uuid.UUID, gotFollowees []uuid.UUID) ([]uuid.UUID, error) {
+			batchCalls++
+			if gotFollower != followerID || len(gotFollowees) != len(followeeIDs) {
+				t.Fatalf("batch args = %s/%v, want %s/%v", gotFollower, gotFollowees, followerID, followeeIDs)
+			}
+			return []uuid.UUID{followeeIDs[1]}, nil
+		},
+	})
+
+	got, err := svc.GetFollowingAmong(context.Background(), followerID, followeeIDs)
+	if err != nil {
+		t.Fatalf("GetFollowingAmong: %v", err)
+	}
+	if batchCalls != 1 || len(got) != 1 || got[0] != followeeIDs[1] {
+		t.Fatalf("result/calls = %v/%d, want [%s]/1", got, batchCalls, followeeIDs[1])
+	}
+}
+
+func TestGetFollowingAmong_EmptyInputSkipsRepository(t *testing.T) {
+	svc := newFollowService(&mockFollowRepo{
+		getFollowingAmong: func(context.Context, uuid.UUID, []uuid.UUID) ([]uuid.UUID, error) {
+			t.Fatal("repository must not be called for an empty batch")
+			return nil, nil
+		},
+	})
+
+	got, err := svc.GetFollowingAmong(context.Background(), uuid.New(), nil)
+	if err != nil || got != nil {
+		t.Fatalf("empty batch result = %v, %v; want nil, nil", got, err)
+	}
 }
 
 // Cache invalidation errors are logged and swallowed — they must not bubble up

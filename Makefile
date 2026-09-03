@@ -4,11 +4,11 @@ SHELL := /bin/bash
 .PHONY: help \
 	sqlc-generate sqlc-clean swagger-init swagger-generate swagger-serve generate \
 	build run dev ctl clean \
-	test test-v test-cover test-cover-html test-feature lint deps \
+	test test-v test-cover test-cover-html test-feature test-ops test-backup test-storage-migration test-deployment-defaults test-production-images test-migration-gates test-destructive-migration-policy lint deps \
 	docker-up docker-up-app docker-seed docker-seed-reset \
 	docker-down docker-down-app docker-logs docker-logs-app \
 	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-up-bot migrate-up-settings migrate-down-notification migrate-create migrate-status migrate-force \
-	db-reset install-tools
+	db-reset install-tools install-lint
 
 # Load .env if it exists.
 -include .env
@@ -16,6 +16,9 @@ export
 
 GO ?= go
 DOCKER_COMPOSE ?= docker compose
+
+# Must satisfy the `version: "2"` schema in .golangci.yml.
+GOLANGCI_LINT_VERSION ?= v2.11.4
 
 BIN_DIR := bin
 APP_BIN := $(BIN_DIR)/api
@@ -52,15 +55,19 @@ export PGPASSWORD := $(DB_PASSWORD)
 export PGDATABASE := $(DB_NAME)
 export PGSSLMODE  := $(DB_SSLMODE)
 
-# migrate-up walks MIGRATION_MODULES forward and migrate-down walks the reversed
-# list, so the two must stay mirror images — adding a module means editing both.
+# MIGRATION_MODULES is the status/create allowlist. Generic up/down recipes name
+# their safe sequences explicitly below because bot retirement 000009 is
+# intentionally asymmetric: it has a guarded up path and no automatic data down.
 #
 # `bot` is retained with no Go code behind it: the content bot moved to its own
 # project and migrations/bot/000009 drops the schema. Dropping the module from
 # these lists before every environment has run that migration would strand the
 # schema in each deployed database with nothing left here to clean it up.
 MIGRATION_MODULES          := user post notification bot settings
-MIGRATION_MODULES_REVERSED := settings bot notification post user
+# Bot is deliberately absent from the generic down chain: version 000009's down
+# recreates only empty structure and is not a data rollback. Restore a verified
+# snapshot under the retirement runbook instead of automating that operation.
+MIGRATION_MODULES_REVERSED := settings notification post user
 SQLC_DB_DIRS := internal/feature/user/db internal/feature/post/db internal/feature/notification/db internal/feature/settings/db
 
 # Tests the variable through the recipe's environment ($${NAME}) rather than
@@ -134,8 +141,31 @@ ctl: ## Run the operator CLI (usage: make ctl CTL_ARGS="user list")
 clean: ## Clean build artifacts
 	rm -rf $(BIN_DIR) $(COVERAGE_FILE)
 
-test: ## Run all tests
+test: test-ops ## Run all tests
 	$(GO) test ./...
+
+test-ops: test-backup test-storage-migration test-deployment-defaults test-production-images test-migration-gates test-destructive-migration-policy ## Validate production operation contracts
+
+test-backup: ## Validate the production backup scheduler
+	bash -n scripts/backup/postgres-restic.sh
+	bash scripts/backup/postgres-restic_test.sh
+
+test-storage-migration: ## Validate the local-to-S3 media migration
+	bash -n scripts/storage/migrate-local-to-s3.sh
+	bash scripts/storage/migrate-local-to-s3_test.sh
+
+test-deployment-defaults: ## Pin production Compose defaults with quiet failure modes
+	bash scripts/ci/deployment-defaults_test.sh
+
+test-production-images: ## Reject mutable production image references
+	bash scripts/ci/production-images_test.sh
+
+test-migration-gates: ## Validate destructive migration isolation and approval
+	bash -n scripts/migrations/*.sh scripts/migrations/testdata/*.sh
+	bash scripts/migrations/bot_migration_test.sh
+
+test-destructive-migration-policy: ## Ensure normal deploy cannot retire bot schema
+	bash scripts/ci/destructive_migration_policy_test.sh
 
 test-v: ## Run all tests with verbose output
 	$(GO) test -v ./...
@@ -185,11 +215,16 @@ docker-logs: ## View Docker container logs
 docker-logs-app: ## View app-only Docker container logs
 	$(DOCKER_COMPOSE) logs -f app-external
 
-migrate-up: ## Run all pending migrations (user, post, notification, bot, settings)
+migrate-up: ## Run safe pending migrations; bot stops at 000008
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up DB_PASSWORD=secret)
-	$(call run_migrations,$(MIGRATION_MODULES),Running,up)
+	$(call run_migrations,user post notification,Running,up)
+	@MIGRATE_BIN="$(MIGRATE)" \
+		MIGRATION_PATH="migrations/bot" \
+		MIGRATION_DATABASE_URL="postgres:///?x-migrations-table=schema_migrations_bot" \
+		sh scripts/migrations/run-bot-safe.sh
+	$(call run_migrations,settings,Running,up)
 
-migrate-down: ## Roll back the last migration for all modules (settings, bot, notification, post, user)
+migrate-down: ## Roll back one non-destructive migration per module; excludes bot
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-down DB_PASSWORD=secret)
 	$(call run_migrations,$(MIGRATION_MODULES_REVERSED),Rolling back,down 1)
 
@@ -205,9 +240,12 @@ migrate-up-notification: ## Run pending migrations for notification module only
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up-notification DB_PASSWORD=secret)
 	$(call migrate_cmd,notification,up)
 
-migrate-up-bot: ## Run pending migrations for bot module only
+migrate-up-bot: ## Run safe bot migrations through 000008 only
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up-bot DB_PASSWORD=secret)
-	$(call migrate_cmd,bot,up)
+	@MIGRATE_BIN="$(MIGRATE)" \
+		MIGRATION_PATH="migrations/bot" \
+		MIGRATION_DATABASE_URL="postgres:///?x-migrations-table=schema_migrations_bot" \
+		sh scripts/migrations/run-bot-safe.sh
 
 migrate-up-settings: ## Run pending migrations for settings module only
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up-settings DB_PASSWORD=secret)
@@ -250,11 +288,17 @@ db-reset: ## Reset dockerized database volumes after confirmation
 		echo "Aborted."; \
 	fi
 
-install-tools: ## Install development tools
+install-tools: install-lint ## Install development tools
 	@echo "Installing development tools..."
 	$(GO) install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 	$(GO) install github.com/swaggo/swag/cmd/swag@latest
-	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	$(GO) install github.com/air-verse/air@latest
 	$(GO) install -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 	@echo "Done."
+
+# Pinned rather than @latest, and split out so CI installs the same binary a
+# developer runs. .golangci.yml is a v2 schema file, which a v1 binary rejects
+# outright — and the v1 module path stopped moving at v1, so @latest there
+# silently keeps installing a binary that cannot read this repo's config.
+install-lint: ## Install the pinned golangci-lint
+	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)

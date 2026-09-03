@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -54,8 +53,8 @@ func (h *PostHandler) CreatePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dto.CreatePostRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errors.WriteJSON(w, errors.NewBadRequestError("Invalid request body"))
+	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 
@@ -145,9 +144,11 @@ func (h *PostHandler) UpdatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Lenient: GET /posts/{postID} answers on this same path with ten fields
+	// this update does not accept, so a read-modify-write client sends them back.
 	var req dto.UpdatePostRequest
-	if err = json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errors.WriteJSON(w, errors.NewBadRequestError("Invalid request body"))
+	if err := httputil.DecodeJSONLenient(w, r, &req); err != nil {
+		errors.WriteJSON(w, err)
 		return
 	}
 

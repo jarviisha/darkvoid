@@ -213,6 +213,21 @@ func (s *FollowService) IsFollowing(ctx context.Context, followerID, followeeID 
 	return ok, nil
 }
 
+// GetFollowingAmong returns the requested users that followerID currently
+// follows. It is intended for bounded response enrichment and performs one
+// repository lookup regardless of the number of requested IDs.
+func (s *FollowService) GetFollowingAmong(ctx context.Context, followerID uuid.UUID, followeeIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if len(followeeIDs) == 0 {
+		return nil, nil
+	}
+	ids, err := s.followRepo.GetFollowingAmong(ctx, followerID, followeeIDs)
+	if err != nil {
+		logger.LogError(ctx, err, "failed to batch-check following", "follower", followerID, "followee_count", len(followeeIDs))
+		return nil, errors.NewInternalError(err)
+	}
+	return ids, nil
+}
+
 func (s *FollowService) GetFollowers(ctx context.Context, targetID uuid.UUID, req pagination.PaginationRequest) ([]*entity.Follow, pagination.PaginationResponse, error) {
 	req.Validate()
 	follows, err := s.followRepo.GetFollowers(ctx, targetID, req.Limit, req.Offset)

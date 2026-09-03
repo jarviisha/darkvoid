@@ -66,4 +66,15 @@ type UpdateFeedSettingsRequest struct {
 	// constant for every post, which removes recency from the formula rather than
 	// flattening it — a small exponent is how to ask for a slow decay.
 	DecayExponent *float64 `json:"decay_exponent,omitempty" example:"1.5"`
+
+	// UpdatedBy and UpdatedAt are server-owned: FeedSettingsResponse emits them,
+	// the update ignores them, and the stored values come from the authenticated
+	// admin and the database clock. They are declared here only so that reading
+	// the settings, editing one field and PATCHing the whole object back works —
+	// the request decoder rejects unknown fields, so leaving them out would make
+	// the API's own response an invalid request body. Neither reaches
+	// entity.FeedSettingsUpdate, so a body naming only these is still "no
+	// settings named in the request".
+	UpdatedBy *string `json:"updated_by,omitempty" swaggerignore:"true"`
+	UpdatedAt *string `json:"updated_at,omitempty" swaggerignore:"true"`
 }

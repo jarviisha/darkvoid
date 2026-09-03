@@ -39,6 +39,7 @@ type followRepo interface {
 	Follow(ctx context.Context, followerID, followeeID uuid.UUID) error
 	Unfollow(ctx context.Context, followerID, followeeID uuid.UUID) error
 	IsFollowing(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error)
+	GetFollowingAmong(ctx context.Context, followerID uuid.UUID, followeeIDs []uuid.UUID) ([]uuid.UUID, error)
 	GetFollowers(ctx context.Context, targetID uuid.UUID, limit, offset int32) ([]*entity.Follow, error)
 	GetFollowing(ctx context.Context, targetID uuid.UUID, limit, offset int32) ([]*entity.Follow, error)
 	CountFollowers(ctx context.Context, targetID uuid.UUID) (int64, error)

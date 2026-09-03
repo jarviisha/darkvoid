@@ -8,7 +8,8 @@ import (
 // Users can extend this in their own code if they need custom claims
 type Claims = jwt.RegisteredClaims
 
-// NewClaims creates a new Claims with the given subject
+// NewClaims creates subject-only claims. Callers using GenerateTokenWithClaims
+// must also populate the service's issuer, audience, and expiration boundary.
 func NewClaims(subject string) *Claims {
 	return &Claims{
 		Subject: subject,

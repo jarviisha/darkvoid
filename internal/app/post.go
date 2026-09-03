@@ -73,6 +73,7 @@ type postUser struct {
 
 type postFollowService interface {
 	IsFollowing(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error)
+	GetFollowingAmong(ctx context.Context, followerID uuid.UUID, followeeIDs []uuid.UUID) ([]uuid.UUID, error)
 }
 
 // SetupPostContext initializes the Post context with all required dependencies.
