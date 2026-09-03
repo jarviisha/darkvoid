@@ -8,7 +8,12 @@ and a disposable Restic cache.
 
 ## Required configuration
 
-Set these values in the deployment `.env` before running `dv up -d`:
+Set these values in the deployment `.env` before running `dv up -d`. They are
+required by the scheduler, not by Compose: an unset variable in the Compose file
+fails every `docker compose` command, including the `dv logs` needed to find out
+why, so the container starts, names everything that is missing at once, alerts if
+it can and exits. A deployment that leaves them unset therefore shows `pg-backup`
+permanently unhealthy — that is the signal, not a state to run production in.
 
 ```dotenv
 BACKUP_RESTIC_REPOSITORY=s3:https://s3.example.com/darkvoid-backups/production
@@ -56,6 +61,23 @@ data readable from the critical `usr.users` table, then drops the database. A no
 `CREATEDB`; override `BACKUP_RESTORE_DATABASE` if that name is reserved. The
 scheduler refuses to use the production database as its drill target.
 
+That database is created on the production PostgreSQL instance unless
+`BACKUP_RESTORE_PGHOST` (with `BACKUP_RESTORE_PGPORT`, `BACKUP_RESTORE_PGUSER`
+and `BACKUP_RESTORE_PGPASSWORD`) names another one, so by default the drill holds
+a second copy of the data for as long as the restore takes — plan for roughly
+double the database size, including on first boot, where the drill runs
+immediately after the first backup. Point it at a scratch instance where the
+production disk cannot take that. `BACKUP_RESTORE_DRILL_ENABLED=false` turns it
+off entirely, which is the last resort: an untested backup is a hypothesis.
+
+A failed drill is reported on its own and does **not** withhold `last-success`.
+That file answers "is there a recent off-host snapshot", which a failed drill
+does not change, and it is what the container healthcheck reads — spending an
+unhealthy `pg-backup` on the drill would leave nothing to signal the failure that
+actually means data loss. The drill instead alerts `restore_drill_failed` on
+every cycle until it passes, then `restore_drill_recovered`, and keeps
+`restore-drill-failure-active` in `backup_state` while it is failing.
+
 Inspect runtime state with:
 
 ```sh
@@ -65,10 +87,11 @@ dv exec pg-backup restic snapshots --tag darkvoid-postgres
 ```
 
 The configured webhook receives `application/json` events with `service`,
-`status`, `message`, `host` and `timestamp`. Alert on `failed` and
-`configuration_failed`; `recovered` closes an active failure. Compose also marks
-the service unhealthy when no successful full cycle has completed within the
-maximum age.
+`status`, `message`, `host` and `timestamp`. Alert on `failed`,
+`configuration_failed` and `restore_drill_failed`; `recovered` and
+`restore_drill_recovered` close the matching active failure. Compose also marks
+the service unhealthy when no backup has completed within the maximum age — the
+drill is not part of that judgement.
 
 ## Manual recovery drill
 

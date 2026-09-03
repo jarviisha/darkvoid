@@ -20,6 +20,19 @@ set_defaults() {
 	BACKUP_RESTIC_HOST="${BACKUP_RESTIC_HOST:-darkvoid-production}"
 	BACKUP_STATE_DIR="${BACKUP_STATE_DIR:-/state}"
 	BACKUP_RESTORE_DATABASE="${BACKUP_RESTORE_DATABASE:-${PGDATABASE:-darkvoid}_restore_drill}"
+	BACKUP_RESTORE_DRILL_ENABLED="${BACKUP_RESTORE_DRILL_ENABLED:-true}"
+	# The drill restores into whichever instance these name. They default to the
+	# production one, where the drill holds a second copy of the data for the
+	# length of the restore; a deployment whose disk cannot take that points them
+	# at a scratch instance instead of giving up on testing its backups.
+	BACKUP_RESTORE_PGHOST="${BACKUP_RESTORE_PGHOST:-${PGHOST:-}}"
+	BACKUP_RESTORE_PGPORT="${BACKUP_RESTORE_PGPORT:-${PGPORT:-5432}}"
+	BACKUP_RESTORE_PGUSER="${BACKUP_RESTORE_PGUSER:-${PGUSER:-}}"
+	BACKUP_RESTORE_PGPASSWORD="${BACKUP_RESTORE_PGPASSWORD:-${PGPASSWORD:-}}"
+	# pg_dump reads PGPASSWORD, and the drill overwrites it to reach a possibly
+	# different instance. Kept so the next cycle's dump gets its own credential
+	# back rather than the drill's.
+	BACKUP_PRODUCTION_PGPASSWORD="${PGPASSWORD:-}"
 	RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-${BACKUP_STATE_DIR}/cache}"
 	export RESTIC_CACHE_DIR
 }
@@ -84,6 +97,20 @@ validate_config() {
 			return 1
 			;;
 	esac
+	case "$BACKUP_RESTORE_DRILL_ENABLED" in
+		true|false) ;;
+		*)
+			log error "BACKUP_RESTORE_DRILL_ENABLED must be true or false"
+			return 1
+			;;
+	esac
+	if [ "$BACKUP_RESTORE_DRILL_ENABLED" = true ]; then
+		if [ -z "$BACKUP_RESTORE_PGHOST" ] || [ -z "$BACKUP_RESTORE_PGUSER" ]; then
+			log error "BACKUP_RESTORE_PGHOST and BACKUP_RESTORE_PGUSER are required while the restore drill is enabled"
+			return 1
+		fi
+		require_positive_integer BACKUP_RESTORE_PGPORT "$BACKUP_RESTORE_PGPORT" || return 1
+	fi
 	case "$BACKUP_RESTORE_DATABASE" in
 		''|*[!A-Za-z0-9_]*)
 			log error "BACKUP_RESTORE_DATABASE must contain only letters, numbers and underscores"
@@ -207,12 +234,30 @@ run_restore_drill() {
 	archive_path="postgres/${PGDATABASE}.dump"
 	result=0
 
-	log info "starting restore drill into isolated database $drill_database"
-	dropdb --if-exists --force --maintenance-db=postgres "$drill_database" || return 1
-	createdb --template=template0 --maintenance-db=postgres "$drill_database" || return 1
+	# Every client here is pointed at the drill instance explicitly rather than
+	# inheriting PGHOST/PGUSER, so that BACKUP_RESTORE_PGHOST moves the whole
+	# drill — including the DROP DATABASE — off the production server together.
+	PGPASSWORD="$BACKUP_RESTORE_PGPASSWORD"
+	export PGPASSWORD
+
+	log info "starting restore drill into isolated database $drill_database on ${BACKUP_RESTORE_PGHOST}:${BACKUP_RESTORE_PGPORT}"
+	drop_drill_database || { restore_production_pgpassword; return 1; }
+	if ! createdb \
+		--host="$BACKUP_RESTORE_PGHOST" \
+		--port="$BACKUP_RESTORE_PGPORT" \
+		--username="$BACKUP_RESTORE_PGUSER" \
+		--template=template0 \
+		--maintenance-db=postgres \
+		"$drill_database"; then
+		restore_production_pgpassword
+		return 1
+	fi
 
 	if ! restic dump "$snapshot_id" "$archive_path" \
 		| pg_restore \
+			--host="$BACKUP_RESTORE_PGHOST" \
+			--port="$BACKUP_RESTORE_PGPORT" \
+			--username="$BACKUP_RESTORE_PGUSER" \
 			--exit-on-error \
 			--single-transaction \
 			--no-owner \
@@ -223,7 +268,11 @@ run_restore_drill() {
 	fi
 
 	if [ "$result" -eq 0 ]; then
-		if ! psql --dbname="$drill_database" --no-psqlrc --quiet \
+		if ! psql \
+			--host="$BACKUP_RESTORE_PGHOST" \
+			--port="$BACKUP_RESTORE_PGPORT" \
+			--username="$BACKUP_RESTORE_PGUSER" \
+			--dbname="$drill_database" --no-psqlrc --quiet \
 			--set=ON_ERROR_STOP=1 \
 			--command="SELECT count(*) FROM usr.users;" >/dev/null; then
 			log error "restore drill could not read the critical usr.users table"
@@ -231,14 +280,33 @@ run_restore_drill() {
 		fi
 	fi
 
-	if ! dropdb --if-exists --force --maintenance-db=postgres "$drill_database"; then
+	# Reclaiming the space matters more than the drill's verdict: a drill that
+	# failed halfway still left a partially restored copy behind.
+	if ! drop_drill_database; then
 		log error "restore drill database cleanup failed"
 		result=1
 	fi
+	restore_production_pgpassword
 	if [ "$result" -ne 0 ]; then
 		return "$result"
 	fi
 	log info "restore drill for snapshot $snapshot_id completed"
+}
+
+drop_drill_database() {
+	dropdb \
+		--host="$BACKUP_RESTORE_PGHOST" \
+		--port="$BACKUP_RESTORE_PGPORT" \
+		--username="$BACKUP_RESTORE_PGUSER" \
+		--if-exists \
+		--force \
+		--maintenance-db=postgres \
+		"$BACKUP_RESTORE_DATABASE"
+}
+
+restore_production_pgpassword() {
+	PGPASSWORD="$BACKUP_PRODUCTION_PGPASSWORD"
+	export PGPASSWORD
 }
 
 write_epoch() {
@@ -249,12 +317,46 @@ run_cycle() {
 	initialize_repository || return 1
 	snapshot_id="$(perform_backup)" || return 1
 	apply_retention || return 1
-
-	if restore_drill_due; then
-		run_restore_drill "$snapshot_id" || return 1
-		write_epoch "${BACKUP_STATE_DIR}/last-restore-drill" || return 1
-	fi
+	# Recorded before the drill, and never withheld because of it. last-success
+	# is what the container healthcheck reads, and it answers "is there a recent
+	# off-host snapshot" — which a failed drill does not change. Suppressing it
+	# reported "no backup" on a deployment whose backups were all succeeding, and
+	# an unhealthy pg-backup is the signal for the one failure that means data
+	# loss; spending it on the drill leaves nothing to say the real thing broke.
 	write_epoch "${BACKUP_STATE_DIR}/last-success" || return 1
+
+	run_scheduled_restore_drill "$snapshot_id"
+}
+
+# The drill reports through its own alert and its own state file. It returns 0
+# regardless, so a drill failure never marks the backup cycle failed — but it
+# does keep alerting on every cycle until it passes, which is the point.
+run_scheduled_restore_drill() {
+	snapshot_id="$1"
+	failure_marker="${BACKUP_STATE_DIR}/restore-drill-failure-active"
+
+	if [ "$BACKUP_RESTORE_DRILL_ENABLED" != true ]; then
+		return 0
+	fi
+	if ! restore_drill_due; then
+		return 0
+	fi
+
+	if run_restore_drill "$snapshot_id"; then
+		write_epoch "${BACKUP_STATE_DIR}/last-restore-drill" \
+			|| log error "could not record the restore drill timestamp"
+		if [ -e "$failure_marker" ]; then
+			send_alert restore_drill_recovered "PostgreSQL restore drill succeeded again" \
+				|| log error "could not deliver restore drill recovery alert"
+			rm -f "$failure_marker"
+		fi
+		return 0
+	fi
+
+	touch "$failure_marker"
+	send_alert restore_drill_failed "PostgreSQL backups are uploading but the restore drill failed; inspect pg-backup container logs" \
+		|| log error "could not deliver restore drill failure alert"
+	return 0
 }
 
 main() {
