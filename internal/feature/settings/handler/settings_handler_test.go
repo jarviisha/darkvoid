@@ -166,6 +166,78 @@ func TestUpdateFeedSettings_FalseDecodesAsAValue(t *testing.T) {
 	}
 }
 
+// The endpoint's own GET response has to be a valid PATCH body. The decoder
+// rejects unknown fields, so an operator or admin UI that reads the settings,
+// changes one number and sends the object back would otherwise get a 400 naming
+// updated_at — a field it did not add and cannot remove without knowing to.
+func TestUpdateFeedSettings_AcceptsItsOwnGetResponse(t *testing.T) {
+	svc := &stubService{resp: okResponse()}
+	h := NewSettingsHandler(svc)
+
+	getRecorder := httptest.NewRecorder()
+	h.GetFeedSettings(getRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/settings/feed", nil))
+
+	body := map[string]any{}
+	if err := json.NewDecoder(getRecorder.Body).Decode(&body); err != nil {
+		t.Fatalf("decode GET response: %v", err)
+	}
+	body["timeline_rollout_percent"] = 50
+	edited, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal edited settings: %v", err)
+	}
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/admin/settings/feed", strings.NewReader(string(edited)))
+	w := httptest.NewRecorder()
+	h.UpdateFeedSettings(w, authed(req, uuid.New()))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	if svc.lastReq.TimelineRolloutPercent == nil || *svc.lastReq.TimelineRolloutPercent != 50 {
+		t.Fatalf("decoded request = %+v", svc.lastReq)
+	}
+}
+
+// The server-owned fields are tolerated, not applied: a body carrying only
+// those names no setting, and the service still gets an update it will reject.
+func TestUpdateFeedSettings_ServerOwnedFieldsAreNotAnEdit(t *testing.T) {
+	svc := &stubService{resp: okResponse()}
+	h := NewSettingsHandler(svc)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/admin/settings/feed",
+		strings.NewReader(`{"updated_at":"2026-07-27T10:30:00Z","updated_by":"550e8400-e29b-41d4-a716-446655440000"}`))
+	w := httptest.NewRecorder()
+	h.UpdateFeedSettings(w, authed(req, uuid.New()))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want the decoder to accept the body; body = %s", w.Code, w.Body.String())
+	}
+	if svc.lastReq.TimelineEnabled != nil || svc.lastReq.TimelineRolloutPercent != nil ||
+		svc.lastReq.FanoutEnabled != nil || svc.lastReq.DecayExponent != nil {
+		t.Fatalf("server-owned fields produced an edit: %+v", svc.lastReq)
+	}
+}
+
+// Rejecting unknown fields is still the rule everywhere else: it is what turns a
+// misspelled setting into a 400 instead of a silently ignored edit.
+func TestUpdateFeedSettings_RejectsUnknownField(t *testing.T) {
+	svc := &stubService{resp: okResponse()}
+	h := NewSettingsHandler(svc)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/admin/settings/feed",
+		strings.NewReader(`{"timeline_rollout_percnt":50}`))
+	w := httptest.NewRecorder()
+	h.UpdateFeedSettings(w, authed(req, uuid.New()))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if svc.updateCall != 0 {
+		t.Fatal("a misspelled setting reached the service")
+	}
+}
+
 func TestUpdateFeedSettings_ServiceValidationError(t *testing.T) {
 	svc := &stubService{err: errors.NewBadRequestError("timeline_rollout_percent must be between 0 and 100")}
 	h := NewSettingsHandler(svc)
