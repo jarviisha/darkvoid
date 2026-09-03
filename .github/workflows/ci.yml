@@ -9,6 +9,30 @@ on:
       - main
 
 jobs:
+  # Separate from test: it needs neither Redis nor the S3 store, and CD gates on
+  # the whole workflow, so a lint failure blocks the deploy without having to
+  # wait for the integration services to come up.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Installed from the Makefile's pinned version rather than through a
+      # linting action, so CI runs the same binary and the same command as
+      # `make lint` on a developer's machine. A second place to bump the version
+      # is a second place for it to disagree.
+      - name: Install golangci-lint
+        run: |
+          make install-lint
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Run lint
+        run: make lint
+
   test:
     runs-on: ubuntu-latest
     services:

@@ -8,7 +8,7 @@ SHELL := /bin/bash
 	docker-up docker-up-app docker-seed docker-seed-reset \
 	docker-down docker-down-app docker-logs docker-logs-app \
 	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-up-bot migrate-up-settings migrate-down-notification migrate-create migrate-status migrate-force \
-	db-reset install-tools
+	db-reset install-tools install-lint
 
 # Load .env if it exists.
 -include .env
@@ -16,6 +16,9 @@ export
 
 GO ?= go
 DOCKER_COMPOSE ?= docker compose
+
+# Must satisfy the `version: "2"` schema in .golangci.yml.
+GOLANGCI_LINT_VERSION ?= v2.11.4
 
 BIN_DIR := bin
 APP_BIN := $(BIN_DIR)/api
@@ -285,11 +288,17 @@ db-reset: ## Reset dockerized database volumes after confirmation
 		echo "Aborted."; \
 	fi
 
-install-tools: ## Install development tools
+install-tools: install-lint ## Install development tools
 	@echo "Installing development tools..."
 	$(GO) install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 	$(GO) install github.com/swaggo/swag/cmd/swag@latest
-	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	$(GO) install github.com/air-verse/air@latest
 	$(GO) install -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 	@echo "Done."
+
+# Pinned rather than @latest, and split out so CI installs the same binary a
+# developer runs. .golangci.yml is a v2 schema file, which a v1 binary rejects
+# outright — and the v1 module path stopped moving at v1, so @latest there
+# silently keeps installing a binary that cannot read this repo's config.
+install-lint: ## Install the pinned golangci-lint
+	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
