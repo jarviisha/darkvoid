@@ -296,7 +296,16 @@ services:
     environment:
       # App
       ENVIRONMENT: ${ENVIRONMENT:-production}
-      TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-}"
+      # The app is published on loopback and reached through a reverse proxy on
+      # the host, so the peer this container sees is never the client: it is the
+      # Docker bridge gateway. Left empty, TrustedRealIP rewrites nothing, every
+      # request rate-limits under that one gateway address — 429 for everybody
+      # once the shared bucket drains — and the access log records the gateway as
+      # the client. The default therefore trusts loopback and the private ranges
+      # a bridge network can occupy. Override it with the proxy's exact address
+      # if SERVER_BIND is opened beyond loopback, so that a client which reaches
+      # the port directly from one of these ranges cannot forge X-Forwarded-For.
+      TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}"
 
       # Database — points to the postgres container
       DB_HOST: postgres
@@ -318,18 +327,31 @@ services:
 
       # Storage
       # Production is deliberately S3-only: a container-local/named volume is
-      # not shared across hosts and makes rolling replacement lose media.
-      STORAGE_PROVIDER: ${STORAGE_PROVIDER:?set STORAGE_PROVIDER=s3}
-      STORAGE_BASE_URL: ${STORAGE_BASE_URL:?set the public HTTPS CDN/object URL}
+      # not shared across hosts and makes rolling replacement lose media. That
+      # rule is enforced in pkg/config.validateStorage, which refuses to boot a
+      # deployment with ENVIRONMENT=production on any other provider — not with
+      # `${VAR:?}` here. A required variable in this file is checked by every
+      # Compose command, so an unset one takes `dv ps` and `dv logs` down with
+      # the deploy, and it fires on the non-production deployments that share
+      # this file rather than on the one it is meant to protect.
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      STORAGE_BASE_URL: ${STORAGE_BASE_URL:-http://localhost:8080/static}
+      STORAGE_LOCAL_DIR: /app/uploads
       STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-}
-      STORAGE_S3_REGION: ${STORAGE_S3_REGION:?set the S3 region}
-      STORAGE_S3_BUCKET: ${STORAGE_S3_BUCKET:?set the shared media bucket}
+      STORAGE_S3_REGION: ${STORAGE_S3_REGION:-}
+      STORAGE_S3_BUCKET: ${STORAGE_S3_BUCKET:-}
       STORAGE_S3_ACCESS_KEY_ID: ${STORAGE_S3_ACCESS_KEY_ID:-}
       STORAGE_S3_SECRET_ACCESS_KEY: ${STORAGE_S3_SECRET_ACCESS_KEY:-}
       STORAGE_S3_SESSION_TOKEN: ${STORAGE_S3_SESSION_TOKEN:-}
       STORAGE_S3_USE_PATH_STYLE: ${STORAGE_S3_USE_PATH_STYLE:-false}
       # Mailer
       MAILER_PROVIDER: ${MAILER_PROVIDER:-nop}
+    volumes:
+      # Only STORAGE_PROVIDER=local writes here, and production cannot select
+      # that provider. The mount stays so a non-production deployment on this
+      # file keeps its uploads across container replacement instead of losing
+      # them into a discarded writable layer.
+      - uploads:/app/uploads
     deploy:
       resources:
         limits:
@@ -395,8 +417,13 @@ services:
 
       # The repository must be off-host (s3/sftp/rest+HTTPS/azure/gs).
       # Restic encrypts every snapshot with this independent backup secret.
-      RESTIC_REPOSITORY: ${BACKUP_RESTIC_REPOSITORY:?set an off-host Restic repository}
-      RESTIC_PASSWORD: ${BACKUP_RESTIC_PASSWORD:?set a dedicated Restic encryption password}
+      #
+      # Validated by the scheduler rather than by `${VAR:?}` here: the scheduler
+      # names every missing or unusable value at once and alerts on it, where a
+      # required variable in this file fails every Compose command — including
+      # the `dv logs` an operator would run to find out why.
+      RESTIC_REPOSITORY: ${BACKUP_RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD: ${BACKUP_RESTIC_PASSWORD:-}
       RESTIC_CACHE_DIR: /state/cache
 
       # Separate least-privilege credentials are recommended for backup data.
@@ -405,8 +432,18 @@ services:
       AWS_SESSION_TOKEN: ${BACKUP_AWS_SESSION_TOKEN:-}
       AWS_DEFAULT_REGION: ${BACKUP_AWS_REGION:-us-east-1}
 
-      BACKUP_ALERT_WEBHOOK_URL: ${BACKUP_ALERT_WEBHOOK_URL:?set an HTTPS backup alert webhook}
+      BACKUP_ALERT_WEBHOOK_URL: ${BACKUP_ALERT_WEBHOOK_URL:-}
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      # The drill restores into an isolated database on this same PostgreSQL
+      # instance unless BACKUP_RESTORE_PGHOST names another one, so it holds a
+      # second copy of the data for the length of the restore. Point it at a
+      # scratch instance, or turn it off, where the production disk cannot take
+      # that — but note that an untested backup is only a hypothesis.
+      BACKUP_RESTORE_DRILL_ENABLED: ${BACKUP_RESTORE_DRILL_ENABLED:-true}
+      BACKUP_RESTORE_PGHOST: ${BACKUP_RESTORE_PGHOST:-}
+      BACKUP_RESTORE_PGPORT: ${BACKUP_RESTORE_PGPORT:-}
+      BACKUP_RESTORE_PGUSER: ${BACKUP_RESTORE_PGUSER:-}
+      BACKUP_RESTORE_PGPASSWORD: ${BACKUP_RESTORE_PGPASSWORD:-}
       BACKUP_RESTORE_DRILL_INTERVAL_SECONDS: ${BACKUP_RESTORE_DRILL_INTERVAL_SECONDS:-604800}
       BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-14}
       BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-8}
@@ -445,6 +482,11 @@ networks:
 volumes:
   postgres_data:
   redis_data:
+  # Local-provider media for non-production deployments. Production media lives
+  # in STORAGE_S3_BUCKET; scripts/storage/migrate-local-to-s3.sh copies this
+  # volume's contents into the bucket before that cutover, since the database
+  # stores bare media keys and every one of them would otherwise 404.
+  uploads:
   # Scheduler timestamps and a disposable Restic cache only. Backup snapshots
   # live exclusively in RESTIC_REPOSITORY and survive loss of this host.
   backup_state:

@@ -4,7 +4,7 @@ SHELL := /bin/bash
 .PHONY: help \
 	sqlc-generate sqlc-clean swagger-init swagger-generate swagger-serve generate \
 	build run dev ctl clean \
-	test test-v test-cover test-cover-html test-feature test-ops test-backup test-production-images test-migration-gates test-destructive-migration-policy lint deps \
+	test test-v test-cover test-cover-html test-feature test-ops test-backup test-storage-migration test-deployment-defaults test-production-images test-migration-gates test-destructive-migration-policy lint deps \
 	docker-up docker-up-app docker-seed docker-seed-reset \
 	docker-down docker-down-app docker-logs docker-logs-app \
 	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-up-bot migrate-up-settings migrate-down-notification migrate-create migrate-status migrate-force \
@@ -141,11 +141,18 @@ clean: ## Clean build artifacts
 test: test-ops ## Run all tests
 	$(GO) test ./...
 
-test-ops: test-backup test-production-images test-migration-gates test-destructive-migration-policy ## Validate production operation contracts
+test-ops: test-backup test-storage-migration test-deployment-defaults test-production-images test-migration-gates test-destructive-migration-policy ## Validate production operation contracts
 
 test-backup: ## Validate the production backup scheduler
 	bash -n scripts/backup/postgres-restic.sh
 	bash scripts/backup/postgres-restic_test.sh
+
+test-storage-migration: ## Validate the local-to-S3 media migration
+	bash -n scripts/storage/migrate-local-to-s3.sh
+	bash scripts/storage/migrate-local-to-s3_test.sh
+
+test-deployment-defaults: ## Pin production Compose defaults with quiet failure modes
+	bash scripts/ci/deployment-defaults_test.sh
 
 test-production-images: ## Reject mutable production image references
 	bash scripts/ci/production-images_test.sh
