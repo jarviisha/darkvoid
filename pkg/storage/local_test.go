@@ -62,3 +62,32 @@ func TestNewAndNopStorage(t *testing.T) {
 		t.Fatal("nop health check failed")
 	}
 }
+
+// The probe has to live in the upload directory to prove that directory is
+// writable, so its name is what keeps it out of reach while it exists: the
+// static route answers 404 for any dot-prefixed segment
+// (middleware.HiddenFileGuard). Changing the prefix to something the guard does
+// not cover makes the probe fetchable for as long as it is on disk.
+func TestLocalHealthCheck_ProbeIsHiddenAndRemoved(t *testing.T) {
+	t.Parallel()
+	if !strings.HasPrefix(healthProbePrefix, ".") {
+		t.Fatalf("health probe prefix %q is not dot-prefixed and would be served under /static/", healthProbePrefix)
+	}
+
+	dir := t.TempDir()
+	store, err := NewLocal(dir, "https://cdn.test/static")
+	if err != nil {
+		t.Fatalf("NewLocal() error = %v", err)
+	}
+	if err := store.(HealthChecker).HealthCheck(context.Background()); err != nil {
+		t.Fatalf("HealthCheck() error = %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("upload directory holds %d entries after the probe, want 0", len(entries))
+	}
+}
