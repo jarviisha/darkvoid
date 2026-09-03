@@ -83,8 +83,10 @@ func (h *ProfileHandler) UpdateMyProfile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Lenient: GET /me answers on this same path with eleven fields this update
+	// does not accept, so a read-modify-write client sends them back.
 	var req dto.UpdateProfileRequest
-	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+	if err := httputil.DecodeJSONLenient(w, r, &req); err != nil {
 		errors.WriteJSON(w, err)
 		return
 	}

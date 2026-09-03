@@ -89,3 +89,78 @@ func TestDecodeJSON(t *testing.T) {
 		})
 	}
 }
+
+// The lenient variant differs from DecodeJSON in exactly one way. Everything
+// else it inherits is a guarantee callers still rely on, so each is pinned here
+// rather than assumed from the shared implementation.
+func TestDecodeJSONLenient(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		body       string
+		wantName   string
+		wantReason string
+	}{
+		{
+			name:     "unknown field is ignored",
+			body:     `{"name":"darkvoid","id":"9f8b","follower_count":128}`,
+			wantName: "darkvoid",
+		},
+		{
+			name:       "empty body is still rejected",
+			body:       " \n\t",
+			wantReason: "request body must not be empty",
+		},
+		{
+			name:       "malformed JSON is still rejected",
+			body:       `{"name":`,
+			wantReason: "request body contains malformed JSON",
+		},
+		{
+			name:       "a declared field with the wrong type is still rejected",
+			body:       `{"name":7}`,
+			wantReason: `request body contains an invalid value for field "name"`,
+		},
+		{
+			name:       "multiple JSON values are still rejected",
+			body:       `{"name":"first"} {"name":"second"}`,
+			wantReason: "request body must contain a single JSON value",
+		},
+		{
+			name:       "the size limit still applies",
+			body:       `{"name":"` + strings.Repeat("a", 1<<20) + `"}`,
+			wantReason: "request body must not exceed 1048576 bytes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			request := httptest.NewRequestWithContext(context.Background(), "PUT", "/", strings.NewReader(tt.body))
+			response := httptest.NewRecorder()
+			var destination struct {
+				Name string `json:"name"`
+			}
+
+			err := DecodeJSONLenient(response, request, &destination)
+			if tt.wantReason == "" {
+				if err != nil {
+					t.Fatalf("DecodeJSONLenient() error = %v", err)
+				}
+				if destination.Name != tt.wantName {
+					t.Fatalf("DecodeJSONLenient() name = %q, want %q", destination.Name, tt.wantName)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatal("DecodeJSONLenient() error = nil")
+			}
+			if reason, _ := err.Details["reason"].(string); reason != tt.wantReason {
+				t.Errorf("DecodeJSONLenient() reason = %q, want %q", reason, tt.wantReason)
+			}
+		})
+	}
+}

@@ -514,3 +514,50 @@ func TestUploadCover_ServiceError(t *testing.T) {
 	assertStatus(t, w, http.StatusBadRequest)
 	assertErrorCode(t, w, "BAD_REQUEST")
 }
+
+// GET and PUT share the /me path, and the GET answers with eleven fields the
+// update does not accept. A client that reads the profile, edits one field and
+// sends the object back was correct before unknown fields started being
+// rejected, so the endpoint decodes leniently — this pins that its own response
+// is still a usable request body.
+func TestUpdateMyProfile_AcceptsItsOwnGetResponse(t *testing.T) {
+	userID := uuid.New()
+	var received *dto.UpdateProfileRequest
+	svc := &mockProfileService{
+		getMyProfile: func(_ context.Context, id uuid.UUID) (*entity.User, error) {
+			return sampleUserFull(id), nil
+		},
+		updateMyProfile: func(_ context.Context, id uuid.UUID, req *dto.UpdateProfileRequest) (*entity.User, error) {
+			received = req
+			return sampleUserFull(id), nil
+		},
+	}
+	h := newProfileHandler(svc)
+
+	getRecorder := httptest.NewRecorder()
+	getRequest, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/me", nil)
+	h.GetMyProfile(getRecorder, withUserID(getRequest, userID))
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("GET /me status = %d, want 200", getRecorder.Code)
+	}
+
+	body := map[string]any{}
+	if err := json.NewDecoder(getRecorder.Body).Decode(&body); err != nil {
+		t.Fatalf("decode GET response: %v", err)
+	}
+	body["display_name"] = "Edited Name"
+	edited, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal edited profile: %v", err)
+	}
+
+	putRequest, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, "/me", bytes.NewReader(edited))
+	putRequest.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.UpdateMyProfile(w, withUserID(putRequest, userID))
+
+	assertStatus(t, w, http.StatusOK)
+	if received == nil || received.DisplayName == nil || *received.DisplayName != "Edited Name" {
+		t.Fatalf("decoded request = %+v", received)
+	}
+}

@@ -372,3 +372,48 @@ func TestDeactivateUser_Forbidden(t *testing.T) {
 	assertStatus(t, w, http.StatusForbidden)
 	assertErrorCode(t, w, "FORBIDDEN")
 }
+
+// GET and PUT share the /users/{userKey} path, and the GET answers with fourteen
+// fields around the one this update accepts. Decoding is lenient there so a
+// read-modify-write client is not rejected for echoing them back.
+func TestUpdateUser_AcceptsItsOwnGetResponse(t *testing.T) {
+	userID := uuid.New()
+	newEmail := "new@example.com"
+	var received *dto.UpdateUserRequest
+	svc := &mockUserService{
+		getUserByID: func(_ context.Context, id uuid.UUID) (*entity.User, error) {
+			return sampleUser(id), nil
+		},
+		updateUser: func(_ context.Context, id uuid.UUID, req *dto.UpdateUserRequest, _ *uuid.UUID) (*entity.User, error) {
+			received = req
+			return sampleUser(id), nil
+		},
+	}
+	h := newUserHandler(svc)
+
+	body := map[string]any{}
+	response, err := json.Marshal(dto.ToUserResponse(sampleUser(userID), nil))
+	if err != nil {
+		t.Fatalf("marshal user response: %v", err)
+	}
+	if err = json.Unmarshal(response, &body); err != nil {
+		t.Fatalf("decode user response: %v", err)
+	}
+	body["email"] = newEmail
+	edited, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal edited user: %v", err)
+	}
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, fmt.Sprintf("/users/%s", userID), bytes.NewReader(edited))
+	req.Header.Set("Content-Type", "application/json")
+	req = withChiParam(req, "userKey", userID.String())
+	req = withUserID(req, userID)
+	w := httptest.NewRecorder()
+	h.UpdateUser(w, req)
+
+	assertStatus(t, w, http.StatusOK)
+	if received == nil || received.Email == nil || *received.Email != newEmail {
+		t.Fatalf("decoded request = %+v", received)
+	}
+}

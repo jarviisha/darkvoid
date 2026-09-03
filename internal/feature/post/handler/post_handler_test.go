@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	post "github.com/jarviisha/darkvoid/internal/feature/post"
+	"github.com/jarviisha/darkvoid/internal/feature/post/dto"
 	"github.com/jarviisha/darkvoid/internal/feature/post/entity"
 	httputil "github.com/jarviisha/darkvoid/internal/http"
 	"github.com/jarviisha/darkvoid/pkg/storage"
@@ -501,4 +502,37 @@ func TestGetUserPosts_WithCursor(t *testing.T) {
 	if capturedCursor == nil {
 		t.Fatal("expected non-nil cursor forwarded to service")
 	}
+}
+
+// GET and PUT share the /posts/{postID} path, and the GET answers with ten
+// fields the update does not accept — resolved media URLs, counts and
+// timestamps among them. Decoding is lenient there so a read-modify-write
+// client is not rejected for echoing them back.
+func TestUpdatePost_AcceptsItsOwnGetResponse(t *testing.T) {
+	userID := uuid.New()
+	postID := uuid.New()
+	h := newPostHandler(&mockPostService{})
+
+	body := map[string]any{}
+	response, err := json.Marshal(dto.ToPostResponse(samplePost(userID), nil))
+	if err != nil {
+		t.Fatalf("marshal post response: %v", err)
+	}
+	if err = json.Unmarshal(response, &body); err != nil {
+		t.Fatalf("decode post response: %v", err)
+	}
+	body["content"] = "Updated"
+	edited, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal edited post: %v", err)
+	}
+
+	r, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, "/posts/"+postID.String(), bytes.NewReader(edited))
+	r.Header.Set("Content-Type", "application/json")
+	r = withAuth(r, userID)
+	r = withChiParam(r, "postID", postID.String())
+	w := httptest.NewRecorder()
+
+	h.UpdatePost(w, r)
+	assertStatus(t, w, http.StatusOK)
 }

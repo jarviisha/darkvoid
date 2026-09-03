@@ -79,7 +79,7 @@ func TestLocalHealthCheck_ProbeIsHiddenAndRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocal() error = %v", err)
 	}
-	if err := store.(HealthChecker).HealthCheck(context.Background()); err != nil {
+	if err = store.(HealthChecker).HealthCheck(context.Background()); err != nil {
 		t.Fatalf("HealthCheck() error = %v", err)
 	}
 

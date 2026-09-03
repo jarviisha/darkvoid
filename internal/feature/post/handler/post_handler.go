@@ -144,8 +144,10 @@ func (h *PostHandler) UpdatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Lenient: GET /posts/{postID} answers on this same path with ten fields
+	// this update does not accept, so a read-modify-write client sends them back.
 	var req dto.UpdatePostRequest
-	if err := httputil.DecodeJSON(w, r, &req); err != nil {
+	if err := httputil.DecodeJSONLenient(w, r, &req); err != nil {
 		errors.WriteJSON(w, err)
 		return
 	}
