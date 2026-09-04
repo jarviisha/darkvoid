@@ -4,6 +4,8 @@
 
 Three defects surfaced while smoke-testing a boot-order change on `main` (`17b79f2`). None was introduced by that change; all three predate it and each was reproduced directly. All three are now fixed.
 
+SM-04 was found afterwards, while verifying the SM-01 fix end-to-end, and is open. It is only visible on a rebuild, which is why it had not been seen: `make docker-up` reuses an existing image rather than rebuilding, and the image on the development machine was five weeks old.
+
 SM-02 and SM-03 were the same shape as each other: a real failure the system reported as health. SM-01 turned out to be narrower than first written up — see the correction in its entry.
 
 ## Status
@@ -13,6 +15,7 @@ SM-02 and SM-03 were the same shape as each other: a real failure the system rep
 | SM-01 | Resolved | High | `make docker-up` cannot complete on a fresh volume: the guarded bot migration blocks the chain and dirties the database |
 | SM-02 | Resolved | Medium | Missing module migrations leave `/health` reporting `healthy` |
 | SM-03 | Resolved | Medium | Fatal boot errors are logged at `INFO` |
+| SM-04 | Open | Medium | An uploads volume created before the non-root image cannot be written by it, and the app refuses to boot |
 
 ## Scope and method
 
@@ -145,3 +148,44 @@ The process does exit `1`, so orchestrators still see the failure.
 
 - Replace each `log.Fatalf` with a `pkg/logger` error followed by `os.Exit(1)`.
 - Consider whether `slog.SetDefault`'s standard-library redirect is wanted at all: it silently downgrades every `log.Print`/`log.Fatal` in any dependency to `INFO`.
+
+---
+
+## SM-04: An uploads volume predating the non-root image blocks boot
+
+**Severity:** Medium
+**Class:** Operations / upgrade hazard
+
+### Evidence
+
+- The image adds an unprivileged user and runs as it: [`Dockerfile:25`](../Dockerfile#L25) and [`Dockerfile:33`](../Dockerfile#L33). In the current build that user is `uid 100`, `gid 101`.
+- The local storage provider proves writability by creating a dotfile in `STORAGE_LOCAL_DIR`, and `setupInfrastructure` runs that probe during boot: [`internal/app/infrastructure_setup.go:50`](../internal/app/infrastructure_setup.go#L50).
+- A named volume takes its ownership from the image directory the first time it is populated. The `darkvoid_uploads` volume on the development machine was created on 28 April by an image that still ran as root, and is owned `0:0`:
+
+```
+drwxr-xr-x    4 0        0             4096 Apr 28 07:22 /v
+drwxr-x---    2 0        0             4096 Apr 28 07:21 avatars
+```
+
+- Rebuilding the image and starting it against that volume refuses the boot:
+
+```
+"level":"ERROR","msg":"failed to initialize application",
+"error":"failed to setup contexts: storage health check failed: storage/local:
+ create health probe in \"/app/uploads\": open /app/uploads/.storage-health-…: permission denied"
+```
+
+### Impact
+
+- Any environment whose uploads volume predates the non-root hardening fails to start on the next deploy that rebuilds the image. The container enters a restart loop.
+- Refusing to boot is the correct behaviour — a storage backend the process cannot write to would fail every upload — but the message names the symptom without naming the remedy, and the remedy is not something the container can perform: it runs unprivileged, so it cannot `chown` its own volume.
+- Development and staging only in practice: `validateStorage` refuses the `local` provider when `ENVIRONMENT=production`, so a production deployment is on S3 and unaffected.
+- It stayed hidden because `make docker-up` starts an existing image rather than rebuilding one. The gap between the running image and the source can be arbitrarily large, and nothing reports it.
+
+### Recommendation
+
+- Document the one-off in the upgrade runbook, since it has to run from outside the container:
+  `docker run --rm -v darkvoid_uploads:/v alpine chown -R 100:101 /v`
+- Pin the uid/gid in the `Dockerfile` explicitly rather than letting `adduser -S` allocate them, so the runbook command cannot drift from the image.
+- Consider having the storage probe distinguish "directory not writable by this user" from other failures and say what owns it, so the error names the cause rather than the symptom.
+- Separately: `make docker-up` never rebuilds. A target that does, or a note in `CLAUDE.md`, would stop a stale image from being mistaken for the current source — this finding, and the misleading `/health` body observed just before it, were both that.
