@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -29,12 +30,13 @@ type Server struct {
 	pool       *pgxpool.Pool    // Database pool for health checks
 	redis      *pkgredis.Client // Redis client for health checks
 	storage    storage.HealthChecker
+	schema     schemaProbe
 	codohue    *codohueStatus // Recommender state reported by /health; nil when unset
 	startTime  time.Time      // Server start time for uptime calculation
 }
 
 // NewServer creates an HTTP server with its global middleware policy.
-func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis *pkgredis.Client, storageHealth storage.HealthChecker, codohue *codohueStatus) (*Server, error) {
+func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis *pkgredis.Client, storageHealth storage.HealthChecker, codohue *codohueStatus, schema schemaProbe) (*Server, error) {
 	s := &Server{
 		cfg:       cfg,
 		log:       log,
@@ -42,6 +44,7 @@ func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis
 		redis:     redis,
 		storage:   storageHealth,
 		codohue:   codohue,
+		schema:    schema,
 		startTime: time.Now(),
 	}
 
@@ -153,6 +156,22 @@ type HealthCheckResponse struct {
 	Codohue string `json:"codohue,omitempty"`
 	// CodohueReason carries why, and only while degraded.
 	CodohueReason string `json:"codohue_reason,omitempty"`
+	// Schema is "up", "behind" or "unknown". Behind makes the service unhealthy:
+	// migrations run before the app in every deployment path here, so a module
+	// that has not caught up means the rollout is broken rather than early, and
+	// the instance is serving against tables it was not built for. Unknown means
+	// the check itself did not run and says nothing about the schema.
+	Schema string `json:"schema,omitempty"`
+	// SchemaReason names the modules that are behind, and only while behind.
+	SchemaReason string `json:"schema_reason,omitempty"`
+}
+
+// schemaProbe reports which migration modules the database is behind on.
+//
+// An interface so the health handler can be exercised without a database: the
+// only production implementation queries schema_migrations_<module>.
+type schemaProbe interface {
+	PendingModules(ctx context.Context) ([]string, error)
 }
 
 // healthCheckHandler handles health check requests
@@ -189,6 +208,21 @@ func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 			s.log.Error("storage health check failed", "error", err)
 			response.Status = "unhealthy"
 			response.Storage = "down"
+		}
+	}
+	if s.schema != nil {
+		pending, err := s.schema.PendingModules(ctx)
+		switch {
+		case err != nil:
+			s.log.Error("schema version check failed", "error", err)
+			response.Schema = "unknown"
+		case len(pending) > 0:
+			s.log.Error("database schema is behind this build", "modules", strings.Join(pending, ", "))
+			response.Status = "unhealthy"
+			response.Schema = "behind"
+			response.SchemaReason = "migrations not applied for: " + strings.Join(pending, ", ")
+		default:
+			response.Schema = "up"
 		}
 	}
 

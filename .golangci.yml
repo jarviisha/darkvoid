@@ -30,6 +30,9 @@ linters:
     - misspell
     - prealloc
 
+    # Conventions this repo enforces rather than reviews
+    - depguard
+
     # Security
     - gosec
     - nilnil
@@ -37,6 +40,25 @@ linters:
     - mirror
 
   settings:
+    depguard:
+      rules:
+        # A process that calls logger.SetDefault also redirects the standard log
+        # package through the slog handler at Info level, so a log.Fatal in one
+        # of them is reported at INFO — the least severe event the process can
+        # emit carrying the most severe meaning. cmd/seed is exempt: it never
+        # installs the slog default, so its log.Printf is ordinary CLI output
+        # going straight to stderr.
+        no-standard-logger:
+          files:
+            - "$all"
+            - "!**/pkg/logger/**"
+            - "!**/cmd/seed/**"
+          deny:
+            - pkg: "log"
+              desc: "use pkg/logger; the standard log package is redirected through slog at Info level"
+            - pkg: "log/slog"
+              desc: "use pkg/logger, which wraps slog and owns the handler configuration"
+
     revive:
       rules:
         - name: exported

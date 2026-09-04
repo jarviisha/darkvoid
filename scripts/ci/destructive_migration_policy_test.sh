@@ -4,6 +4,7 @@ set -euo pipefail
 
 repo_root="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
 compose_file="${repo_root}/docker-compose.prod.yml"
+dev_compose_file="${repo_root}/docker-compose.yml"
 workflow_file="${repo_root}/.github/workflows/bot-schema-retirement.yml"
 makefile="${repo_root}/Makefile"
 migration_file="${repo_root}/migrations/bot/000009_drop_bot_schema.up.sql"
@@ -23,6 +24,19 @@ for required in \
 	'BOT_DATA_HANDOFF_REFERENCE: ${BOT_DATA_HANDOFF_REFERENCE:-}'; do
 	grep -Fq "$required" "$compose_file" || fail "production Compose is missing: $required"
 done
+
+# The development Compose file runs the same migration chain, so it needs the
+# same guard. Without it `make docker-up` on a fresh volume drives migrate-bot
+# into 000009, the SQL guard rejects it, and the module is left dirty at version
+# 9 with migrate-settings and app both blocked behind it.
+dev_bot_block="$(sed -n '/^  migrate-bot:$/,/^  migrate-settings:$/p' "$dev_compose_file")"
+grep -Fq 'entrypoint: ["/bin/sh", "/migration-guard/run-bot-safe.sh"]' <<< "$dev_bot_block" \
+	|| fail 'development migrate-bot does not use the safe guard runner'
+grep -Fq './scripts/migrations:/migration-guard:ro' <<< "$dev_bot_block" \
+	|| fail 'development migrate-bot does not mount the guard scripts'
+if grep -Eq '^[[:space:]]+"?up"?,?$' <<< "$dev_bot_block"; then
+	fail 'development migrate-bot service can still execute unrestricted up'
+fi
 
 normal_bot_block="$(sed -n '/^  migrate-bot:$/,/^  migrate-bot-destructive:$/p' "$compose_file")"
 if grep -Eq '^[[:space:]]+"?up"?,?$' <<< "$normal_bot_block"; then

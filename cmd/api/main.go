@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/jarviisha/darkvoid/internal/app"
 	"github.com/jarviisha/darkvoid/pkg/config"
+	"github.com/jarviisha/darkvoid/pkg/logger"
 
 	_ "github.com/jarviisha/darkvoid/docs" // Import generated Swagger docs
 )
@@ -38,19 +38,19 @@ func main() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		fatal(ctx, "failed to load config", err)
 	}
 
 	// Initialize application
 	application, err := app.New(ctx, cfg)
 	if err != nil {
-		log.Fatalf("Failed to initialize application: %v", err)
+		fatal(ctx, "failed to initialize application", err)
 	}
 
 	// Start application server in goroutine
 	go func() {
 		if err := application.Start(); err != nil {
-			log.Fatalf("Failed to start application: %v", err)
+			fatal(ctx, "failed to start application", err)
 		}
 	}()
 
@@ -61,6 +61,20 @@ func main() {
 
 	// Graceful shutdown with 30 second timeout
 	if err := application.GracefulShutdown(30 * time.Second); err != nil {
-		log.Fatalf("Failed to gracefully shutdown: %v", err)
+		fatal(ctx, "failed to gracefully shutdown", err)
 	}
+}
+
+// fatal reports an unrecoverable startup or shutdown failure and stops the
+// process.
+//
+// Not log.Fatalf: app.New installs this logger as the slog default, and
+// slog.SetDefault also redirects the standard log package through that handler
+// at Info level. Every one of these four failures was therefore reported at
+// INFO — the least severe level the process emits, carrying its most severe
+// meaning — so an alert filtering on ERROR saw nothing when the API refused to
+// start. The exit code was always 1 and stays 1.
+func fatal(ctx context.Context, msg string, err error) {
+	logger.LogError(ctx, err, msg)
+	os.Exit(1)
 }

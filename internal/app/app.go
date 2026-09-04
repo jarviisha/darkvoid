@@ -348,7 +348,15 @@ func (app *Application) bootstrapRootUser(ctx context.Context) error {
 func (app *Application) setupServer() error {
 	app.log.Info("initializing HTTP server")
 
-	server, err := NewServer(app.cfg, app.log, app.pool, app.redis, app.storageHealth, app.codohue)
+	// Built here rather than inside NewServer so a malformed migration tree in
+	// the image fails the boot with its own message instead of surfacing later as
+	// a health check that reports "unknown" forever.
+	schema, err := newMigrationVersionProbe(app.pool)
+	if err != nil {
+		return err
+	}
+
+	server, err := NewServer(app.cfg, app.log, app.pool, app.redis, app.storageHealth, app.codohue, schema)
 	if err != nil {
 		return err
 	}

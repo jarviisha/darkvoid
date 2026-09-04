@@ -2,19 +2,17 @@
 
 ## Conclusion
 
-Three defects surfaced while smoke-testing a boot-order change on `main` (`17b79f2`). None was introduced by that change; all three predate it and each was reproduced directly.
+Three defects surfaced while smoke-testing a boot-order change on `main` (`17b79f2`). None was introduced by that change; all three predate it and each was reproduced directly. All three are now fixed.
 
-SM-01 blocks `make docker-up` outright on a fresh volume and leaves the database dirty, so it is the one that has to be fixed before the documented local-development path works again. SM-02 and SM-03 are both observability defects of the same shape: a real failure that the system reports as health.
-
-All three are open.
+SM-02 and SM-03 were the same shape as each other: a real failure the system reported as health. SM-01 turned out to be narrower than first written up — see the correction in its entry.
 
 ## Status
 
 | ID | Status | Severity | Summary |
 |---|---|---|---|
-| SM-01 | Open | High | `make docker-up` cannot complete on a fresh volume: the guarded bot migration blocks the chain and dirties the database |
-| SM-02 | Open | Medium | Missing module migrations leave `/health` reporting `healthy` |
-| SM-03 | Open | Medium | Fatal boot errors are logged at `INFO` |
+| SM-01 | Resolved | High | `make docker-up` cannot complete on a fresh volume: the guarded bot migration blocks the chain and dirties the database |
+| SM-02 | Resolved | Medium | Missing module migrations leave `/health` reporting `healthy` |
+| SM-03 | Resolved | Medium | Fatal boot errors are logged at `INFO` |
 
 ## Scope and method
 
@@ -22,10 +20,18 @@ The stack was brought up with `make docker-up` against a fresh volume, then the 
 
 ---
 
-## SM-01: `make docker-up` cannot reach a healthy stack on a fresh volume
+## SM-01: `make docker-up` cannot reach a healthy stack on a fresh volume — Resolved
 
 **Severity:** High
 **Class:** Operations / migration gating
+
+> **Correction to the original write-up.** This entry first recommended giving Compose "a way to run" the retirement migration, on the assumption none existed. That was wrong: `docker-compose.prod.yml` already ran the module through `scripts/migrations/run-bot-safe.sh`, which advances to 000008 and stops, and already carried a separate `migrate-bot-destructive` service behind a `destructive-migration` profile. The Makefile used the safe runner too. `docker-compose.yml` was the only place still issuing an unrestricted `up` — the development file had simply never been given the treatment the production one had.
+>
+> Fixed by pointing the development `migrate-bot` at the same `run-bot-safe.sh`, with the same environment. No destructive profile was added for development: retiring the bot schema is a protected production workflow, not something a local `up` should offer.
+>
+> `scripts/ci/destructive_migration_policy_test.sh` — which asserted this contract against the production file only — now asserts it against the development file as well, which is what would have caught the gap.
+>
+> Note for existing environments: this prevents a database from being dirtied, it does not clean one already dirty. A volume that reached version 9 still needs `make migrate-force module=bot version=8` before it will come up.
 
 ### Evidence
 
@@ -60,10 +66,16 @@ migrate-bot-1 | error: Dirty database version 9. Fix and force version.
 
 ---
 
-## SM-02: Missing module migrations leave `/health` reporting `healthy`
+## SM-02: Missing module migrations leave `/health` reporting `healthy` — Resolved
 
 **Severity:** Medium
 **Class:** Observability / deploy consistency
+
+> Fixed by comparing versions rather than by watching for symptoms. The migration tree is embedded in the binary (`migrations.Embedded`), and `/health` reads `schema_migrations_<module>` for each module this build reads tables from, reporting `schema: behind` and 503 when any is behind, dirty, or absent. Migrations run before the app in every deployment path here, so a module that has not caught up means the rollout is broken rather than early.
+>
+> `bot` is excluded by design: its tree ships 000009 while the safe runner stops at 000008, so checking it would report every correct deployment as broken. A database *ahead* of the binary is not reported either — that is a rollback, and these migrations are additive.
+>
+> A failure of the probe itself reports `schema: unknown` and does not unseat the instance: connectivity is already covered by the database probe, and failing here would take a working deployment out of rotation over the checker rather than over the thing checked.
 
 ### Evidence
 
@@ -102,10 +114,12 @@ while the log carried:
 
 ---
 
-## SM-03: Fatal boot errors are logged at `INFO`
+## SM-03: Fatal boot errors are logged at `INFO` — Resolved
 
 **Severity:** Medium
 **Class:** Observability
+
+> Fixed at both levels. The four `log.Fatalf` calls in `cmd/api` now go through `pkg/logger` and `os.Exit(1)`, and a `depguard` rule denies the standard `log` and `log/slog` packages everywhere except `pkg/logger` itself and `cmd/seed` — which is exempt because it never installs the slog default, so its `log.Printf` is ordinary CLI output rather than a downgraded record. `make lint` is the guard, which is the right mechanism for a repo-wide convention that `CLAUDE.md` already states.
 
 ### Evidence
 
