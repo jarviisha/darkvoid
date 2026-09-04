@@ -14,7 +14,7 @@ import (
 func TestHashtagGetNamesByPostID_ProjectsNamesInOrder(t *testing.T) {
 	postID := uuid.New()
 	var got uuid.UUID
-	q := &fakeQuerier{hashtagsByPost: func(_ context.Context, id uuid.UUID) ([]db.PostHashtag, error) {
+	q := &mockQuerier{getHashtagsByPostID: func(_ context.Context, id uuid.UUID) ([]db.PostHashtag, error) {
 		got = id
 		return []db.PostHashtag{
 			{ID: uuid.New(), Name: "go"},
@@ -36,7 +36,7 @@ func TestHashtagGetNamesByPostID_ProjectsNamesInOrder(t *testing.T) {
 }
 
 func TestHashtagGetNamesByPostID_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{hashtagsByPost: func(context.Context, uuid.UUID) ([]db.PostHashtag, error) {
+	q := &mockQuerier{getHashtagsByPostID: func(context.Context, uuid.UUID) ([]db.PostHashtag, error) {
 		return nil, errBoom
 	}}
 	r := &HashtagRepository{queries: q}
@@ -51,7 +51,7 @@ func TestHashtagGetNamesByPostID_ErrorIsMapped(t *testing.T) {
 // but the assertion names both so a silent reorder is caught too.
 func TestHashtagSearchByPrefix_PassesPrefixAndLimit(t *testing.T) {
 	var got db.SearchHashtagsByPrefixParams
-	q := &fakeQuerier{tagsByPrefix: func(_ context.Context, arg db.SearchHashtagsByPrefixParams) ([]string, error) {
+	q := &mockQuerier{searchHashtagsByPrefix: func(_ context.Context, arg db.SearchHashtagsByPrefixParams) ([]string, error) {
 		got = arg
 		return []string{"golang", "godoc"}, nil
 	}}
@@ -73,7 +73,7 @@ func TestHashtagSearchByPrefix_PassesPrefixAndLimit(t *testing.T) {
 }
 
 func TestHashtagSearchByPrefix_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{tagsByPrefix: func(context.Context, db.SearchHashtagsByPrefixParams) ([]string, error) {
+	q := &mockQuerier{searchHashtagsByPrefix: func(context.Context, db.SearchHashtagsByPrefixParams) ([]string, error) {
 		return nil, errBoom
 	}}
 	r := &HashtagRepository{queries: q}
@@ -84,7 +84,7 @@ func TestHashtagSearchByPrefix_ErrorIsMapped(t *testing.T) {
 }
 
 func TestHashtagGetNamesByPostIDs_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{hashtagsByIDs: func(context.Context, []uuid.UUID) ([]db.GetHashtagsByPostIDsRow, error) {
+	q := &mockQuerier{getHashtagsByPostIDs: func(context.Context, []uuid.UUID) ([]db.GetHashtagsByPostIDsRow, error) {
 		return nil, errBoom
 	}}
 	r := &HashtagRepository{queries: q}
@@ -95,7 +95,7 @@ func TestHashtagGetNamesByPostIDs_ErrorIsMapped(t *testing.T) {
 }
 
 func TestHashtagGetTrending_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{trendingTags: func(context.Context, int32) ([]db.GetTrendingHashtagsRow, error) {
+	q := &mockQuerier{getTrendingHashtags: func(context.Context, int32) ([]db.GetTrendingHashtagsRow, error) {
 		return nil, errBoom
 	}}
 	r := &HashtagRepository{queries: q}
@@ -106,7 +106,7 @@ func TestHashtagGetTrending_ErrorIsMapped(t *testing.T) {
 }
 
 func TestHashtagGetPostsByHashtag_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{postsByHashtag: func(context.Context, db.GetPostsByHashtagWithCursorParams) ([]db.GetPostsByHashtagWithCursorRow, error) {
+	q := &mockQuerier{getPostsByHashtagWithCursor: func(context.Context, db.GetPostsByHashtagWithCursorParams) ([]db.GetPostsByHashtagWithCursorRow, error) {
 		return nil, errBoom
 	}}
 	r := &HashtagRepository{queries: q}

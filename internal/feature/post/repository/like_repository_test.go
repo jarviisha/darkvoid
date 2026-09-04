@@ -11,7 +11,7 @@ import (
 func TestPostLike_PassesUserAndPostSeparately(t *testing.T) {
 	userID, postID := uuid.New(), uuid.New()
 	var got db.LikePostParams
-	q := &fakeQuerier{likePost: func(_ context.Context, arg db.LikePostParams) error {
+	q := &mockQuerier{likePost: func(_ context.Context, arg db.LikePostParams) error {
 		got = arg
 		return nil
 	}}
@@ -29,7 +29,7 @@ func TestPostLike_PassesUserAndPostSeparately(t *testing.T) {
 }
 
 func TestPostLike_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{likePost: func(context.Context, db.LikePostParams) error { return errBoom }}
+	q := &mockQuerier{likePost: func(context.Context, db.LikePostParams) error { return errBoom }}
 	r := &LikeRepository{queries: q}
 
 	if err := r.Like(context.Background(), uuid.New(), uuid.New()); err == nil {
@@ -40,7 +40,7 @@ func TestPostLike_ErrorIsMapped(t *testing.T) {
 func TestPostUnlike_PassesUserAndPostSeparately(t *testing.T) {
 	userID, postID := uuid.New(), uuid.New()
 	var got db.UnlikePostParams
-	q := &fakeQuerier{unlikePost: func(_ context.Context, arg db.UnlikePostParams) error {
+	q := &mockQuerier{unlikePost: func(_ context.Context, arg db.UnlikePostParams) error {
 		got = arg
 		return nil
 	}}
@@ -58,7 +58,7 @@ func TestPostUnlike_PassesUserAndPostSeparately(t *testing.T) {
 }
 
 func TestPostUnlike_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{unlikePost: func(context.Context, db.UnlikePostParams) error { return errBoom }}
+	q := &mockQuerier{unlikePost: func(context.Context, db.UnlikePostParams) error { return errBoom }}
 	r := &LikeRepository{queries: q}
 
 	if err := r.Unlike(context.Background(), uuid.New(), uuid.New()); err == nil {
@@ -69,7 +69,7 @@ func TestPostUnlike_ErrorIsMapped(t *testing.T) {
 func TestPostIsLiked_ReturnsQueryResult(t *testing.T) {
 	userID, postID := uuid.New(), uuid.New()
 	var got db.IsLikedParams
-	q := &fakeQuerier{isLiked: func(_ context.Context, arg db.IsLikedParams) (bool, error) {
+	q := &mockQuerier{isLiked: func(_ context.Context, arg db.IsLikedParams) (bool, error) {
 		got = arg
 		return true, nil
 	}}
@@ -90,7 +90,7 @@ func TestPostIsLiked_ReturnsQueryResult(t *testing.T) {
 // Same contract as the comment side: a failed lookup must not read as
 // "not liked", or a database blip turns into an unlike.
 func TestPostIsLiked_ErrorReturnsFalseAndError(t *testing.T) {
-	q := &fakeQuerier{isLiked: func(context.Context, db.IsLikedParams) (bool, error) {
+	q := &mockQuerier{isLiked: func(context.Context, db.IsLikedParams) (bool, error) {
 		return true, errBoom
 	}}
 	r := &LikeRepository{queries: q}
@@ -107,7 +107,7 @@ func TestPostIsLiked_ErrorReturnsFalseAndError(t *testing.T) {
 func TestPostLikeCount_ReturnsCount(t *testing.T) {
 	postID := uuid.New()
 	var got uuid.UUID
-	q := &fakeQuerier{countLikes: func(_ context.Context, id uuid.UUID) (int64, error) {
+	q := &mockQuerier{countLikes: func(_ context.Context, id uuid.UUID) (int64, error) {
 		got = id
 		return 42, nil
 	}}

@@ -17,7 +17,7 @@ import (
 func TestCommentCreate_TopLevelSendsInvalidParent(t *testing.T) {
 	postID, authorID := uuid.New(), uuid.New()
 	var got db.CreateCommentParams
-	q := &fakeQuerier{createComment: func(_ context.Context, arg db.CreateCommentParams) (db.PostComment, error) {
+	q := &mockQuerier{createComment: func(_ context.Context, arg db.CreateCommentParams) (db.PostComment, error) {
 		got = arg
 		return db.PostComment{ID: uuid.New(), PostID: arg.PostID, AuthorID: arg.AuthorID, Content: arg.Content}, nil
 	}}
@@ -41,7 +41,7 @@ func TestCommentCreate_TopLevelSendsInvalidParent(t *testing.T) {
 func TestCommentCreate_ReplySendsValidParent(t *testing.T) {
 	parentID := uuid.New()
 	var got db.CreateCommentParams
-	q := &fakeQuerier{createComment: func(_ context.Context, arg db.CreateCommentParams) (db.PostComment, error) {
+	q := &mockQuerier{createComment: func(_ context.Context, arg db.CreateCommentParams) (db.PostComment, error) {
 		got = arg
 		return db.PostComment{ID: uuid.New(), Content: arg.Content, ParentID: arg.ParentID}, nil
 	}}
@@ -60,7 +60,7 @@ func TestCommentCreate_ReplySendsValidParent(t *testing.T) {
 }
 
 func TestCommentCreate_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{createComment: func(context.Context, db.CreateCommentParams) (db.PostComment, error) {
+	q := &mockQuerier{createComment: func(context.Context, db.CreateCommentParams) (db.PostComment, error) {
 		return db.PostComment{}, errBoom
 	}}
 	r := &CommentRepository{queries: q}
@@ -71,7 +71,7 @@ func TestCommentCreate_ErrorIsMapped(t *testing.T) {
 }
 
 func TestCommentGetByID_NoRowsBecomesNotFound(t *testing.T) {
-	q := &fakeQuerier{commentByID: func(context.Context, uuid.UUID) (db.PostComment, error) {
+	q := &mockQuerier{getCommentByID: func(context.Context, uuid.UUID) (db.PostComment, error) {
 		return db.PostComment{}, pgx.ErrNoRows
 	}}
 	r := &CommentRepository{queries: q}
@@ -85,7 +85,7 @@ func TestCommentGetByID_NoRowsBecomesNotFound(t *testing.T) {
 func TestCommentGetByID_MapsRow(t *testing.T) {
 	id, postID, authorID := uuid.New(), uuid.New(), uuid.New()
 	var got uuid.UUID
-	q := &fakeQuerier{commentByID: func(_ context.Context, arg uuid.UUID) (db.PostComment, error) {
+	q := &mockQuerier{getCommentByID: func(_ context.Context, arg uuid.UUID) (db.PostComment, error) {
 		got = arg
 		return db.PostComment{ID: id, PostID: postID, AuthorID: authorID, Content: "hi", LikeCount: 4}, nil
 	}}
@@ -108,7 +108,7 @@ func TestCommentGetByID_MapsRow(t *testing.T) {
 func TestCommentGetByPost_PassesLimitAndOffsetSeparately(t *testing.T) {
 	postID := uuid.New()
 	var got db.GetCommentsByPostParams
-	q := &fakeQuerier{commentsByPost: func(_ context.Context, arg db.GetCommentsByPostParams) ([]db.PostComment, error) {
+	q := &mockQuerier{getCommentsByPost: func(_ context.Context, arg db.GetCommentsByPostParams) ([]db.PostComment, error) {
 		got = arg
 		return []db.PostComment{{ID: uuid.New(), Content: "a"}, {ID: uuid.New(), Content: "b"}}, nil
 	}}
@@ -133,7 +133,7 @@ func TestCommentGetByPost_PassesLimitAndOffsetSeparately(t *testing.T) {
 }
 
 func TestCommentGetByPost_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{commentsByPost: func(context.Context, db.GetCommentsByPostParams) ([]db.PostComment, error) {
+	q := &mockQuerier{getCommentsByPost: func(context.Context, db.GetCommentsByPostParams) ([]db.PostComment, error) {
 		return nil, errBoom
 	}}
 	r := &CommentRepository{queries: q}
@@ -148,7 +148,7 @@ func TestCommentGetByPost_ErrorIsMapped(t *testing.T) {
 func TestCommentGetReplies_WrapsParentAsValid(t *testing.T) {
 	parentID := uuid.New()
 	var got db.GetRepliesParams
-	q := &fakeQuerier{replies: func(_ context.Context, arg db.GetRepliesParams) ([]db.PostComment, error) {
+	q := &mockQuerier{getReplies: func(_ context.Context, arg db.GetRepliesParams) ([]db.PostComment, error) {
 		got = arg
 		return []db.PostComment{{ID: uuid.New(), Content: "reply"}}, nil
 	}}
@@ -173,7 +173,7 @@ func TestCommentGetReplies_WrapsParentAsValid(t *testing.T) {
 }
 
 func TestCommentGetReplies_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{replies: func(context.Context, db.GetRepliesParams) ([]db.PostComment, error) {
+	q := &mockQuerier{getReplies: func(context.Context, db.GetRepliesParams) ([]db.PostComment, error) {
 		return nil, errBoom
 	}}
 	r := &CommentRepository{queries: q}
@@ -186,7 +186,7 @@ func TestCommentGetReplies_ErrorIsMapped(t *testing.T) {
 func TestCommentCountByPost_ReturnsCount(t *testing.T) {
 	postID := uuid.New()
 	var got uuid.UUID
-	q := &fakeQuerier{countComments: func(_ context.Context, id uuid.UUID) (int64, error) {
+	q := &mockQuerier{countCommentsByPost: func(_ context.Context, id uuid.UUID) (int64, error) {
 		got = id
 		return 17, nil
 	}}
@@ -207,7 +207,7 @@ func TestCommentCountByPost_ReturnsCount(t *testing.T) {
 // A count that failed must not read as zero comments: the caller renders that
 // as an empty thread rather than surfacing the failure.
 func TestCommentCountByPost_ErrorReturnsZeroAndError(t *testing.T) {
-	q := &fakeQuerier{countComments: func(context.Context, uuid.UUID) (int64, error) { return 9, errBoom }}
+	q := &mockQuerier{countCommentsByPost: func(context.Context, uuid.UUID) (int64, error) { return 9, errBoom }}
 	r := &CommentRepository{queries: q}
 
 	n, err := r.CountByPost(context.Background(), uuid.New())
@@ -222,7 +222,7 @@ func TestCommentCountByPost_ErrorReturnsZeroAndError(t *testing.T) {
 func TestCommentDelete_PassesIDAndMapsError(t *testing.T) {
 	id := uuid.New()
 	var got uuid.UUID
-	q := &fakeQuerier{deleteComment: func(_ context.Context, arg uuid.UUID) error {
+	q := &mockQuerier{deleteComment: func(_ context.Context, arg uuid.UUID) error {
 		got = arg
 		return nil
 	}}
@@ -242,7 +242,7 @@ func TestCommentDelete_PassesIDAndMapsError(t *testing.T) {
 }
 
 func TestCommentGetReplyCountsBatch_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{replyCounts: func(context.Context, []uuid.UUID) ([]db.GetReplyCountsBatchRow, error) {
+	q := &mockQuerier{getReplyCountsBatch: func(context.Context, []uuid.UUID) ([]db.GetReplyCountsBatchRow, error) {
 		return nil, errBoom
 	}}
 	r := &CommentRepository{queries: q}
@@ -253,7 +253,7 @@ func TestCommentGetReplyCountsBatch_ErrorIsMapped(t *testing.T) {
 }
 
 func TestCommentGetRepliesPreview_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{repliesPreview: func(context.Context, db.GetRepliesPreviewParams) ([]db.PostComment, error) {
+	q := &mockQuerier{getRepliesPreview: func(context.Context, db.GetRepliesPreviewParams) ([]db.PostComment, error) {
 		return nil, errBoom
 	}}
 	r := &CommentRepository{queries: q}

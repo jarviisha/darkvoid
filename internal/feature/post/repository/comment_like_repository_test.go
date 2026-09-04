@@ -15,7 +15,7 @@ import (
 func TestCommentLike_PassesUserAndCommentSeparately(t *testing.T) {
 	userID, commentID := uuid.New(), uuid.New()
 	var gotUser, gotComment uuid.UUID
-	q := &fakeQuerier{likeComment: func(_ context.Context, arg db.LikeCommentParams) error {
+	q := &mockQuerier{likeComment: func(_ context.Context, arg db.LikeCommentParams) error {
 		gotUser, gotComment = arg.UserID, arg.CommentID
 		return nil
 	}}
@@ -35,7 +35,7 @@ func TestCommentLike_PassesUserAndCommentSeparately(t *testing.T) {
 func TestCommentUnlike_PassesUserAndCommentSeparately(t *testing.T) {
 	userID, commentID := uuid.New(), uuid.New()
 	var gotUser, gotComment uuid.UUID
-	q := &fakeQuerier{unlikeComment: func(_ context.Context, arg db.UnlikeCommentParams) error {
+	q := &mockQuerier{unlikeComment: func(_ context.Context, arg db.UnlikeCommentParams) error {
 		gotUser, gotComment = arg.UserID, arg.CommentID
 		return nil
 	}}
@@ -53,7 +53,7 @@ func TestCommentUnlike_PassesUserAndCommentSeparately(t *testing.T) {
 }
 
 func TestCommentLike_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{likeComment: func(context.Context, db.LikeCommentParams) error { return errBoom }}
+	q := &mockQuerier{likeComment: func(context.Context, db.LikeCommentParams) error { return errBoom }}
 	r := &CommentLikeRepository{queries: q}
 
 	if err := r.Like(context.Background(), uuid.New(), uuid.New()); err == nil {
@@ -65,7 +65,7 @@ func TestCommentLike_ErrorIsMapped(t *testing.T) {
 // unlike, so returning it alongside an error would make a database blip
 // indistinguishable from a real state.
 func TestCommentIsLiked_ErrorReturnsFalseAndError(t *testing.T) {
-	q := &fakeQuerier{isCommentLiked: func(context.Context, db.IsCommentLikedParams) (bool, error) {
+	q := &mockQuerier{isCommentLiked: func(context.Context, db.IsCommentLikedParams) (bool, error) {
 		return true, errBoom
 	}}
 	r := &CommentLikeRepository{queries: q}
@@ -82,7 +82,7 @@ func TestCommentIsLiked_ErrorReturnsFalseAndError(t *testing.T) {
 func TestCommentIsLiked_ReturnsQueryResult(t *testing.T) {
 	userID, commentID := uuid.New(), uuid.New()
 	var got db.IsCommentLikedParams
-	q := &fakeQuerier{isCommentLiked: func(_ context.Context, arg db.IsCommentLikedParams) (bool, error) {
+	q := &mockQuerier{isCommentLiked: func(_ context.Context, arg db.IsCommentLikedParams) (bool, error) {
 		got = arg
 		return true, nil
 	}}
@@ -106,7 +106,7 @@ func TestGetLikedCommentIDs_PassesViewerAndCandidateSet(t *testing.T) {
 	userID := uuid.New()
 	liked, unliked := uuid.New(), uuid.New()
 	var got db.GetLikedCommentIDsParams
-	q := &fakeQuerier{likedCommentIDs: func(_ context.Context, arg db.GetLikedCommentIDsParams) ([]uuid.UUID, error) {
+	q := &mockQuerier{getLikedCommentIDs: func(_ context.Context, arg db.GetLikedCommentIDsParams) ([]uuid.UUID, error) {
 		got = arg
 		return []uuid.UUID{liked}, nil
 	}}
@@ -128,7 +128,7 @@ func TestGetLikedCommentIDs_PassesViewerAndCandidateSet(t *testing.T) {
 }
 
 func TestGetLikedCommentIDs_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{likedCommentIDs: func(context.Context, db.GetLikedCommentIDsParams) ([]uuid.UUID, error) {
+	q := &mockQuerier{getLikedCommentIDs: func(context.Context, db.GetLikedCommentIDsParams) ([]uuid.UUID, error) {
 		return nil, errBoom
 	}}
 	r := &CommentLikeRepository{queries: q}

@@ -15,7 +15,7 @@ import (
 func TestMentionInsert_PassesPostAndUserSeparately(t *testing.T) {
 	postID, userID := uuid.New(), uuid.New()
 	var got db.InsertMentionParams
-	q := &fakeQuerier{insertMention: func(_ context.Context, arg db.InsertMentionParams) error {
+	q := &mockQuerier{insertMention: func(_ context.Context, arg db.InsertMentionParams) error {
 		got = arg
 		return nil
 	}}
@@ -33,7 +33,7 @@ func TestMentionInsert_PassesPostAndUserSeparately(t *testing.T) {
 }
 
 func TestMentionInsert_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{insertMention: func(context.Context, db.InsertMentionParams) error { return errBoom }}
+	q := &mockQuerier{insertMention: func(context.Context, db.InsertMentionParams) error { return errBoom }}
 	r := &MentionRepository{queries: q}
 
 	if err := r.Insert(context.Background(), uuid.New(), uuid.New()); err == nil {
@@ -44,7 +44,7 @@ func TestMentionInsert_ErrorIsMapped(t *testing.T) {
 func TestMentionDeleteByPost_PassesPostID(t *testing.T) {
 	postID := uuid.New()
 	var got uuid.UUID
-	q := &fakeQuerier{delMentions: func(_ context.Context, id uuid.UUID) error {
+	q := &mockQuerier{deleteMentionsByPost: func(_ context.Context, id uuid.UUID) error {
 		got = id
 		return nil
 	}}
@@ -59,7 +59,7 @@ func TestMentionDeleteByPost_PassesPostID(t *testing.T) {
 }
 
 func TestMentionDeleteByPost_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{delMentions: func(context.Context, uuid.UUID) error { return errBoom }}
+	q := &mockQuerier{deleteMentionsByPost: func(context.Context, uuid.UUID) error { return errBoom }}
 	r := &MentionRepository{queries: q}
 
 	if err := r.DeleteByPost(context.Background(), uuid.New()); err == nil {
@@ -68,7 +68,7 @@ func TestMentionDeleteByPost_ErrorIsMapped(t *testing.T) {
 }
 
 func TestMentionGetByPost_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{mentionsByPost: func(context.Context, uuid.UUID) ([]db.PostPostMention, error) {
+	q := &mockQuerier{getMentionsByPost: func(context.Context, uuid.UUID) ([]db.PostPostMention, error) {
 		return nil, errBoom
 	}}
 	r := &MentionRepository{queries: q}
@@ -85,7 +85,7 @@ func TestMentionGetByPost_ErrorIsMapped(t *testing.T) {
 func TestCommentMentionInsert_PassesCommentAndUserSeparately(t *testing.T) {
 	commentID, userID := uuid.New(), uuid.New()
 	var got db.InsertCommentMentionParams
-	q := &fakeQuerier{insertCmtMention: func(_ context.Context, arg db.InsertCommentMentionParams) error {
+	q := &mockQuerier{insertCommentMention: func(_ context.Context, arg db.InsertCommentMentionParams) error {
 		got = arg
 		return nil
 	}}
@@ -105,7 +105,7 @@ func TestCommentMentionInsert_PassesCommentAndUserSeparately(t *testing.T) {
 func TestCommentMentionDeleteByComment_PassesCommentID(t *testing.T) {
 	commentID := uuid.New()
 	var got uuid.UUID
-	q := &fakeQuerier{delCmtMentions: func(_ context.Context, id uuid.UUID) error {
+	q := &mockQuerier{deleteCommentMentionsByComment: func(_ context.Context, id uuid.UUID) error {
 		got = id
 		return nil
 	}}
@@ -120,7 +120,7 @@ func TestCommentMentionDeleteByComment_PassesCommentID(t *testing.T) {
 }
 
 func TestCommentMentionDeleteByComment_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{delCmtMentions: func(context.Context, uuid.UUID) error { return errBoom }}
+	q := &mockQuerier{deleteCommentMentionsByComment: func(context.Context, uuid.UUID) error { return errBoom }}
 	r := &CommentMentionRepository{queries: q}
 
 	if err := r.DeleteByComment(context.Background(), uuid.New()); err == nil {
@@ -134,7 +134,7 @@ func TestCommentMentionGetByComment_ProjectsUserIDsInOrder(t *testing.T) {
 	commentID := uuid.New()
 	u1, u2 := uuid.New(), uuid.New()
 	var got uuid.UUID
-	q := &fakeQuerier{cmtMentionsByCmt: func(_ context.Context, id uuid.UUID) ([]db.PostCommentMention, error) {
+	q := &mockQuerier{getCommentMentionsByComment: func(_ context.Context, id uuid.UUID) ([]db.PostCommentMention, error) {
 		got = id
 		return []db.PostCommentMention{
 			{CommentID: commentID, UserID: u1},
@@ -156,7 +156,7 @@ func TestCommentMentionGetByComment_ProjectsUserIDsInOrder(t *testing.T) {
 }
 
 func TestCommentMentionGetByComment_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{cmtMentionsByCmt: func(context.Context, uuid.UUID) ([]db.PostCommentMention, error) {
+	q := &mockQuerier{getCommentMentionsByComment: func(context.Context, uuid.UUID) ([]db.PostCommentMention, error) {
 		return nil, errBoom
 	}}
 	r := &CommentMentionRepository{queries: q}
@@ -167,7 +167,7 @@ func TestCommentMentionGetByComment_ErrorIsMapped(t *testing.T) {
 }
 
 func TestCommentMentionGetBatch_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{cmtMentions: func(context.Context, []uuid.UUID) ([]db.PostCommentMention, error) {
+	q := &mockQuerier{getCommentMentionsBatch: func(context.Context, []uuid.UUID) ([]db.PostCommentMention, error) {
 		return nil, errBoom
 	}}
 	r := &CommentMentionRepository{queries: q}

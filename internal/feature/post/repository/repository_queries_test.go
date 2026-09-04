@@ -26,7 +26,7 @@ var errBoom = errors.New("boom")
 func TestPostCreate_MapsParamsAndRow(t *testing.T) {
 	authorID := uuid.New()
 	var got db.CreatePostParams
-	q := &fakeQuerier{createPost: func(_ context.Context, arg db.CreatePostParams) (db.PostPost, error) {
+	q := &mockQuerier{createPost: func(_ context.Context, arg db.CreatePostParams) (db.PostPost, error) {
 		got = arg
 		return db.PostPost{ID: uuid.New(), AuthorID: arg.AuthorID, Content: arg.Content, Visibility: arg.Visibility}, nil
 	}}
@@ -45,7 +45,7 @@ func TestPostCreate_MapsParamsAndRow(t *testing.T) {
 }
 
 func TestPostGetByID_NoRowsBecomesNotFound(t *testing.T) {
-	q := &fakeQuerier{getPostByID: func(context.Context, uuid.UUID) (db.PostPost, error) {
+	q := &mockQuerier{getPostByID: func(context.Context, uuid.UUID) (db.PostPost, error) {
 		return db.PostPost{}, pgx.ErrNoRows
 	}}
 	r := &PostRepository{queries: q}
@@ -57,7 +57,7 @@ func TestPostGetByID_NoRowsBecomesNotFound(t *testing.T) {
 }
 
 func TestPostUpdate_UniqueViolationBecomesConflict(t *testing.T) {
-	q := &fakeQuerier{updatePost: func(context.Context, db.UpdatePostParams) (db.PostPost, error) {
+	q := &mockQuerier{updatePost: func(context.Context, db.UpdatePostParams) (db.PostPost, error) {
 		return db.PostPost{}, &pgconn.PgError{Code: "23505", ConstraintName: "posts_pkey"}
 	}}
 	r := &PostRepository{queries: q}
@@ -76,7 +76,7 @@ func TestPostUpdate_UniqueViolationBecomesConflict(t *testing.T) {
 }
 
 func TestPostDelete_PropagatesError(t *testing.T) {
-	q := &fakeQuerier{deletePost: func(context.Context, uuid.UUID) error { return errBoom }}
+	q := &mockQuerier{deletePost: func(context.Context, uuid.UUID) error { return errBoom }}
 	r := &PostRepository{queries: q}
 
 	if err := r.Delete(context.Background(), uuid.New()); err == nil {
@@ -92,7 +92,7 @@ func TestGetFollowingPostsWithCursor_PassesCursorAndMapsRows(t *testing.T) {
 	deleted := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
 
 	var got db.GetFollowingPostsWithCursorParams
-	q := &fakeQuerier{getFollowing: func(_ context.Context, arg db.GetFollowingPostsWithCursorParams) ([]db.GetFollowingPostsWithCursorRow, error) {
+	q := &mockQuerier{getFollowingPostsWithCursor: func(_ context.Context, arg db.GetFollowingPostsWithCursorParams) ([]db.GetFollowingPostsWithCursorRow, error) {
 		got = arg
 		return []db.GetFollowingPostsWithCursorRow{
 			{ID: uuid.New(), AuthorID: authorIDs[0], Content: "live", Visibility: "public", LikeCount: 4},
@@ -122,7 +122,7 @@ func TestGetFollowingPostsWithCursor_PassesCursorAndMapsRows(t *testing.T) {
 func TestGetByAuthorWithCursor_PassesVisibilityFilters(t *testing.T) {
 	authorID := uuid.New()
 	var got db.GetUserPostsWithCursorParams
-	q := &fakeQuerier{getUserPosts: func(_ context.Context, arg db.GetUserPostsWithCursorParams) ([]db.PostPost, error) {
+	q := &mockQuerier{getUserPostsWithCursor: func(_ context.Context, arg db.GetUserPostsWithCursorParams) ([]db.PostPost, error) {
 		got = arg
 		return []db.PostPost{{ID: uuid.New(), Visibility: "private"}}, nil
 	}}
@@ -144,7 +144,7 @@ func TestGetDiscoverWithCursor_MapsRows(t *testing.T) {
 	cursorTS := ts(time.Now().UTC())
 	cursorID := uuid.New()
 	var got db.GetDiscoverWithCursorParams
-	q := &fakeQuerier{getDiscover: func(_ context.Context, arg db.GetDiscoverWithCursorParams) ([]db.PostPost, error) {
+	q := &mockQuerier{getDiscoverWithCursor: func(_ context.Context, arg db.GetDiscoverWithCursorParams) ([]db.PostPost, error) {
 		got = arg
 		return []db.PostPost{{ID: uuid.New(), Content: "a"}, {ID: uuid.New(), Content: "b"}}, nil
 	}}
@@ -163,7 +163,7 @@ func TestGetDiscoverWithCursor_MapsRows(t *testing.T) {
 }
 
 func TestGetTrendingPosts_PropagatesError(t *testing.T) {
-	q := &fakeQuerier{getTrending: func(context.Context, int32) ([]db.PostPost, error) {
+	q := &mockQuerier{getTrendingPosts: func(context.Context, int32) ([]db.PostPost, error) {
 		return nil, errBoom
 	}}
 	r := &PostRepository{queries: q}
@@ -197,11 +197,11 @@ func TestGetPostsByIDs_ScansRowsAndMapsDeletedAt(t *testing.T) {
 			return nil
 		}
 	}
-	rows := &fakeRows{scans: []func(...any) error{
+	rows := &mockRows{scans: []func(...any) error{
 		row(id1, "public", pgtype.Timestamptz{}),
 		row(id2, "private", ts(deleted)),
 	}}
-	dbtx := &fakeDBTX{query: func(context.Context, string, ...interface{}) (pgx.Rows, error) { return rows, nil }}
+	dbtx := &mockDBTX{query: func(context.Context, string, ...interface{}) (pgx.Rows, error) { return rows, nil }}
 	r := &PostRepository{dbtx: dbtx}
 
 	posts, err := r.GetPostsByIDs(context.Background(), []uuid.UUID{id1, id2})
@@ -232,7 +232,7 @@ func TestGetPostsByIDs_ScansRowsAndMapsDeletedAt(t *testing.T) {
 }
 
 func TestGetPostsByIDs_QueryErrorIsMapped(t *testing.T) {
-	dbtx := &fakeDBTX{query: func(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	dbtx := &mockDBTX{query: func(context.Context, string, ...interface{}) (pgx.Rows, error) {
 		return nil, errBoom
 	}}
 	r := &PostRepository{dbtx: dbtx}
@@ -243,8 +243,8 @@ func TestGetPostsByIDs_QueryErrorIsMapped(t *testing.T) {
 }
 
 func TestGetPostsByIDs_ScanErrorIsMapped(t *testing.T) {
-	rows := &fakeRows{scans: []func(...any) error{func(...any) error { return errBoom }}}
-	dbtx := &fakeDBTX{query: func(context.Context, string, ...interface{}) (pgx.Rows, error) { return rows, nil }}
+	rows := &mockRows{scans: []func(...any) error{func(...any) error { return errBoom }}}
+	dbtx := &mockDBTX{query: func(context.Context, string, ...interface{}) (pgx.Rows, error) { return rows, nil }}
 	r := &PostRepository{dbtx: dbtx}
 
 	if _, err := r.GetPostsByIDs(context.Background(), []uuid.UUID{uuid.New()}); err == nil {
@@ -255,8 +255,8 @@ func TestGetPostsByIDs_ScanErrorIsMapped(t *testing.T) {
 // A result set that ends early reports the failure through Err, not through Next.
 // Returning the partial page as a success would silently truncate a feed hydration.
 func TestGetPostsByIDs_RowsErrIsReported(t *testing.T) {
-	rows := &fakeRows{err: errBoom}
-	dbtx := &fakeDBTX{query: func(context.Context, string, ...interface{}) (pgx.Rows, error) { return rows, nil }}
+	rows := &mockRows{err: errBoom}
+	dbtx := &mockDBTX{query: func(context.Context, string, ...interface{}) (pgx.Rows, error) { return rows, nil }}
 	r := &PostRepository{dbtx: dbtx}
 
 	if _, err := r.GetPostsByIDs(context.Background(), []uuid.UUID{uuid.New()}); err == nil {
@@ -271,7 +271,7 @@ func TestGetPostsByIDs_RowsErrIsReported(t *testing.T) {
 func TestMentionGetBatch_GroupsByPost(t *testing.T) {
 	postA, postB := uuid.New(), uuid.New()
 	u1, u2, u3 := uuid.New(), uuid.New(), uuid.New()
-	q := &fakeQuerier{mentionsBatch: func(context.Context, []uuid.UUID) ([]db.PostPostMention, error) {
+	q := &mockQuerier{getMentionsBatch: func(context.Context, []uuid.UUID) ([]db.PostPostMention, error) {
 		return []db.PostPostMention{
 			{PostID: postA, UserID: u1},
 			{PostID: postB, UserID: u2},
@@ -294,7 +294,7 @@ func TestMentionGetBatch_GroupsByPost(t *testing.T) {
 
 func TestMentionGetByPost_ReturnsUserIDs(t *testing.T) {
 	u1, u2 := uuid.New(), uuid.New()
-	q := &fakeQuerier{mentionsByPost: func(context.Context, uuid.UUID) ([]db.PostPostMention, error) {
+	q := &mockQuerier{getMentionsByPost: func(context.Context, uuid.UUID) ([]db.PostPostMention, error) {
 		return []db.PostPostMention{{UserID: u1}, {UserID: u2}}, nil
 	}}
 	r := &MentionRepository{queries: q}
@@ -311,7 +311,7 @@ func TestMentionGetByPost_ReturnsUserIDs(t *testing.T) {
 func TestCommentMentionGetBatch_GroupsByComment(t *testing.T) {
 	cmtA, cmtB := uuid.New(), uuid.New()
 	u1, u2 := uuid.New(), uuid.New()
-	q := &fakeQuerier{cmtMentions: func(context.Context, []uuid.UUID) ([]db.PostCommentMention, error) {
+	q := &mockQuerier{getCommentMentionsBatch: func(context.Context, []uuid.UUID) ([]db.PostCommentMention, error) {
 		return []db.PostCommentMention{
 			{CommentID: cmtA, UserID: u1},
 			{CommentID: cmtB, UserID: u2},
@@ -335,7 +335,7 @@ func TestCommentMentionGetBatch_GroupsByComment(t *testing.T) {
 func TestMediaGetByPost_MapsRows(t *testing.T) {
 	postID := uuid.New()
 	created := time.Now().UTC().Truncate(time.Microsecond)
-	q := &fakeQuerier{postMedia: func(context.Context, uuid.UUID) ([]db.PostPostMedium, error) {
+	q := &mockQuerier{getPostMedia: func(context.Context, uuid.UUID) ([]db.PostPostMedium, error) {
 		return []db.PostPostMedium{
 			{ID: uuid.New(), PostID: postID, MediaKey: "k0", MediaType: "image", Position: 0, CreatedAt: ts(created)},
 			{ID: uuid.New(), PostID: postID, MediaKey: "k1", MediaType: "video", Position: 1, CreatedAt: ts(created)},
@@ -358,7 +358,7 @@ func TestMediaGetByPost_MapsRows(t *testing.T) {
 // The empty guard must not reach the database: a `= ANY('{}')` round trip is
 // pure cost, and the caller expects an empty map rather than nil.
 func TestMediaGetByPostsBatch_EmptyIDsSkipsQuery(t *testing.T) {
-	dbtx := &fakeDBTX{query: func(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	dbtx := &mockDBTX{query: func(context.Context, string, ...interface{}) (pgx.Rows, error) {
 		t.Fatal("must not query for an empty id set")
 		return nil, nil
 	}}
@@ -388,10 +388,10 @@ func TestMediaGetByPostsBatch_GroupsByPost(t *testing.T) {
 			return nil
 		}
 	}
-	rows := &fakeRows{scans: []func(...any) error{
+	rows := &mockRows{scans: []func(...any) error{
 		row(postA, "a0", 0), row(postA, "a1", 1), row(postB, "b0", 0),
 	}}
-	dbtx := &fakeDBTX{query: func(context.Context, string, ...interface{}) (pgx.Rows, error) { return rows, nil }}
+	dbtx := &mockDBTX{query: func(context.Context, string, ...interface{}) (pgx.Rows, error) { return rows, nil }}
 	r := &MediaRepository{dbtx: dbtx}
 
 	got, err := r.GetByPostsBatch(context.Background(), []uuid.UUID{postA, postB})
@@ -411,7 +411,7 @@ func TestMediaGetByPostsBatch_GroupsByPost(t *testing.T) {
 
 func TestCommentMediaGetByCommentsBatch_GroupsByComment(t *testing.T) {
 	cmtA, cmtB := uuid.New(), uuid.New()
-	q := &fakeQuerier{cmtMediaBatch: func(context.Context, []uuid.UUID) ([]db.PostCommentMedium, error) {
+	q := &mockQuerier{getCommentMediaBatch: func(context.Context, []uuid.UUID) ([]db.PostCommentMedium, error) {
 		return []db.PostCommentMedium{
 			{ID: uuid.New(), CommentID: cmtA, MediaKey: "a0", Position: 0},
 			{ID: uuid.New(), CommentID: cmtB, MediaKey: "b0", Position: 0},
@@ -438,7 +438,7 @@ func TestCommentMediaGetByCommentsBatch_GroupsByComment(t *testing.T) {
 
 func TestHashtagGetNamesByPostIDs_GroupsByPost(t *testing.T) {
 	postA, postB := uuid.New(), uuid.New()
-	q := &fakeQuerier{hashtagsByIDs: func(context.Context, []uuid.UUID) ([]db.GetHashtagsByPostIDsRow, error) {
+	q := &mockQuerier{getHashtagsByPostIDs: func(context.Context, []uuid.UUID) ([]db.GetHashtagsByPostIDsRow, error) {
 		return []db.GetHashtagsByPostIDsRow{
 			{PostID: postA, Name: "go"},
 			{PostID: postB, Name: "rust"},
@@ -460,7 +460,7 @@ func TestHashtagGetNamesByPostIDs_GroupsByPost(t *testing.T) {
 }
 
 func TestHashtagGetTrending_MapsRows(t *testing.T) {
-	q := &fakeQuerier{trendingTags: func(_ context.Context, limit int32) ([]db.GetTrendingHashtagsRow, error) {
+	q := &mockQuerier{getTrendingHashtags: func(_ context.Context, limit int32) ([]db.GetTrendingHashtagsRow, error) {
 		if limit != 5 {
 			t.Errorf("limit: want 5, got %d", limit)
 		}
@@ -483,7 +483,7 @@ func TestHashtagGetPostsByHashtag_PassesCursorAndMapsRows(t *testing.T) {
 	deleted := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
 
 	var got db.GetPostsByHashtagWithCursorParams
-	q := &fakeQuerier{postsByHashtag: func(_ context.Context, arg db.GetPostsByHashtagWithCursorParams) ([]db.GetPostsByHashtagWithCursorRow, error) {
+	q := &mockQuerier{getPostsByHashtagWithCursor: func(_ context.Context, arg db.GetPostsByHashtagWithCursorParams) ([]db.GetPostsByHashtagWithCursorRow, error) {
 		got = arg
 		return []db.GetPostsByHashtagWithCursorRow{
 			{ID: uuid.New(), Content: "live", Visibility: "public"},
@@ -510,7 +510,7 @@ func TestHashtagGetPostsByHashtag_PassesCursorAndMapsRows(t *testing.T) {
 
 func TestCommentGetReplyCountsBatch_KeysByRootID(t *testing.T) {
 	rootA, rootB := uuid.New(), uuid.New()
-	q := &fakeQuerier{replyCounts: func(context.Context, []uuid.UUID) ([]db.GetReplyCountsBatchRow, error) {
+	q := &mockQuerier{getReplyCountsBatch: func(context.Context, []uuid.UUID) ([]db.GetReplyCountsBatchRow, error) {
 		return []db.GetReplyCountsBatchRow{
 			{RootID: pgtype.UUID{Bytes: rootA, Valid: true}, Count: 3},
 			{RootID: pgtype.UUID{Bytes: rootB, Valid: true}, Count: 0},
@@ -531,7 +531,7 @@ func TestCommentGetReplyCountsBatch_KeysByRootID(t *testing.T) {
 // would attach a top-level comment to every caller that looked up the zero id.
 func TestCommentGetRepliesPreview_SkipsRowsWithNoParent(t *testing.T) {
 	parent := uuid.New()
-	q := &fakeQuerier{repliesPreview: func(_ context.Context, arg db.GetRepliesPreviewParams) ([]db.PostComment, error) {
+	q := &mockQuerier{getRepliesPreview: func(_ context.Context, arg db.GetRepliesPreviewParams) ([]db.PostComment, error) {
 		if arg.Column2 != 3 {
 			t.Errorf("limitPerParent: want 3, got %d", arg.Column2)
 		}
@@ -565,7 +565,7 @@ func TestLikeGetLikedPostIDs_PassesViewerAndIDs(t *testing.T) {
 	userID := uuid.New()
 	liked := uuid.New()
 	var got db.GetLikedPostIDsParams
-	q := &fakeQuerier{likedPostIDs: func(_ context.Context, arg db.GetLikedPostIDsParams) ([]uuid.UUID, error) {
+	q := &mockQuerier{getLikedPostIDs: func(_ context.Context, arg db.GetLikedPostIDsParams) ([]uuid.UUID, error) {
 		got = arg
 		return []uuid.UUID{liked}, nil
 	}}
@@ -584,7 +584,7 @@ func TestLikeGetLikedPostIDs_PassesViewerAndIDs(t *testing.T) {
 }
 
 func TestLikeCount_PropagatesError(t *testing.T) {
-	q := &fakeQuerier{countLikes: func(context.Context, uuid.UUID) (int64, error) { return 0, errBoom }}
+	q := &mockQuerier{countLikes: func(context.Context, uuid.UUID) (int64, error) { return 0, errBoom }}
 	r := &LikeRepository{queries: q}
 
 	n, err := r.Count(context.Background(), uuid.New())
@@ -604,7 +604,7 @@ func TestSearchByQuery_PassesPagingAndMapsRows(t *testing.T) {
 	created := time.Now().UTC().Truncate(time.Microsecond)
 	deleted := created.Add(time.Minute)
 	var got db.SearchPostsParams
-	q := &fakeQuerier{searchPosts: func(_ context.Context, arg db.SearchPostsParams) ([]db.SearchPostsRow, error) {
+	q := &mockQuerier{searchPosts: func(_ context.Context, arg db.SearchPostsParams) ([]db.SearchPostsRow, error) {
 		got = arg
 		return []db.SearchPostsRow{
 			{ID: uuid.New(), Content: "hit", Visibility: "public", LikeCount: 9, CommentCount: 1, CreatedAt: ts(created), UpdatedAt: ts(created)},
@@ -638,7 +638,7 @@ func TestSearchByQuery_PassesPagingAndMapsRows(t *testing.T) {
 }
 
 func TestSearchByQuery_PropagatesError(t *testing.T) {
-	q := &fakeQuerier{searchPosts: func(context.Context, db.SearchPostsParams) ([]db.SearchPostsRow, error) {
+	q := &mockQuerier{searchPosts: func(context.Context, db.SearchPostsParams) ([]db.SearchPostsRow, error) {
 		return nil, errBoom
 	}}
 	r := &PostSearchRepository{queries: q}

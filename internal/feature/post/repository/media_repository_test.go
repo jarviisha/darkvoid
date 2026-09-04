@@ -17,7 +17,7 @@ func TestMediaAdd_PassesAttachmentAndMapsRow(t *testing.T) {
 	postID := uuid.New()
 	created := time.Now().UTC().Truncate(time.Microsecond)
 	var got db.AddPostMediaParams
-	q := &fakeQuerier{addPostMedia: func(_ context.Context, arg db.AddPostMediaParams) (db.PostPostMedium, error) {
+	q := &mockQuerier{addPostMedia: func(_ context.Context, arg db.AddPostMediaParams) (db.PostPostMedium, error) {
 		got = arg
 		return db.PostPostMedium{
 			ID: uuid.New(), PostID: arg.PostID, MediaKey: arg.MediaKey,
@@ -42,7 +42,7 @@ func TestMediaAdd_PassesAttachmentAndMapsRow(t *testing.T) {
 }
 
 func TestMediaAdd_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{addPostMedia: func(context.Context, db.AddPostMediaParams) (db.PostPostMedium, error) {
+	q := &mockQuerier{addPostMedia: func(context.Context, db.AddPostMediaParams) (db.PostPostMedium, error) {
 		return db.PostPostMedium{}, errBoom
 	}}
 	r := &MediaRepository{queries: q}
@@ -57,7 +57,7 @@ func TestMediaAdd_ErrorIsMapped(t *testing.T) {
 func TestMediaDelete_ScopesByPostAsWellAsID(t *testing.T) {
 	mediaID, postID := uuid.New(), uuid.New()
 	var got db.DeletePostMediaParams
-	q := &fakeQuerier{delPostMedia: func(_ context.Context, arg db.DeletePostMediaParams) error {
+	q := &mockQuerier{deletePostMedia: func(_ context.Context, arg db.DeletePostMediaParams) error {
 		got = arg
 		return nil
 	}}
@@ -75,7 +75,7 @@ func TestMediaDelete_ScopesByPostAsWellAsID(t *testing.T) {
 }
 
 func TestMediaDelete_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{delPostMedia: func(context.Context, db.DeletePostMediaParams) error { return errBoom }}
+	q := &mockQuerier{deletePostMedia: func(context.Context, db.DeletePostMediaParams) error { return errBoom }}
 	r := &MediaRepository{queries: q}
 
 	if err := r.Delete(context.Background(), uuid.New(), uuid.New()); err == nil {
@@ -86,7 +86,7 @@ func TestMediaDelete_ErrorIsMapped(t *testing.T) {
 func TestMediaDeleteAllByPost_PassesPostID(t *testing.T) {
 	postID := uuid.New()
 	var got uuid.UUID
-	q := &fakeQuerier{delAllPostMedia: func(_ context.Context, id uuid.UUID) error {
+	q := &mockQuerier{deleteAllPostMedia: func(_ context.Context, id uuid.UUID) error {
 		got = id
 		return nil
 	}}
@@ -101,7 +101,7 @@ func TestMediaDeleteAllByPost_PassesPostID(t *testing.T) {
 }
 
 func TestMediaDeleteAllByPost_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{delAllPostMedia: func(context.Context, uuid.UUID) error { return errBoom }}
+	q := &mockQuerier{deleteAllPostMedia: func(context.Context, uuid.UUID) error { return errBoom }}
 	r := &MediaRepository{queries: q}
 
 	if err := r.DeleteAllByPost(context.Background(), uuid.New()); err == nil {
@@ -110,7 +110,7 @@ func TestMediaDeleteAllByPost_ErrorIsMapped(t *testing.T) {
 }
 
 func TestMediaGetByPost_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{postMedia: func(context.Context, uuid.UUID) ([]db.PostPostMedium, error) {
+	q := &mockQuerier{getPostMedia: func(context.Context, uuid.UUID) ([]db.PostPostMedium, error) {
 		return nil, errBoom
 	}}
 	r := &MediaRepository{queries: q}
@@ -128,7 +128,7 @@ func TestCommentMediaAdd_PassesAttachmentAndMapsRow(t *testing.T) {
 	commentID := uuid.New()
 	created := time.Now().UTC().Truncate(time.Microsecond)
 	var got db.AddCommentMediaParams
-	q := &fakeQuerier{addCmtMedia: func(_ context.Context, arg db.AddCommentMediaParams) (db.PostCommentMedium, error) {
+	q := &mockQuerier{addCommentMedia: func(_ context.Context, arg db.AddCommentMediaParams) (db.PostCommentMedium, error) {
 		got = arg
 		return db.PostCommentMedium{
 			ID: uuid.New(), CommentID: arg.CommentID, MediaKey: arg.MediaKey,
@@ -153,7 +153,7 @@ func TestCommentMediaAdd_PassesAttachmentAndMapsRow(t *testing.T) {
 }
 
 func TestCommentMediaAdd_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{addCmtMedia: func(context.Context, db.AddCommentMediaParams) (db.PostCommentMedium, error) {
+	q := &mockQuerier{addCommentMedia: func(context.Context, db.AddCommentMediaParams) (db.PostCommentMedium, error) {
 		return db.PostCommentMedium{}, errBoom
 	}}
 	r := &CommentMediaRepository{queries: q}
@@ -166,7 +166,7 @@ func TestCommentMediaAdd_ErrorIsMapped(t *testing.T) {
 func TestCommentMediaGetByComment_MapsRowsInOrder(t *testing.T) {
 	commentID := uuid.New()
 	var got uuid.UUID
-	q := &fakeQuerier{cmtMedia: func(_ context.Context, id uuid.UUID) ([]db.PostCommentMedium, error) {
+	q := &mockQuerier{getCommentMedia: func(_ context.Context, id uuid.UUID) ([]db.PostCommentMedium, error) {
 		got = id
 		return []db.PostCommentMedium{
 			{ID: uuid.New(), CommentID: commentID, MediaKey: "k0", MediaType: "image", Position: 0},
@@ -188,7 +188,7 @@ func TestCommentMediaGetByComment_MapsRowsInOrder(t *testing.T) {
 }
 
 func TestCommentMediaGetByComment_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{cmtMedia: func(context.Context, uuid.UUID) ([]db.PostCommentMedium, error) {
+	q := &mockQuerier{getCommentMedia: func(context.Context, uuid.UUID) ([]db.PostCommentMedium, error) {
 		return nil, errBoom
 	}}
 	r := &CommentMediaRepository{queries: q}
@@ -201,7 +201,7 @@ func TestCommentMediaGetByComment_ErrorIsMapped(t *testing.T) {
 func TestCommentMediaDeleteAllByComment_PassesCommentID(t *testing.T) {
 	commentID := uuid.New()
 	var got uuid.UUID
-	q := &fakeQuerier{delAllCmtMedia: func(_ context.Context, id uuid.UUID) error {
+	q := &mockQuerier{deleteAllCommentMedia: func(_ context.Context, id uuid.UUID) error {
 		got = id
 		return nil
 	}}
@@ -216,7 +216,7 @@ func TestCommentMediaDeleteAllByComment_PassesCommentID(t *testing.T) {
 }
 
 func TestCommentMediaDeleteAllByComment_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{delAllCmtMedia: func(context.Context, uuid.UUID) error { return errBoom }}
+	q := &mockQuerier{deleteAllCommentMedia: func(context.Context, uuid.UUID) error { return errBoom }}
 	r := &CommentMediaRepository{queries: q}
 
 	if err := r.DeleteAllByComment(context.Background(), uuid.New()); err == nil {
@@ -225,7 +225,7 @@ func TestCommentMediaDeleteAllByComment_ErrorIsMapped(t *testing.T) {
 }
 
 func TestCommentMediaGetByCommentsBatch_ErrorIsMapped(t *testing.T) {
-	q := &fakeQuerier{cmtMediaBatch: func(context.Context, []uuid.UUID) ([]db.PostCommentMedium, error) {
+	q := &mockQuerier{getCommentMediaBatch: func(context.Context, []uuid.UUID) ([]db.PostCommentMedium, error) {
 		return nil, errBoom
 	}}
 	r := &CommentMediaRepository{queries: q}

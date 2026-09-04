@@ -14,6 +14,6 @@
 // field, so neither is reachable from a test double — those paths are covered
 // against a real Postgres or not at all. That is deliberate: what Toggle
 // actually does is serialize two concurrent callers on an advisory lock, and a
-// fake transaction would assert the shape of the code while proving nothing
+// stand-in transaction would assert the shape of the code while proving nothing
 // about the behaviour the lock exists for.
 package repository
