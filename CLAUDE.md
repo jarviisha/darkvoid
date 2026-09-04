@@ -130,6 +130,20 @@ Three properties are load-bearing:
 
 Validation lives in `entity.FeedSettingsUpdate.Validate` and mirrors the `CHECK`s, so a bad value is a 400 naming the field rather than a 500 naming a constraint. It validates rather than clamps: a silently clamped rollout percent reads back as a number the operator did not type. `decay_exponent` rejects 0 specifically — at 0 the recency term is the same constant for every post, which removes recency from the formula instead of flattening it.
 
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `jarviisha/darkvoid`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, each label string equal to its name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
