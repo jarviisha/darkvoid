@@ -470,15 +470,15 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 			return nil, cleanup, fmt.Errorf("connect redis for codohue events: %w", err)
 		}
 		cleanup = func() {
-			if err := redisClient.Close(); err != nil {
-				log.Printf("  warn close redis: %v", err)
+			if closeErr := redisClient.Close(); closeErr != nil {
+				log.Printf("  warn close redis: %v", closeErr)
 			}
 		}
 
-		codohueClient := codohue.NewClient(cfg.Codohue.BaseURL, cfg.Codohue.NamespaceKey, cfg.Codohue.Namespace, redisClient)
-		if codohueClient == nil {
+		codohueClient, err := codohue.NewClient(cfg.Codohue.BaseURL, cfg.Codohue.NamespaceKey, cfg.Codohue.Namespace, redisClient)
+		if err != nil {
 			cleanup()
-			return nil, func() {}, fmt.Errorf("create codohue client")
+			return nil, func() {}, fmt.Errorf("create codohue client: %w", err)
 		}
 		if err := codohueClient.Ping(ctx); err != nil {
 			cleanup()

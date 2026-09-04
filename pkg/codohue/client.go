@@ -116,14 +116,19 @@ type Client struct {
 // NewClient creates a Codohue client.
 // nsKey is the namespace key returned when the namespace was first created.
 // redisClient may be nil — in that case event publishing is disabled.
-func NewClient(baseURL, nsKey, namespace string, redisClient *pkgredis.Client) *Client {
+//
+// It returns an error rather than a nil client when baseURL is empty, which is
+// what CODOHUE_BASE_URL defaults to. A nil *Client assigned to an interface
+// field reads as present and dereferences on first use, so the caller has to be
+// able to tell construction apart from success.
+func NewClient(baseURL, nsKey, namespace string, redisClient *pkgredis.Client) (*Client, error) {
 	httpClient, err := sdk.New(
 		baseURL,
 		sdk.WithTimeout(5*time.Second),
 		sdk.WithRetries(2),
 	)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	var producer *redistream.Producer
@@ -137,7 +142,7 @@ func NewClient(baseURL, nsKey, namespace string, redisClient *pkgredis.Client) *
 		namespace: namespace,
 		producer:  producer,
 		breaker:   newBreaker(),
-	}
+	}, nil
 }
 
 // Ping checks whether the Codohue service is reachable via the official SDK.

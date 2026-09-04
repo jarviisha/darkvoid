@@ -78,9 +78,9 @@ func cmdReindex(args []string) error {
 	hashtags := postrepo.NewHashtagRepository(d.pool)
 
 	// Redis is nil: this pushes index entries, never behavior events.
-	client := codohue.NewClient(cfg.Codohue.BaseURL, cfg.Codohue.NamespaceKey, cfg.Codohue.Namespace, nil)
-	if client == nil {
-		return fmt.Errorf("could not build a codohue client for %q", cfg.Codohue.BaseURL)
+	client, err := codohue.NewClient(cfg.Codohue.BaseURL, cfg.Codohue.NamespaceKey, cfg.Codohue.Namespace, nil)
+	if err != nil {
+		return fmt.Errorf("could not build a codohue client for %q: %w", cfg.Codohue.BaseURL, err)
 	}
 
 	// Fail before walking the corpus rather than after a few hundred failures.

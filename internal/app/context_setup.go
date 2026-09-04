@@ -10,11 +10,20 @@ func (app *Application) setupContexts(ctx context.Context) error {
 		return err
 	}
 
+	// The feed cache and the feed outbox come first because they need nothing
+	// from any context — Redis and the pool respectively — while the follow
+	// service and the post services all depend on them.
+	feedCache, feedOutbox := app.setupFeedInfra()
+
 	app.setupUserContext(store, mail)
 	app.wireMailDependencies(mail)
 	app.setupStorageContext(store)
-	app.setupPostContext(store)
-	if err := app.ensureCodohueNamespaceConfig(ctx); err != nil {
+
+	// Notification before Post: it reads the user repository and nothing else,
+	// while four post services take its emitter.
+	app.setupNotificationContext(store)
+
+	if provErr := app.ensureCodohueNamespaceConfig(ctx); provErr != nil {
 		// Codohue is an auxiliary recommender: a provisioning failure must not
 		// take the API down.
 		//
@@ -26,17 +35,27 @@ func (app *Application) setupContexts(ctx context.Context) error {
 		if app.cfg.Codohue.NamespaceKey != "" {
 			app.log.Error("codohue provisioning failed, serving degraded with the configured namespace key",
 				"base_url", app.cfg.Codohue.BaseURL,
-				"error", err,
+				"error", provErr,
 			)
 		} else {
 			app.log.Error("codohue provisioning failed and no namespace key is configured, disabling codohue",
 				"base_url", app.cfg.Codohue.BaseURL,
-				"error", err,
+				"error", provErr,
 			)
 			app.cfg.Codohue.Enabled = false
 		}
 	}
-	codohueClient := app.setupFeedContext(store)
+
+	// After provisioning, which is what fills in cfg.Codohue.NamespaceKey, and
+	// before Post, whose services ingest into the catalog with this same client.
+	codohueClient, err := app.setupCodohueClient()
+	if err != nil {
+		return err
+	}
+
+	app.setupPostContext(store)
+	app.wireNotificationDependencies()
+	app.setupFeedContext(store, feedCache, feedOutbox, codohueClient)
 	app.wireFeedDependencies()
 	// After the feed context: the settings context owns the feed's runtime knobs,
 	// so it needs the holder the feed just built. Before the server serves, so the
@@ -44,8 +63,6 @@ func (app *Application) setupContexts(ctx context.Context) error {
 	app.setupSettingsContext()
 	app.wireSettings()
 	app.wireCodohue(ctx, codohueClient)
-	app.setupNotificationContext(store)
-	app.wireNotificationDependencies()
 	app.setupSearchContext(store)
 	app.setupAdminContext(store)
 

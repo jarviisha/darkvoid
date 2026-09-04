@@ -1,7 +1,6 @@
 package app
 
 import (
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	feedcache "github.com/jarviisha/darkvoid/internal/feature/feed/cache"
 	feedhandler "github.com/jarviisha/darkvoid/internal/feature/feed/handler"
@@ -39,31 +38,27 @@ type FeedPorts struct {
 
 // SetupFeedContext initializes the Feed context with all required dependencies.
 // It accepts only the minimal reader ports the feed context actually needs.
-// redisClient is required and must be non-nil; the feed cache and the
-// materialized timeline both live in it.
+// redisClient is required and must be non-nil; the materialized timeline lives
+// in it.
 //
-// eventsRedisClient is the Redis carrying the codohue:events stream, which is not
-// always redisClient: Codohue's consumer reads that stream from whichever instance
-// Codohue owns. Keeping it a separate parameter is what lets the cache, the
-// timeline store, and the notification pub/sub stay on our own Redis while only
-// the event producer reaches into Codohue's. May be nil, which disables event
-// publishing but leaves the rest of the integration working.
+// cache and outbox are built by the caller: they need nothing from this context
+// (Redis and the pool respectively), and the follow and post services take them
+// as dependencies while being constructed first.
 //
-// Returns the FeedContext and a *codohue.Client (nil when Codohue is disabled) so
-// the caller (app.go) can wire Codohue into other contexts.
+// codohueClient is built by the caller, not here: the post services need the
+// same client and are constructed first. Nil means the integration is off, and
+// the recommender and trending fetcher are simply not wired.
 func SetupFeedContext(
-	pool *pgxpool.Pool,
 	store storage.Storage,
 	postReader feed.PostReader,
 	followReader feed.FollowGraphReader,
 	likeReader feed.LikeReader,
 	redisClient *pkgredis.Client,
-	eventsRedisClient *pkgredis.Client,
+	cache feedcache.FeedCache,
+	outbox *feed.PostgresOutbox,
+	codohueClient *codohue.Client,
 	feedFanoutCfg config.FeedFanoutConfig,
-	cohodueCfg config.CodohueConfig,
-) (*FeedContext, *codohue.Client) {
-	fc := feedcache.NewRedisFeedCache(redisClient)
-
+) *FeedContext {
 	// One settings holder shared by the read path, the ranker, the timeline
 	// store, the background refresher and the dispatcher's write-time score, so
 	// all five stay on the same numbers and an operator's edit reaches them
@@ -71,7 +66,7 @@ func SetupFeedContext(
 	// them with the stored row during wiring, before the server starts serving.
 	settings := feed.NewSettings(feed.DefaultRuntimeSettings())
 	ranker := feed.NewLocalRanker(settings)
-	feedSvc := feedservice.NewFeedService(postReader, followReader, likeReader, ranker, fc)
+	feedSvc := feedservice.NewFeedService(postReader, followReader, likeReader, ranker, cache)
 	timelineStore := feedcache.NewRedisTimelineStore(redisClient, settings)
 	feedSvc.WithTimelineStore(timelineStore)
 	feedSvc.WithSettings(settings)
@@ -84,14 +79,11 @@ func SetupFeedContext(
 	// and a channel here, so a stored value could not take effect without
 	// rebuilding the dispatcher. See migrations/settings/000002.
 	dispatcher := feed.NewEventDispatcher(settings, feedFanoutCfg.Workers, feedFanoutCfg.QueueSize, fanoutWorker)
-	outbox := feed.NewPostgresOutbox(pool)
 	dispatcher.WithOutbox(outbox)
 
-	// Wire Codohue recommender and trending fetcher into the feed service when enabled.
-	// Wiring Codohue into other contexts (post services) is the caller's responsibility.
-	var codohueClient *codohue.Client
-	if cohodueCfg.Enabled {
-		codohueClient = codohue.NewClient(cohodueCfg.BaseURL, cohodueCfg.NamespaceKey, cohodueCfg.Namespace, eventsRedisClient)
+	// Wiring Codohue into other contexts (post services) is the caller's
+	// responsibility.
+	if codohueClient != nil {
 		feedSvc.WithRecommender(codohueClient)
 		feedSvc.WithTrendingFetcher(codohueClient)
 	}
@@ -102,10 +94,10 @@ func SetupFeedContext(
 		feedService: feedSvc,
 		dispatcher:  dispatcher,
 		feedHandler: feedHdlr,
-		cache:       fc,
+		cache:       cache,
 		settings:    settings,
 		outbox:      outbox,
-	}, codohueClient
+	}
 }
 
 func (ctx *FeedContext) Ports() FeedPorts {

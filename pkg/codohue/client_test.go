@@ -84,9 +84,9 @@ func TestDeleteObject_CountsIndexErrors(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, "key", "ns", nil)
-	if client == nil {
-		t.Fatal("NewClient returned nil")
+	client, err := NewClient(server.URL, "key", "ns", nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
 	}
 
 	before := SnapshotMetrics().IndexErrors
@@ -110,13 +110,13 @@ func TestGetRecommendations_SlowProviderFailsFast(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, "key", "ns", nil)
-	if client == nil {
-		t.Fatal("NewClient returned nil")
+	client, err := NewClient(server.URL, "key", "ns", nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
 	}
 
 	start := time.Now()
-	_, err := client.GetRecommendations(context.Background(), "user-1", 20, 0)
+	_, err = client.GetRecommendations(context.Background(), "user-1", 20, 0)
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected timeout error from a hanging provider")
@@ -167,9 +167,9 @@ func TestRank_PropagatesScoredFlag(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, "key", "ns", nil)
-	if client == nil {
-		t.Fatal("NewClient returned nil")
+	client, err := NewClient(server.URL, "key", "ns", nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
 	}
 
 	ranked, err := client.Rank(context.Background(), "user-1", []string{"post-1", "post-2", "post-3"})
@@ -206,5 +206,23 @@ func TestTrendingPageFromResponse_MapsPaginatedItems(t *testing.T) {
 	}
 	if len(page.Items) != 1 || page.Items[0].ObjectID != "post-2" || page.Items[0].Score != 12.5 || page.Items[0].Rank != 6 {
 		t.Fatalf("item mismatch: %+v", page.Items)
+	}
+}
+
+// TestNewClient_EmptyBaseURLIsAnError pins the one way client construction can
+// fail. CODOHUE_BASE_URL defaults to "" and Config.Validate never checks it, so
+// enabling Codohue without naming a URL is a plausible misconfiguration. Handing
+// back a nil *Client for it is worse than useless: the caller stores it in a
+// feed.Recommender field, which makes a non-nil interface holding a nil pointer,
+// and the first feed request dereferences the breaker. A caller can only refuse
+// to boot on this if it is told about it.
+func TestNewClient_EmptyBaseURLIsAnError(t *testing.T) {
+	client, err := NewClient("", "key", "ns", nil)
+
+	if err == nil {
+		t.Fatal(`NewClient("") returned a nil error — want an error naming the missing base URL`)
+	}
+	if client != nil {
+		t.Fatalf(`NewClient("") returned client %v — want nil alongside the error`, client)
 	}
 }
