@@ -4,7 +4,7 @@
 
 Three defects surfaced while smoke-testing a boot-order change on `main` (`17b79f2`). None was introduced by that change; all three predate it and each was reproduced directly. All three are now fixed.
 
-SM-04 was found afterwards, while verifying the SM-01 fix end-to-end, and is open. It is only visible on a rebuild, which is why it had not been seen: `make docker-up` reuses an existing image rather than rebuilding, and the image on the development machine was five weeks old.
+SM-04 was found afterwards, while verifying the SM-01 fix end-to-end. SM-05 was found while fixing SM-04. It is only visible on a rebuild, which is why it had not been seen: `make docker-up` reuses an existing image rather than rebuilding, and the image on the development machine was five weeks old.
 
 SM-02 and SM-03 were the same shape as each other: a real failure the system reported as health. SM-01 turned out to be narrower than first written up — see the correction in its entry.
 
@@ -15,7 +15,8 @@ SM-02 and SM-03 were the same shape as each other: a real failure the system rep
 | SM-01 | Resolved | High | `make docker-up` cannot complete on a fresh volume: the guarded bot migration blocks the chain and dirties the database |
 | SM-02 | Resolved | Medium | Missing module migrations leave `/health` reporting `healthy` |
 | SM-03 | Resolved | Medium | Fatal boot errors are logged at `INFO` |
-| SM-04 | Open | Medium | An uploads volume created before the non-root image cannot be written by it, and the app refuses to boot |
+| SM-04 | Resolved | Medium | An uploads volume created before the non-root image cannot be written by it, and the app refuses to boot |
+| SM-05 | Resolved | Low | The golangci-lint exclusions block sat at the wrong nesting level and was silently ignored |
 
 ## Scope and method
 
@@ -151,10 +152,20 @@ The process does exit `1`, so orchestrators still see the failure.
 
 ---
 
-## SM-04: An uploads volume predating the non-root image blocks boot
+## SM-04: An uploads volume predating the non-root image blocks boot — Resolved
 
 **Severity:** Medium
 **Class:** Operations / upgrade hazard
+
+> Fixed on three fronts, because the failure had three separate causes.
+>
+> The message now names the owner instead of the path: `pkg/storage` reports which uid owns the directory, which uid the process runs as, and the `chown` that reconciles them — and distinguishes that from a directory the process already owns whose mode denies the write, where recommending a chown would be advice that cannot work.
+>
+> The `Dockerfile` pins `uid 100` / `gid 101` rather than letting `adduser -S` allocate whatever is free, because a runbook that hard-codes the numbers and an image that allocates them will drift. They are the values already in use, so no existing volume needs a second chown. `scripts/ci/container_user_test.sh` fails if the Dockerfile and the runbook ever disagree.
+>
+> `docs/uploads-volume-ownership-runbook.md` carries the remedy, since the container cannot perform it.
+>
+> And `make docker-rebuild` was added: `make docker-up` starts whatever image already exists, which is why this went unseen for five weeks and why a `/health` body read earlier in this session was missing fields the source had long had.
 
 ### Evidence
 
@@ -189,3 +200,35 @@ drwxr-x---    2 0        0             4096 Apr 28 07:21 avatars
 - Pin the uid/gid in the `Dockerfile` explicitly rather than letting `adduser -S` allocate them, so the runbook command cannot drift from the image.
 - Consider having the storage probe distinguish "directory not writable by this user" from other failures and say what owns it, so the error names the cause rather than the symptom.
 - Separately: `make docker-up` never rebuilds. A target that does, or a note in `CLAUDE.md`, would stop a stale image from being mistaken for the current source — this finding, and the misleading `/health` body observed just before it, were both that.
+
+---
+
+## SM-05: The lint exclusions were silently ignored — Resolved
+
+**Severity:** Low
+**Class:** Tooling / silent misconfiguration
+
+### Evidence
+
+`.golangci.yml` carried an `exclusions` block at the top level, holding the sqlc-generated-file exclusion and three test-file rules. golangci-lint v2 expects it under `linters:`. The running binary accepted the file anyway:
+
+```
+$ golangci-lint config verify
+jsonschema: "" does not validate with "/additionalProperties": additional properties 'exclusions' not allowed
+jsonschema: "output.formats.text" does not validate with ...: additional properties 'color' not allowed
+```
+
+while `golangci-lint run` — what `make lint` and CI invoke — reported no complaint about the configuration at all. The block was inert: every exclusion in it, including `internal/feature/.*/db/.*\.go`, had no effect.
+
+Surfaced by a new test that legitimately chmods a directory to `0500`: gosec flagged it under `G302` despite the `.*_test\.go` exclusion that should have covered it.
+
+### Impact
+
+- Generated sqlc code and every test file were being linted with the full rule set. Nothing failed, so the repo passed — but the configuration and the enforcement had disagreed for as long as the file has been in this shape, and the first genuinely-excluded case would have looked like a real finding.
+- `make lint` gates commits and CI (`aff9168`). A configuration it cannot validate is one nobody is checking.
+
+### Recommendation
+
+- Applied: the block now nests under `linters:`, and `output.formats.text.color` is the correct `colors`. `golangci-lint config verify` exits 0.
+- Consider adding `golangci-lint config verify` to `make lint` or to CI. An invalid configuration that `run` tolerates is exactly the kind of thing that stays wrong until something unrelated trips over it — which is how this was found.
+- Worth a decision separately: with the exclusions now live, test files are no longer linted. They have in fact been passing the full rule set all along, so keeping them in scope is an option the original config did not intend but the evidence supports.

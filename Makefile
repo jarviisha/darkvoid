@@ -4,8 +4,8 @@ SHELL := /bin/bash
 .PHONY: help \
 	sqlc-generate sqlc-clean swagger-init swagger-generate swagger-serve generate \
 	build run dev ctl clean \
-	test test-v test-cover test-cover-html test-feature test-ops test-backup test-storage-migration test-deployment-defaults test-production-images test-migration-gates test-destructive-migration-policy lint deps \
-	docker-up docker-up-app docker-seed docker-seed-reset \
+	test test-v test-cover test-cover-html test-feature test-ops test-backup test-storage-migration test-deployment-defaults test-production-images test-migration-gates test-destructive-migration-policy test-container-user lint deps \
+	docker-up docker-rebuild docker-up-app docker-seed docker-seed-reset \
 	docker-down docker-down-app docker-logs docker-logs-app \
 	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-up-bot migrate-up-settings migrate-down-notification migrate-create migrate-status migrate-force \
 	db-reset install-tools install-lint
@@ -144,7 +144,7 @@ clean: ## Clean build artifacts
 test: test-ops ## Run all tests
 	$(GO) test ./...
 
-test-ops: test-backup test-storage-migration test-deployment-defaults test-production-images test-migration-gates test-destructive-migration-policy ## Validate production operation contracts
+test-ops: test-backup test-storage-migration test-deployment-defaults test-production-images test-migration-gates test-destructive-migration-policy test-container-user ## Validate production operation contracts
 
 test-backup: ## Validate the production backup scheduler
 	bash -n scripts/backup/postgres-restic.sh
@@ -166,6 +166,9 @@ test-migration-gates: ## Validate destructive migration isolation and approval
 
 test-destructive-migration-policy: ## Ensure normal deploy cannot retire bot schema
 	bash scripts/ci/destructive_migration_policy_test.sh
+
+test-container-user: ## Pin the runtime uid/gid the uploads volume depends on
+	bash scripts/ci/container_user_test.sh
 
 test-v: ## Run all tests with verbose output
 	$(GO) test -v ./...
@@ -191,8 +194,11 @@ deps: ## Download and tidy Go dependencies
 	$(GO) mod download
 	$(GO) mod tidy
 
-docker-up: ## Start Docker containers (PostgreSQL, Redis, app)
+docker-up: ## Start Docker containers (PostgreSQL, Redis, app) — reuses the existing app image; see docker-rebuild
 	$(DOCKER_COMPOSE) up -d
+
+docker-rebuild: ## Rebuild the app image from the working tree and restart it
+	$(DOCKER_COMPOSE) up -d --build app
 
 docker-up-app: ## Start only the app container and connect to external/local infra
 	$(DOCKER_COMPOSE) up -d app-external

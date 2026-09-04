@@ -91,3 +91,60 @@ func TestLocalHealthCheck_ProbeIsHiddenAndRemoved(t *testing.T) {
 		t.Fatalf("upload directory holds %d entries after the probe, want 0", len(entries))
 	}
 }
+
+// TestOwnershipMessage_MismatchNamesTheOwnerAndTheRemedy covers the upgrade
+// hazard this message exists for, using literals because the filesystem cannot
+// produce it here: a directory owned by root can only be created by root.
+//
+// A Docker named volume takes its ownership from the image that first populated
+// it, so an uploads volume created before this image ran unprivileged is owned
+// by root, the boot is refused, and "permission denied" points at the path when
+// the answer is the owner.
+func TestOwnershipMessage_MismatchNamesTheOwnerAndTheRemedy(t *testing.T) {
+	msg := ownershipMessage("/app/uploads", 0, 0, 0o755, 100, 101)
+
+	for _, want := range []string{
+		"owned by uid 0 gid 0", // who holds it
+		"uid 100 gid 101",      // who this process is
+		"chown -R 100:101",     // what someone outside has to run
+		"outside the container",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q does not mention %q", msg, want)
+		}
+	}
+}
+
+// TestLocalHealthCheck_OwnedButUnwritableBlamesTheMode separates the two ways
+// this probe fails. When the directory already belongs to this process, the
+// owner is not the story and chowning it to the uid it already has is advice
+// that cannot work — the mode is what denies the write.
+func TestLocalHealthCheck_OwnedButUnwritableBlamesTheMode(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the permission bits this test depends on")
+	}
+
+	dir := t.TempDir() // owned by this process
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	store, err := NewLocal(dir, "http://localhost:8080/static")
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+
+	err = store.(HealthChecker).HealthCheck(context.Background())
+	if err == nil {
+		t.Fatal("HealthCheck on a read-only directory returned nil")
+	}
+
+	msg := err.Error()
+	if strings.Contains(msg, "chown") {
+		t.Errorf("error %q recommends chown, but the directory already belongs to this process", msg)
+	}
+	if !strings.Contains(msg, "mode") {
+		t.Errorf("error %q does not name the mode as the cause", msg)
+	}
+}

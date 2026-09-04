@@ -20,9 +20,17 @@ FROM ${RUNTIME_IMAGE}
 
 WORKDIR /app
 
+# The uid and gid are pinned rather than left to adduser -S, which allocates
+# whatever system id happens to be free in the base image. A Docker named volume
+# takes its ownership from the image that first populated it, so the uploads
+# volume on every existing deployment is owned by these exact numbers; letting a
+# base image bump shift them would make the app unable to write its own uploads.
+# 100:101 are the values adduser -S allocated when the unprivileged user was
+# introduced, so pinning them changes nothing for volumes already in use.
+# docs/uploads-volume-ownership-runbook.md depends on them too.
 RUN apk add --no-cache ca-certificates tzdata wget \
-	&& addgroup -S darkvoid \
-	&& adduser -S -G darkvoid -h /app darkvoid \
+	&& addgroup -S -g 101 darkvoid \
+	&& adduser -S -u 100 -G darkvoid -h /app darkvoid \
 	&& mkdir -p /app/uploads \
 	&& chown -R darkvoid:darkvoid /app
 

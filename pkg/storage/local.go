@@ -2,11 +2,14 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // healthProbePrefix names the file HealthCheck writes into the upload
@@ -91,6 +94,9 @@ func (l *localStorage) URL(key string) string {
 func (l *localStorage) HealthCheck(_ context.Context) error {
 	f, err := os.CreateTemp(l.dir, healthProbePrefix+"*")
 	if err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf("storage/local: %s: %w", l.ownershipHint(), err)
+		}
 		return fmt.Errorf("storage/local: create health probe in %q: %w", l.dir, err)
 	}
 	name := f.Name()
@@ -102,4 +108,49 @@ func (l *localStorage) HealthCheck(_ context.Context) error {
 		return fmt.Errorf("storage/local: remove health probe %q: %w", name, err)
 	}
 	return nil
+}
+
+// ownershipHint explains a permission failure in terms of who owns the
+// directory and who this process is.
+func (l *localStorage) ownershipHint() string {
+	uid, gid := os.Geteuid(), os.Getegid()
+
+	info, err := os.Stat(l.dir)
+	if err != nil {
+		return fmt.Sprintf("cannot write to %q as uid %d gid %d", l.dir, uid, gid)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Sprintf("cannot write to %q as uid %d gid %d", l.dir, uid, gid)
+	}
+
+	return ownershipMessage(l.dir, stat.Uid, stat.Gid, info.Mode().Perm(), uid, gid)
+}
+
+// ownershipMessage is separated from the stat so both of its branches can be
+// exercised. The mismatch branch is the one that matters and the one a test
+// cannot reach through the filesystem: reproducing it needs a directory owned by
+// another user, which the unprivileged process running the tests cannot create.
+//
+// A Docker named volume takes its ownership from the image that first populated
+// it, so an uploads volume created before this image ran unprivileged is owned
+// by root and unwritable here. "permission denied" alone sends the reader
+// looking at the path; the owner is the answer. The remedy is spelled out
+// because this process cannot perform it — chowning the volume is exactly what
+// an unprivileged container cannot do to itself.
+func ownershipMessage(dir string, owner, group uint32, mode fs.FileMode, uid, gid int) string {
+	if int(owner) == uid {
+		// Ownership is already right, so chowning it to the uid it has would
+		// change nothing. The mode is what refuses the write.
+		return fmt.Sprintf(
+			"cannot write to %q: it is owned by this process (uid %d) but its mode is %v",
+			dir, uid, mode,
+		)
+	}
+
+	return fmt.Sprintf(
+		"cannot write to %q: it is owned by uid %d gid %d and this process runs as uid %d gid %d; "+
+			"a volume created by an image that ran as root needs `chown -R %d:%d` from outside the container",
+		dir, owner, group, uid, gid, uid, gid,
+	)
 }
