@@ -13,7 +13,7 @@ import (
 )
 
 type PostRepository struct {
-	queries *db.Queries
+	queries db.Querier
 	dbtx    db.DBTX // underlying connection for raw queries not expressible via sqlc
 }
 
@@ -23,7 +23,7 @@ func NewPostRepository(pool *pgxpool.Pool) *PostRepository {
 
 // WithTx returns a new PostRepository that executes queries within the given transaction.
 func (r *PostRepository) WithTx(tx pgx.Tx) *PostRepository {
-	return &PostRepository{queries: r.queries.WithTx(tx), dbtx: tx}
+	return &PostRepository{queries: db.New(tx), dbtx: tx}
 }
 
 func (r *PostRepository) Create(ctx context.Context, authorID uuid.UUID, content string, visibility entity.Visibility) (*entity.Post, error) {

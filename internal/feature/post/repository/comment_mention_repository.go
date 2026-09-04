@@ -11,7 +11,7 @@ import (
 
 // CommentMentionRepository handles persistence of comment mentions.
 type CommentMentionRepository struct {
-	queries *db.Queries
+	queries db.Querier
 }
 
 // NewCommentMentionRepository creates a new CommentMentionRepository.

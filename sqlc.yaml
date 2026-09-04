@@ -37,6 +37,7 @@ sql:
       - "internal/feature/post/sql/comment_mention_queries.sql"
       - "internal/feature/post/sql/hashtag_queries.sql"
       - "internal/feature/post/sql/mention_queries.sql"
+      - "internal/feature/post/sql/search_queries.sql"
     schema:
       - "migrations/user/*.up.sql"
       - "migrations/post/*.up.sql"

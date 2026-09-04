@@ -80,6 +80,8 @@ type Querier interface {
 	// Like Queries
 	LockPostLike(ctx context.Context, arg LockPostLikeParams) error
 	SearchHashtagsByPrefix(ctx context.Context, arg SearchHashtagsByPrefixParams) ([]string, error)
+	// SearchPosts performs a full-text search over public posts using tsvector.
+	SearchPosts(ctx context.Context, arg SearchPostsParams) ([]SearchPostsRow, error)
 	UnlikeComment(ctx context.Context, arg UnlikeCommentParams) error
 	UnlikePost(ctx context.Context, arg UnlikePostParams) error
 	UpdatePost(ctx context.Context, arg UpdatePostParams) (PostPost, error)

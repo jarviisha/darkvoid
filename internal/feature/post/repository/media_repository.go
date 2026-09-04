@@ -12,7 +12,7 @@ import (
 )
 
 type MediaRepository struct {
-	queries *db.Queries
+	queries db.Querier
 	dbtx    db.DBTX
 }
 
@@ -22,7 +22,7 @@ func NewMediaRepository(pool *pgxpool.Pool) *MediaRepository {
 
 // WithTx returns a new MediaRepository that executes queries within the given transaction.
 func (r *MediaRepository) WithTx(tx pgx.Tx) *MediaRepository {
-	return &MediaRepository{queries: r.queries.WithTx(tx), dbtx: tx}
+	return &MediaRepository{queries: db.New(tx), dbtx: tx}
 }
 
 func (r *MediaRepository) Add(ctx context.Context, postID uuid.UUID, mediaKey, mediaType string, position int32) (*entity.PostMedia, error) {

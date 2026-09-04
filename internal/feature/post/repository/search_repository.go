@@ -11,7 +11,7 @@ import (
 
 // PostSearchRepository queries posts by full-text search.
 type PostSearchRepository struct {
-	queries *db.Queries
+	queries db.Querier
 }
 
 // NewPostSearchRepository creates a new PostSearchRepository.
@@ -29,9 +29,27 @@ func (r *PostSearchRepository) SearchByQuery(ctx context.Context, query string, 
 	if err != nil {
 		return nil, database.MapDBError(err)
 	}
-	posts := make([]*entity.Post, 0, len(rows))
-	for _, row := range rows {
-		posts = append(posts, rowToPost(row))
+	return searchRowsToPosts(rows), nil
+}
+
+func searchRowsToPosts(rows []db.SearchPostsRow) []*entity.Post {
+	result := make([]*entity.Post, len(rows))
+	for i, row := range rows {
+		p := &entity.Post{
+			ID:           row.ID,
+			AuthorID:     row.AuthorID,
+			Content:      row.Content,
+			Visibility:   entity.Visibility(row.Visibility),
+			LikeCount:    row.LikeCount,
+			CommentCount: row.CommentCount,
+			CreatedAt:    row.CreatedAt.Time,
+			UpdatedAt:    row.UpdatedAt.Time,
+		}
+		if row.DeletedAt.Valid {
+			t := row.DeletedAt.Time
+			p.DeletedAt = &t
+		}
+		result[i] = p
 	}
-	return posts, nil
+	return result
 }

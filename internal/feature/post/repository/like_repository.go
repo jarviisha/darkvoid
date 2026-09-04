@@ -11,7 +11,7 @@ import (
 
 type LikeRepository struct {
 	pool    *pgxpool.Pool
-	queries *db.Queries
+	queries db.Querier
 }
 
 func NewLikeRepository(pool *pgxpool.Pool) *LikeRepository {

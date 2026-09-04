@@ -13,7 +13,7 @@ import (
 
 // CommentMediaRepository handles DB access for comment media attachments.
 type CommentMediaRepository struct {
-	queries *db.Queries
+	queries db.Querier
 }
 
 // NewCommentMediaRepository creates a new CommentMediaRepository.
@@ -23,7 +23,7 @@ func NewCommentMediaRepository(pool *pgxpool.Pool) *CommentMediaRepository {
 
 // WithTx returns a new CommentMediaRepository that executes queries within the given transaction.
 func (r *CommentMediaRepository) WithTx(tx pgx.Tx) *CommentMediaRepository {
-	return &CommentMediaRepository{queries: r.queries.WithTx(tx)}
+	return &CommentMediaRepository{queries: db.New(tx)}
 }
 
 // Add inserts a media attachment for a comment.

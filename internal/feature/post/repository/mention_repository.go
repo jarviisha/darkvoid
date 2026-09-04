@@ -12,7 +12,7 @@ import (
 
 // MentionRepository handles persistence of post mentions.
 type MentionRepository struct {
-	queries *db.Queries
+	queries db.Querier
 }
 
 // NewMentionRepository creates a new MentionRepository.
@@ -22,7 +22,7 @@ func NewMentionRepository(pool *pgxpool.Pool) *MentionRepository {
 
 // WithTx returns a transaction-scoped repository.
 func (r *MentionRepository) WithTx(tx pgx.Tx) *MentionRepository {
-	return &MentionRepository{queries: r.queries.WithTx(tx)}
+	return &MentionRepository{queries: db.New(tx)}
 }
 
 // Insert adds a mention row, ignoring duplicates.

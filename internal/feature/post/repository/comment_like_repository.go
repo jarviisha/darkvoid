@@ -12,7 +12,7 @@ import (
 // CommentLikeRepository handles DB access for comment likes.
 type CommentLikeRepository struct {
 	pool    *pgxpool.Pool
-	queries *db.Queries
+	queries db.Querier
 }
 
 // NewCommentLikeRepository creates a new CommentLikeRepository.

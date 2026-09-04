@@ -13,7 +13,7 @@ import (
 )
 
 type CommentRepository struct {
-	queries *db.Queries
+	queries db.Querier
 }
 
 func NewCommentRepository(pool *pgxpool.Pool) *CommentRepository {
@@ -22,7 +22,7 @@ func NewCommentRepository(pool *pgxpool.Pool) *CommentRepository {
 
 // WithTx returns a new CommentRepository that executes queries within the given transaction.
 func (r *CommentRepository) WithTx(tx pgx.Tx) *CommentRepository {
-	return &CommentRepository{queries: r.queries.WithTx(tx)}
+	return &CommentRepository{queries: db.New(tx)}
 }
 
 func (r *CommentRepository) Create(ctx context.Context, postID, authorID uuid.UUID, parentID *uuid.UUID, content string) (*entity.Comment, error) {

@@ -14,7 +14,7 @@ import (
 
 // HashtagRepository handles DB operations for hashtags.
 type HashtagRepository struct {
-	queries *db.Queries
+	queries db.Querier
 	dbtx    db.DBTX       // underlying connection: pool (standalone) or tx (tx-scoped)
 	pool    *pgxpool.Pool // nil when this instance is tx-scoped via WithTx
 }
@@ -29,7 +29,7 @@ func NewHashtagRepository(pool *pgxpool.Pool) *HashtagRepository {
 // opening a new one.
 func (r *HashtagRepository) WithTx(tx pgx.Tx) *HashtagRepository {
 	return &HashtagRepository{
-		queries: r.queries.WithTx(tx),
+		queries: db.New(tx),
 		dbtx:    tx,
 		pool:    nil, // nil signals: already inside an outer transaction
 	}
@@ -76,7 +76,7 @@ func (r *HashtagRepository) ReplaceForPost(ctx context.Context, postID uuid.UUID
 		return database.MapDBError(err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	if err := database.MapDBError(r.queries.WithTx(tx).DeletePostHashtags(ctx, postID)); err != nil {
+	if err := database.MapDBError(db.New(tx).DeletePostHashtags(ctx, postID)); err != nil {
 		return err
 	}
 	if len(names) > 0 {
