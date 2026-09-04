@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -55,7 +56,16 @@ type UserPorts struct {
 // cookieCfg supplies the refresh token cookie's Secure, SameSite and Domain
 // attributes; Validate has already rejected any combination a browser would
 // refuse, so the translation below can be a plain mapping.
-func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage.Storage, refreshTokenExpiry time.Duration, cookieCfg config.CookieConfig, mail *mailInfra) *UserContext {
+func SetupUserContext(
+	pool *pgxpool.Pool,
+	jwtService *jwt.Service,
+	store storage.Storage,
+	refreshTokenExpiry time.Duration,
+	cookieCfg config.CookieConfig,
+	mail *mailInfra,
+	feedInvalidator service.FeedInvalidator,
+	feedOutbox service.FollowFeedEventOutbox,
+) (*UserContext, error) {
 	// Repositories
 	userRepo := repository.NewUserRepository(pool)
 	refreshTokenRepo := repository.NewRefreshTokenRepository(pool)
@@ -67,7 +77,15 @@ func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage
 	userService := service.NewUserService(userRepo, store)
 	refreshTokenService := service.NewRefreshTokenServiceWithExpiry(refreshTokenRepo, refreshTokenExpiry)
 	authService := service.NewAuthService(userRepo, userService, jwtService, refreshTokenService, store)
-	followService := service.NewFollowService(followRepo, pool)
+	followService, err := service.NewFollowService(service.FollowDeps{
+		Repo:            followRepo,
+		Pool:            pool,
+		FeedInvalidator: feedInvalidator,
+		FeedOutbox:      feedOutbox,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("user context: %w", err)
+	}
 	emailEventService := service.NewEmailEventService(emailDeliveryRepo)
 	accountMailService := service.NewAccountMailService(mail.mailer, mail.templates, emailTokenRepo, userRepo, emailEventService, mail.baseURL)
 
@@ -108,7 +126,7 @@ func SetupUserContext(pool *pgxpool.Pool, jwtService *jwt.Service, store storage
 		followHandler:       followHandler,
 		emailHandler:        emailHandler,
 		emailWebhookHandler: emailWebhookHandler,
-	}
+	}, nil
 }
 
 // SuppressionChecker exposes the suppression source for the mailer's gate.
@@ -128,18 +146,16 @@ func (ctx *UserContext) Ports() UserPorts {
 	}
 }
 
-func (ctx *UserContext) WireFeedInvalidator(inv service.FeedInvalidator) {
-	ctx.followService.WithFeedInvalidator(inv)
+// WireFeedEventEmitter attaches the feed event dispatcher to the follow service.
+// Deferred because the dispatcher's fanout worker reads posts, so the feed
+// context is built after this one.
+func (ctx *UserContext) WireFeedEventEmitter(e service.FollowFeedEventEmitter) error {
+	return ctx.followService.WireFeedEventEmitter(e)
 }
 
-func (ctx *UserContext) WireFeedEventEmitter(e service.FollowFeedEventEmitter) {
-	ctx.followService.WithFeedEventEmitter(e)
-}
-
-func (ctx *UserContext) WireFeedEventOutbox(outbox service.FollowFeedEventOutbox) {
-	ctx.followService.WithFeedEventOutbox(outbox)
-}
-
-func (ctx *UserContext) WireNotificationEmitter(notif *NotificationContext) {
-	ctx.followService.WithNotificationEmitter(notif.notifService)
+// WireNotificationEmitter attaches the notification emitter to the follow
+// service. Deferred because the notification context is built from the user
+// repository this context creates, so it cannot exist any earlier.
+func (ctx *UserContext) WireNotificationEmitter(notif *NotificationContext) error {
+	return ctx.followService.WireNotificationEmitter(notif.notifService)
 }

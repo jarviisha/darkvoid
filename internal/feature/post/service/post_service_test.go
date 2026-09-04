@@ -128,8 +128,7 @@ func TestCreatePost_EmitsFeedEventAfterSuccess(t *testing.T) {
 	authorID := uuid.New()
 	emitter := &mockFeedEventEmitter{}
 	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, &mockLikeRepo{})
-	svc.WithFeedEventEmitter(emitter)
-
+	svc.feedEmitter = emitter
 	p, err := svc.CreatePost(context.Background(), authorID, "Hello world", entity.VisibilityPublic, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("CreatePost: %v", err)
@@ -146,8 +145,7 @@ func TestCreatePost_DoesNotEmitFeedEventOnCreateFailure(t *testing.T) {
 			return nil, errors.New("db down")
 		},
 	}, &mockMediaRepo{}, &mockLikeRepo{})
-	svc.WithFeedEventEmitter(emitter)
-
+	svc.feedEmitter = emitter
 	_, err := svc.CreatePost(context.Background(), uuid.New(), "Hello world", entity.VisibilityPublic, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected create error")
@@ -160,8 +158,7 @@ func TestCreatePost_DoesNotEmitFeedEventOnCreateFailure(t *testing.T) {
 func TestCreatePost_FeedEmitterFailureIsNonFatal(t *testing.T) {
 	emitter := &mockFeedEventEmitter{err: errors.New("queue full")}
 	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, &mockLikeRepo{})
-	svc.WithFeedEventEmitter(emitter)
-
+	svc.feedEmitter = emitter
 	if _, err := svc.CreatePost(context.Background(), uuid.New(), "Hello world", entity.VisibilityPublic, nil, nil, nil); err != nil {
 		t.Fatalf("CreatePost should ignore feed emitter error: %v", err)
 	}
@@ -176,9 +173,8 @@ func TestCreatePost_PersistsFeedOutboxInsideTransaction(t *testing.T) {
 	emitter := &mockFeedEventEmitter{}
 	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, &mockLikeRepo{})
 	svc.pool = &recordingTxBeginner{tx: tx}
-	svc.WithFeedEventOutbox(outbox)
-	svc.WithFeedEventEmitter(emitter)
-
+	svc.feedOutbox = outbox
+	svc.feedEmitter = emitter
 	if _, err := svc.CreatePost(context.Background(), uuid.New(), "Hello world", entity.VisibilityPublic, nil, nil, nil); err != nil {
 		t.Fatalf("CreatePost: %v", err)
 	}
@@ -197,8 +193,7 @@ func TestCreatePost_OutboxFailureAbortsMutation(t *testing.T) {
 	tx := &recordingTx{mockTx: &mockTx{}}
 	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, &mockLikeRepo{})
 	svc.pool = &recordingTxBeginner{tx: tx}
-	svc.WithFeedEventOutbox(&mockFeedEventOutbox{err: errors.New("outbox unavailable")})
-
+	svc.feedOutbox = &mockFeedEventOutbox{err: errors.New("outbox unavailable")}
 	if _, err := svc.CreatePost(context.Background(), uuid.New(), "Hello world", entity.VisibilityPublic, nil, nil, nil); err == nil {
 		t.Fatal("expected outbox failure")
 	}
@@ -465,8 +460,7 @@ func TestUpdatePost_InvalidatesTrending(t *testing.T) {
 	}
 	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
 	inv := &mockTrendingInvalidator{}
-	svc.WithTrendingInvalidator(inv)
-
+	svc.trendingInvalidator = inv
 	if _, err := svc.UpdatePost(context.Background(), postID, authorID, "updated", entity.VisibilityPrivate, nil, nil); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -489,8 +483,7 @@ func TestUpdatePost_TrendingInvalidatorFailureDoesNotFailUpdate(t *testing.T) {
 		},
 	}
 	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
-	svc.WithTrendingInvalidator(&mockTrendingInvalidator{err: pkgerrors.ErrNotFound})
-
+	svc.trendingInvalidator = &mockTrendingInvalidator{err: pkgerrors.ErrNotFound}
 	if _, err := svc.UpdatePost(context.Background(), postID, authorID, "updated", entity.VisibilityPublic, nil, nil); err != nil {
 		t.Fatalf("update must succeed despite invalidator failure, got %v", err)
 	}
@@ -581,8 +574,7 @@ func TestDeletePost_InvalidatesTrending(t *testing.T) {
 	}
 	svc := newPostService(pr, &mockMediaRepo{}, &mockLikeRepo{})
 	inv := &mockTrendingInvalidator{}
-	svc.WithTrendingInvalidator(inv)
-
+	svc.trendingInvalidator = inv
 	if err := svc.DeletePost(context.Background(), uuid.New(), authorID); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

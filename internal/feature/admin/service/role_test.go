@@ -66,7 +66,10 @@ func newRoleService(users *stubUserStore, roles *stubRoleStore) *AdminService {
 	if roles == nil {
 		roles = &stubRoleStore{}
 	}
-	return NewAdminService(users, roles, nil)
+	// Built directly rather than through NewAdminService: these tests exercise
+	// role handling only, and the constructor now requires the storage and
+	// notification dependencies that role handling never touches.
+	return &AdminService{userStore: users, roleStore: roles}
 }
 
 func assertStatus(t *testing.T, err error, want int) {

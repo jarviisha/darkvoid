@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -10,6 +11,7 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/post/repository"
 	"github.com/jarviisha/darkvoid/internal/feature/post/service"
 	"github.com/jarviisha/darkvoid/pkg/codohue"
+	"github.com/jarviisha/darkvoid/pkg/deps"
 	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
 	"github.com/jarviisha/darkvoid/pkg/storage"
 )
@@ -76,43 +78,123 @@ type postFollowService interface {
 	GetFollowingAmong(ctx context.Context, followerID uuid.UUID, followeeIDs []uuid.UUID) ([]uuid.UUID, error)
 }
 
+// PostContextDeps carries everything the Post context needs.
+//
+// A struct rather than positional parameters: several of these are one-method
+// interfaces over the same repositories, and two adjacent same-typed parameters
+// are exactly the transposition a compiler cannot catch.
+type PostContextDeps struct {
+	Pool          *pgxpool.Pool
+	Storage       storage.Storage
+	UserRepo      postUserRepo
+	Redis         *pkgredis.Client
+	FollowService postFollowService
+	Notifications *NotificationContext
+	Trending      service.TrendingInvalidator
+	FeedOutbox    service.FeedEventOutbox
+
+	// Codohue is nil whenever CODOHUE_ENABLED is unset, and the services below
+	// are simply built without it.
+	Codohue *codohue.Client
+}
+
 // SetupPostContext initializes the Post context with all required dependencies.
-func SetupPostContext(pool *pgxpool.Pool, store storage.Storage, userRepo postUserRepo, redis *pkgredis.Client) *PostContext {
-	// Repositories
-	postRepo := repository.NewPostRepository(pool)
-	mediaRepo := repository.NewMediaRepository(pool)
-	likeRepo := repository.NewLikeRepository(pool)
-	commentRepo := repository.NewCommentRepository(pool)
-	commentMediaRepo := repository.NewCommentMediaRepository(pool)
-	commentLikeRepo := repository.NewCommentLikeRepository(pool)
-	hashtagRepo := repository.NewHashtagRepository(pool)
-	searchRepo := repository.NewPostSearchRepository(pool)
-	mentionRepo := repository.NewMentionRepository(pool)
-	commentMentionRepo := repository.NewCommentMentionRepository(pool)
+func SetupPostContext(d PostContextDeps) (*PostContext, error) {
+	if err := deps.Missing(map[string]any{
+		"Pool":          d.Pool,
+		"Storage":       d.Storage,
+		"UserRepo":      d.UserRepo,
+		"Redis":         d.Redis,
+		"FollowService": d.FollowService,
+		"Notifications": d.Notifications,
+		"Trending":      d.Trending,
+		"FeedOutbox":    d.FeedOutbox,
+	}); err != nil {
+		return nil, fmt.Errorf("post context: %w", err)
+	}
 
-	ur := &postUserReader{userRepo: userRepo}
+	postRepo := repository.NewPostRepository(d.Pool)
+	mediaRepo := repository.NewMediaRepository(d.Pool)
+	likeRepo := repository.NewLikeRepository(d.Pool)
+	commentRepo := repository.NewCommentRepository(d.Pool)
+	commentMediaRepo := repository.NewCommentMediaRepository(d.Pool)
+	commentLikeRepo := repository.NewCommentLikeRepository(d.Pool)
+	hashtagRepo := repository.NewHashtagRepository(d.Pool)
+	searchRepo := repository.NewPostSearchRepository(d.Pool)
+	mentionRepo := repository.NewMentionRepository(d.Pool)
+	commentMentionRepo := repository.NewCommentMentionRepository(d.Pool)
 
-	hCache := postcache.NewRedisHashtagCache(redis)
+	ur := &postUserReader{userRepo: d.UserRepo}
+	hCache := postcache.NewRedisHashtagCache(d.Redis)
+	checker := &postFollowChecker{followService: d.FollowService}
+	notif := d.Notifications.notifService
 
-	// Services
-	postService := service.NewPostService(pool, postRepo, mediaRepo, ur, hashtagRepo,
-		service.WithLikeRepo(likeRepo),
-		service.WithMentionRepo(mentionRepo),
-	)
-	likeService := service.NewLikeService(likeRepo, postRepo)
-	commentService := service.NewCommentService(pool, commentRepo, commentMediaRepo, postRepo, ur,
-		service.WithCommentLikeRepo(commentLikeRepo),
-		service.WithCommentMentionRepo(commentMentionRepo),
-	)
-	commentLikeService := service.NewCommentLikeService(commentLikeRepo, commentRepo, postRepo)
+	var postOpts []service.PostServiceOption
+	var likeOpts []service.LikeServiceOption
+	var commentOpts []service.CommentServiceOption
+	if d.Codohue != nil {
+		postOpts = append(postOpts,
+			service.WithObjectDeleter(d.Codohue),
+			service.WithCatalogIngester(d.Codohue),
+		)
+		likeOpts = append(likeOpts, service.WithLikeBehaviorEventPublisher(d.Codohue))
+		commentOpts = append(commentOpts, service.WithCommentBehaviorEventPublisher(d.Codohue))
+	}
+
+	postService, err := service.NewPostService(service.PostDeps{
+		Pool:                d.Pool,
+		Posts:               postRepo,
+		Media:               mediaRepo,
+		Users:               ur,
+		Hashtags:            hashtagRepo,
+		Likes:               likeRepo,
+		Mentions:            mentionRepo,
+		FollowChecker:       checker,
+		Notifications:       notif,
+		TrendingInvalidator: d.Trending,
+		FeedOutbox:          d.FeedOutbox,
+	}, postOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("post service: %w", err)
+	}
+
+	likeService, err := service.NewLikeService(service.LikeDeps{
+		Likes:         likeRepo,
+		Posts:         postRepo,
+		FollowChecker: checker,
+		Notifications: notif,
+	}, likeOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("like service: %w", err)
+	}
+
+	commentService, err := service.NewCommentService(service.CommentDeps{
+		Pool:            d.Pool,
+		Comments:        commentRepo,
+		CommentMedia:    commentMediaRepo,
+		Posts:           postRepo,
+		Users:           ur,
+		CommentLikes:    commentLikeRepo,
+		CommentMentions: commentMentionRepo,
+		FollowChecker:   checker,
+		Notifications:   notif,
+	}, commentOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("comment service: %w", err)
+	}
+
+	commentLikeService, err := service.NewCommentLikeService(service.CommentLikeDeps{
+		CommentLikes:  commentLikeRepo,
+		Comments:      commentRepo,
+		Posts:         postRepo,
+		FollowChecker: checker,
+		Notifications: notif,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("comment like service: %w", err)
+	}
+
 	hashtagService := service.NewHashtagService(hashtagRepo, hCache, postRepo, ur)
-
-	// Handlers
-	postHandler := handler.NewPostHandler(postService, store)
-	likeHandler := handler.NewLikeHandler(likeService)
-	commentHandler := handler.NewCommentHandler(commentService, store)
-	commentLikeHandler := handler.NewCommentLikeHandler(commentLikeService)
-	hashtagHandler := handler.NewHashtagHandler(hashtagService, store)
 
 	return &PostContext{
 		postRepo:           postRepo,
@@ -129,49 +211,19 @@ func SetupPostContext(pool *pgxpool.Pool, store storage.Storage, userRepo postUs
 		commentService:     commentService,
 		commentLikeService: commentLikeService,
 		hashtagService:     hashtagService,
-		postHandler:        postHandler,
-		likeHandler:        likeHandler,
-		commentHandler:     commentHandler,
-		commentLikeHandler: commentLikeHandler,
-		hashtagHandler:     hashtagHandler,
-	}
+		postHandler:        handler.NewPostHandler(postService, d.Storage),
+		likeHandler:        handler.NewLikeHandler(likeService),
+		commentHandler:     handler.NewCommentHandler(commentService, d.Storage),
+		commentLikeHandler: handler.NewCommentLikeHandler(commentLikeService),
+		hashtagHandler:     handler.NewHashtagHandler(hashtagService, d.Storage),
+	}, nil
 }
 
-func (ctx *PostContext) WireFollowChecker(followService postFollowService) {
-	checker := &postFollowChecker{followService: followService}
-	ctx.postService.WithFollowChecker(checker)
-	ctx.likeService.WithFollowChecker(checker)
-	ctx.commentService.WithFollowChecker(checker)
-	ctx.commentLikeService.WithFollowChecker(checker)
-}
-
-// WireFeedCacheInvalidator wires trending cache eviction into the post service.
-// Only content-changing mutations (update, delete) evict: the cache serves fully
-// serialized posts, so stale content or visibility must not outlive the change,
-// while engagement counts may go stale until the cache TTL — evicting on every
-// like/comment kept the cache permanently cold under load.
-func (ctx *PostContext) WireFeedCacheInvalidator(inv service.TrendingInvalidator) {
-	ctx.postService.WithTrendingInvalidator(inv)
-}
-
-func (ctx *PostContext) WireFeedEventEmitter(e service.FeedEventEmitter) {
-	ctx.postService.WithFeedEventEmitter(e)
-}
-
-func (ctx *PostContext) WireFeedEventOutbox(outbox service.FeedEventOutbox) {
-	ctx.postService.WithFeedEventOutbox(outbox)
-}
-
-func (ctx *PostContext) WireNotificationEmitter(notif *NotificationContext) {
-	ctx.postService.WithNotificationEmitter(notif.notifService)
-	ctx.likeService.WithNotificationEmitter(notif.notifService)
-	ctx.commentService.WithNotificationEmitter(notif.notifService)
-	ctx.commentLikeService.WithNotificationEmitter(notif.notifService)
-}
-
-func (ctx *PostContext) WireCodohue(client *codohue.Client) {
-	ctx.likeService.WithBehaviorEventPublisher(client)
-	ctx.commentService.WithBehaviorEventPublisher(client)
-	ctx.postService.WithObjectDeleter(client)
-	ctx.postService.WithCatalogIngester(client)
+// WireFeedEventEmitter attaches the feed event dispatcher to the post service.
+//
+// It is the only dependency this context still receives after construction: the
+// dispatcher's fanout worker reads posts, so the feed context cannot be built
+// until this one exists.
+func (ctx *PostContext) WireFeedEventEmitter(e service.FeedEventEmitter) error {
+	return ctx.postService.WireFeedEventEmitter(e)
 }

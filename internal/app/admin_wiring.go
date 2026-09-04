@@ -6,12 +6,19 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/storage"
 )
 
-func (app *Application) setupAdminContext(store storage.Storage) {
-	userPorts := app.User.Ports()
-	roleRepo := buildAdminRoleRepo(app.pool)
-	app.Admin = SetupAdminContext(userPorts.AdminUserStore, roleRepo, store)
-	app.Admin.WireNotificationEmitter(app.Notification)
+func (app *Application) setupAdminContext(store storage.Storage) error {
+	admin, err := SetupAdminContext(
+		app.User.Ports().AdminUserStore,
+		buildAdminRoleRepo(app.pool),
+		store,
+		app.Notification,
+	)
+	if err != nil {
+		return err
+	}
+	app.Admin = admin
 	app.log.Info("admin context initialized")
+	return nil
 }
 
 func buildAdminRoleRepo(pool *pgxpool.Pool) *repository.RoleRepository {

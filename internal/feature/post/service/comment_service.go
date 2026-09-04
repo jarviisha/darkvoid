@@ -12,6 +12,7 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/post/entity"
 	"github.com/jarviisha/darkvoid/internal/feature/post/repository"
 	"github.com/jarviisha/darkvoid/internal/pagination"
+	"github.com/jarviisha/darkvoid/pkg/deps"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
@@ -33,28 +34,14 @@ func (r *commentMediaRepoTxable) WithTx(tx pgx.Tx) commentMediaRepo {
 	return &commentMediaRepoTxable{r.CommentMediaRepository.WithTx(tx)}
 }
 
-// CommentServiceOption is a functional option for configuring optional CommentService dependencies.
+// CommentServiceOption configures the dependencies CommentService can run without.
 type CommentServiceOption func(*CommentService)
 
-// WithCommentLikeRepo attaches a comment like repository for is-liked enrichment.
-func WithCommentLikeRepo(r commentLikeRepo) CommentServiceOption {
-	return func(s *CommentService) { s.commentLikeRepo = r }
-}
-
-// WithNotificationEmitter wires a cross-context notification emitter after construction.
-// Called by the app layer once the notification context is ready.
-func (s *CommentService) WithNotificationEmitter(e CommentNotificationEmitter) {
-	s.notifEmitter = e
-}
-
-// WithBehaviorEventPublisher attaches a behavior event publisher. Called at wire-up time.
-func (s *CommentService) WithBehaviorEventPublisher(p BehaviorEventPublisher) {
-	s.eventPublisher = p
-}
-
-// WithCommentMentionRepo attaches the comment mention repository.
-func WithCommentMentionRepo(r commentMentionRepo) CommentServiceOption {
-	return func(s *CommentService) { s.commentMentionRepo = r }
+// WithCommentBehaviorEventPublisher attaches the Codohue behaviour-event
+// publisher. Absent whenever CODOHUE_ENABLED is unset, which is what makes it an
+// option rather than a CommentDeps field.
+func WithCommentBehaviorEventPublisher(p BehaviorEventPublisher) CommentServiceOption {
+	return func(s *CommentService) { s.eventPublisher = p }
 }
 
 // CommentService handles comment business logic
@@ -64,39 +51,65 @@ type CommentService struct {
 	commentMediaRepo   commentMediaRepo
 	postRepo           postRepo
 	userReader         userReader
-	commentLikeRepo    commentLikeRepo            // optional: nil → is-liked skipped
-	notifEmitter       CommentNotificationEmitter // optional: nil → no-op
-	commentMentionRepo commentMentionRepo         // optional: nil → mentions skipped
-	eventPublisher     BehaviorEventPublisher     // optional: nil → no-op
-	followChecker      followChecker              // optional: nil → followers content denied
+	commentLikeRepo    commentLikeRepo
+	notifEmitter       CommentNotificationEmitter
+	commentMentionRepo commentMentionRepo
+	eventPublisher     BehaviorEventPublisher // optional: absent unless Codohue is enabled
+	followChecker      followChecker
 }
 
-// WithFollowChecker attaches the checker used to authorize followers-only posts.
-func (s *CommentService) WithFollowChecker(checker followChecker) {
-	s.followChecker = checker
+// CommentDeps carries everything CommentService needs.
+//
+// CommentLikes and CommentMentions used to be functional options documented as
+// optional, but the composition root has always supplied both; "optional" only
+// ever described the test doubles, and the nil branches it justified were never
+// reached in production.
+type CommentDeps struct {
+	Pool            *pgxpool.Pool
+	Comments        *repository.CommentRepository
+	CommentMedia    *repository.CommentMediaRepository
+	Posts           *repository.PostRepository
+	Users           userReader
+	CommentLikes    commentLikeRepo
+	CommentMentions commentMentionRepo
+	FollowChecker   followChecker
+	Notifications   CommentNotificationEmitter
 }
 
-// NewCommentService creates a new CommentService. Required dependencies are passed as positional
-// arguments; optional ones are injected via CommentServiceOption functions.
-func NewCommentService(
-	pool *pgxpool.Pool,
-	commentRepo *repository.CommentRepository,
-	commentMediaRepo *repository.CommentMediaRepository,
-	postRepo *repository.PostRepository,
-	userReader userReader,
-	opts ...CommentServiceOption,
-) *CommentService {
+func (d CommentDeps) validate() error {
+	return deps.Missing(map[string]any{
+		"Pool":            d.Pool,
+		"Comments":        d.Comments,
+		"CommentMedia":    d.CommentMedia,
+		"Posts":           d.Posts,
+		"Users":           d.Users,
+		"CommentLikes":    d.CommentLikes,
+		"CommentMentions": d.CommentMentions,
+		"FollowChecker":   d.FollowChecker,
+		"Notifications":   d.Notifications,
+	})
+}
+
+// NewCommentService creates a new CommentService.
+func NewCommentService(deps CommentDeps, opts ...CommentServiceOption) (*CommentService, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
 	s := &CommentService{
-		pool:             pool,
-		commentRepo:      &commentRepoTxable{commentRepo},
-		commentMediaRepo: &commentMediaRepoTxable{commentMediaRepo},
-		postRepo:         &postRepoTxable{postRepo},
-		userReader:       userReader,
+		pool:               deps.Pool,
+		commentRepo:        &commentRepoTxable{deps.Comments},
+		commentMediaRepo:   &commentMediaRepoTxable{deps.CommentMedia},
+		postRepo:           &postRepoTxable{deps.Posts},
+		userReader:         deps.Users,
+		commentLikeRepo:    deps.CommentLikes,
+		commentMentionRepo: deps.CommentMentions,
+		followChecker:      deps.FollowChecker,
+		notifEmitter:       deps.Notifications,
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
-	return s
+	return s, nil
 }
 
 func (s *CommentService) publishBehaviorEvent(ctx context.Context, userID, postID uuid.UUID, action string, objectCreatedAt *time.Time) {

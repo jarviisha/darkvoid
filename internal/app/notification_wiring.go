@@ -10,8 +10,14 @@ func (app *Application) setupNotificationContext(store storage.Storage) {
 	app.log.Info("notification context initialized", "redis_pubsub", app.redis != nil)
 }
 
-func (app *Application) wireNotificationDependencies() {
-	app.Post.WireNotificationEmitter(app.Notification)
-	app.User.WireNotificationEmitter(app.Notification)
-	app.log.Info("notification emitter wired into post and follow services")
+// wireFollowNotificationEmitter is all that remains of the notification wiring:
+// the post services take the emitter at construction, but the follow service
+// cannot, because the notification context is built from the user repository
+// that SetupUserContext creates alongside it.
+func (app *Application) wireFollowNotificationEmitter() error {
+	if err := app.User.WireNotificationEmitter(app.Notification); err != nil {
+		return err
+	}
+	app.log.Info("notification emitter wired into the follow service")
+	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/admin/dto"
 	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
 	"github.com/jarviisha/darkvoid/internal/pagination"
+	"github.com/jarviisha/darkvoid/pkg/deps"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 	"github.com/jarviisha/darkvoid/pkg/storage"
@@ -18,21 +19,40 @@ type AdminService struct {
 	userStore    userStore
 	roleStore    roleStore
 	storage      storage.Storage
-	notifEmitter notifEmitter // optional, nil = notifications disabled
+	notifEmitter notifEmitter
 }
 
-// NewAdminService creates an AdminService with the required dependencies.
-func NewAdminService(userStore userStore, roleStore roleStore, store storage.Storage) *AdminService {
-	return &AdminService{
-		userStore: userStore,
-		roleStore: roleStore,
-		storage:   store,
+// AdminDeps carries everything AdminService needs. Every field is required:
+// SetupAdminContext runs after the notification context, so the emitter has
+// never had a reason to arrive after construction, and ListUsers resolves avatar
+// URLs through Storage on its ordinary path.
+type AdminDeps struct {
+	Users         userStore
+	Roles         roleStore
+	Storage       storage.Storage
+	Notifications notifEmitter
+}
+
+func (d AdminDeps) validate() error {
+	return deps.Missing(map[string]any{
+		"Users":         d.Users,
+		"Roles":         d.Roles,
+		"Storage":       d.Storage,
+		"Notifications": d.Notifications,
+	})
+}
+
+// NewAdminService creates an AdminService.
+func NewAdminService(d AdminDeps) (*AdminService, error) {
+	if err := d.validate(); err != nil {
+		return nil, err
 	}
-}
-
-// WithNotificationEmitter attaches a notification emitter. Called at wire-up time.
-func (s *AdminService) WithNotificationEmitter(e notifEmitter) {
-	s.notifEmitter = e
+	return &AdminService{
+		userStore:    d.Users,
+		roleStore:    d.Roles,
+		storage:      d.Storage,
+		notifEmitter: d.Notifications,
+	}, nil
 }
 
 // ─── User Management ─────────────────────────────────────────────────────────

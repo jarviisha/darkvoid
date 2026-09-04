@@ -36,16 +36,23 @@ func (app *Application) setupFeedContext(
 	)
 }
 
-func (app *Application) wireFeedDependencies() {
-	feedPorts := app.Feed.Ports()
+// wireFeedDependencies attaches the event dispatcher to the two services that
+// emit feed events.
+//
+// The cache and the outbox no longer pass through here — both are built before
+// any context and arrive through the constructors. The dispatcher cannot: its
+// fanout worker reads posts, so it does not exist until the post context does.
+func (app *Application) wireFeedDependencies() error {
+	dispatcher := app.Feed.Ports().Dispatcher
 
-	app.User.WireFeedInvalidator(feedPorts.Cache)
-	app.Post.WireFeedCacheInvalidator(feedPorts.Cache)
-	app.Post.WireFeedEventEmitter(feedPorts.Dispatcher)
-	app.Post.WireFeedEventOutbox(&feedEventOutbox{outbox: feedPorts.Outbox})
-	app.User.WireFeedEventEmitter(feedPorts.Dispatcher)
-	app.User.WireFeedEventOutbox(&feedEventOutbox{outbox: feedPorts.Outbox})
-	app.log.Info("feed cache wired into follow and post services")
+	if err := app.Post.WireFeedEventEmitter(dispatcher); err != nil {
+		return err
+	}
+	if err := app.User.WireFeedEventEmitter(dispatcher); err != nil {
+		return err
+	}
+	app.log.Info("feed event dispatcher wired into post and follow services")
+	return nil
 }
 
 // setupFeedInfra builds the two feed components that need nothing from the feed

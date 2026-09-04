@@ -10,6 +10,7 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
 	"github.com/jarviisha/darkvoid/internal/feature/user/repository"
 	"github.com/jarviisha/darkvoid/internal/pagination"
+	"github.com/jarviisha/darkvoid/pkg/deps"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
@@ -51,42 +52,80 @@ type FollowService struct {
 	followRepo      followRepo
 	pool            followTxBeginner
 	withTx          func(pgx.Tx) followRepo
-	feedInvalidator FeedInvalidator           // optional, nil = no-op
-	feedEmitter     FollowFeedEventEmitter    // optional, nil = no-op
-	feedOutbox      FollowFeedEventOutbox     // optional: durable transactional events
-	notifEmitter    FollowNotificationEmitter // optional, nil = no-op
+	feedInvalidator FeedInvalidator
+	feedOutbox      FollowFeedEventOutbox
+
+	// These two cannot arrive through the constructor. The dispatcher's fanout
+	// worker reads posts, so the feed context is built after this service; and
+	// the notification context is built from the user repository, which
+	// SetupUserContext creates alongside this service. Both setters refuse a nil
+	// and refuse a second call, because they are the only remaining paths by
+	// which this service can come up incompletely wired.
+	feedEmitter  FollowFeedEventEmitter
+	notifEmitter FollowNotificationEmitter
 }
 
-func NewFollowService(repoPort followRepo, pools ...followTxBeginner) *FollowService {
-	s := &FollowService{followRepo: repoPort}
-	if repo, ok := repoPort.(*repository.FollowRepository); ok {
-		s.withTx = func(tx pgx.Tx) followRepo { return repo.WithTx(tx) }
+// FollowDeps carries everything FollowService needs at construction.
+//
+// Repo is the concrete repository rather than the followRepo port because the
+// service needs its WithTx method to run a follow mutation and its outbox write
+// in one transaction. Recovering that by type-asserting the port is what used to
+// defer the failure to the first follow request.
+type FollowDeps struct {
+	Repo            *repository.FollowRepository
+	Pool            followTxBeginner
+	FeedInvalidator FeedInvalidator
+	FeedOutbox      FollowFeedEventOutbox
+}
+
+func (d FollowDeps) validate() error {
+	return deps.Missing(map[string]any{
+		"Repo":            d.Repo,
+		"Pool":            d.Pool,
+		"FeedInvalidator": d.FeedInvalidator,
+		"FeedOutbox":      d.FeedOutbox,
+	})
+}
+
+// NewFollowService creates a new FollowService.
+func NewFollowService(deps FollowDeps) (*FollowService, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
-	if len(pools) > 0 {
-		s.pool = pools[0]
+	return &FollowService{
+		followRepo:      deps.Repo,
+		pool:            deps.Pool,
+		withTx:          func(tx pgx.Tx) followRepo { return deps.Repo.WithTx(tx) },
+		feedInvalidator: deps.FeedInvalidator,
+		feedOutbox:      deps.FeedOutbox,
+	}, nil
+}
+
+// WireFeedEventEmitter attaches the feed event dispatcher after the feed context
+// exists. See the field comment for why it cannot come through the constructor.
+func (s *FollowService) WireFeedEventEmitter(e FollowFeedEventEmitter) error {
+	if e == nil {
+		return errors.New("BAD_WIRING", "follow feed event emitter is nil", http.StatusInternalServerError)
 	}
-	return s
-}
-
-// WithFeedInvalidator attaches a cache invalidator. Called at wire-up time after
-// the feed cache is initialized, avoiding circular init dependencies.
-func (s *FollowService) WithFeedInvalidator(inv FeedInvalidator) {
-	s.feedInvalidator = inv
-}
-
-// WithFeedEventEmitter attaches a feed event emitter. Called at wire-up time.
-func (s *FollowService) WithFeedEventEmitter(e FollowFeedEventEmitter) {
+	if s.feedEmitter != nil {
+		return errors.New("BAD_WIRING", "follow feed event emitter is already wired", http.StatusInternalServerError)
+	}
 	s.feedEmitter = e
+	return nil
 }
 
-// WithFeedEventOutbox wires durable event persistence into follow mutations.
-func (s *FollowService) WithFeedEventOutbox(outbox FollowFeedEventOutbox) {
-	s.feedOutbox = outbox
-}
-
-// WithNotificationEmitter attaches a notification emitter. Called at wire-up time.
-func (s *FollowService) WithNotificationEmitter(e FollowNotificationEmitter) {
+// WireNotificationEmitter attaches the notification emitter after the
+// notification context exists. See the field comment for why it cannot come
+// through the constructor.
+func (s *FollowService) WireNotificationEmitter(e FollowNotificationEmitter) error {
+	if e == nil {
+		return errors.New("BAD_WIRING", "follow notification emitter is nil", http.StatusInternalServerError)
+	}
+	if s.notifEmitter != nil {
+		return errors.New("BAD_WIRING", "follow notification emitter is already wired", http.StatusInternalServerError)
+	}
 	s.notifEmitter = e
+	return nil
 }
 
 func (s *FollowService) invalidateFollowingIDs(ctx context.Context, userID uuid.UUID) {

@@ -73,8 +73,7 @@ func (app *Application) wireCodohue(ctx context.Context, codohueClient *codohue.
 	// outage the moment real traffic finds it rather than on the next probe.
 	app.codohue.circuitOpen = codohueClient.CircuitOpen
 
-	app.Post.WireCodohue(codohueClient)
-	app.log.Info("codohue client wired into post services",
+	app.log.Info("codohue client active",
 		"namespace", app.cfg.Codohue.Namespace,
 		"embedding_dim", app.cfg.Codohue.EmbeddingDim,
 	)

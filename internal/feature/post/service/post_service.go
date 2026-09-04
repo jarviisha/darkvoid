@@ -10,63 +10,42 @@ import (
 	post "github.com/jarviisha/darkvoid/internal/feature/post"
 	"github.com/jarviisha/darkvoid/internal/feature/post/entity"
 	"github.com/jarviisha/darkvoid/internal/feature/post/repository"
+	"github.com/jarviisha/darkvoid/pkg/deps"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
 
-// PostServiceOption is a functional option for configuring optional PostService dependencies.
+// PostServiceOption configures the dependencies PostService can run without.
 type PostServiceOption func(*PostService)
 
-// WithLikeRepo attaches a like repository for like-count and is-liked enrichment.
-func WithLikeRepo(r likeRepo) PostServiceOption {
-	return func(s *PostService) { s.likeRepo = r }
+// WithObjectDeleter attaches the Codohue object deleter, which removes a post
+// from the recommendation index after it is deleted.
+func WithObjectDeleter(d ObjectDeleter) PostServiceOption {
+	return func(s *PostService) { s.objectDeleter = d }
 }
 
-// WithMentionRepo attaches the mention repository.
-func WithMentionRepo(r *repository.MentionRepository) PostServiceOption {
-	return func(s *PostService) { s.mentionRepo = &mentionRepoTxable{r} }
+// WithCatalogIngester attaches the Codohue catalog ingester, which sends a
+// post's content to the recommendation engine to be embedded server-side.
+func WithCatalogIngester(ingester CatalogIngester) PostServiceOption {
+	return func(s *PostService) { s.catalogIngester = ingester }
 }
 
-// WithFollowChecker attaches the checker used for visibility authorization and
-// is_following_author enrichment.
-// Called by the app layer once the user context is ready.
-func (s *PostService) WithFollowChecker(fc followChecker) {
-	s.followChecker = fc
-}
-
-// WithNotificationEmitter wires a cross-context notification emitter after construction.
-// Called by the app layer once the notification context is ready.
-func (s *PostService) WithNotificationEmitter(e notificationEmitter) {
-	s.notifEmitter = e
-}
-
-// WithFeedEventEmitter wires feed-impacting post events after construction.
-func (s *PostService) WithFeedEventEmitter(e FeedEventEmitter) {
+// WireFeedEventEmitter attaches the feed event dispatcher.
+//
+// This is the one dependency that genuinely cannot arrive through the
+// constructor: the dispatcher's fanout worker reads posts, so the feed context
+// is built after this service. It returns an error rather than assigning
+// silently, because it is now the only path left by which a post service can
+// come up incompletely wired.
+func (s *PostService) WireFeedEventEmitter(e FeedEventEmitter) error {
+	if e == nil {
+		return errors.New("BAD_WIRING", "feed event emitter is nil", 500)
+	}
+	if s.feedEmitter != nil {
+		return errors.New("BAD_WIRING", "feed event emitter is already wired", 500)
+	}
 	s.feedEmitter = e
-}
-
-// WithFeedEventOutbox wires durable feed-event persistence into post mutations.
-func (s *PostService) WithFeedEventOutbox(outbox FeedEventOutbox) {
-	s.feedOutbox = outbox
-}
-
-// WithTrendingInvalidator wires a cross-context trending cache invalidator after construction.
-// Called by the app layer once the feed cache is ready.
-func (s *PostService) WithTrendingInvalidator(inv TrendingInvalidator) {
-	s.trendingInvalidator = inv
-}
-
-// WithObjectDeleter attaches a Codohue object deleter. Called at wire-up time.
-// When set, DeletePost will remove the post from the recommendation index after successful deletion.
-func (s *PostService) WithObjectDeleter(d ObjectDeleter) {
-	s.objectDeleter = d
-}
-
-// WithCatalogIngester attaches a catalog ingester. Called at wire-up time.
-// When set, CreatePost and UpdatePost send the post's content to the
-// recommendation engine, which embeds it server-side.
-func (s *PostService) WithCatalogIngester(ingester CatalogIngester) {
-	s.catalogIngester = ingester
+	return nil
 }
 
 // PostService handles post business logic
@@ -74,41 +53,83 @@ type PostService struct {
 	pool          txBeginner
 	postRepo      postRepo
 	mediaRepo     mediaRepo
-	likeRepo      likeRepo      // optional: nil → like count/isLiked skipped
-	followChecker followChecker // optional: nil → is_following_author skipped
+	likeRepo      likeRepo
+	followChecker followChecker
 	userReader    userReader
 	hashtagRepo   hashtagRepo
-	mentionRepo   mentionRepo // optional: nil → mentions skipped
+	mentionRepo   mentionRepo
 
-	notifEmitter        notificationEmitter // optional: nil → notifications skipped
-	feedEmitter         FeedEventEmitter    // optional: nil → feed propagation skipped
-	feedOutbox          FeedEventOutbox     // optional: durable transactional post events
-	trendingInvalidator TrendingInvalidator // optional: nil → no-op
-	objectDeleter       ObjectDeleter       // optional: nil → no recommendation index cleanup on delete
-	catalogIngester     CatalogIngester     // optional: nil → posts are not indexed for recommendations
+	notifEmitter        notificationEmitter
+	feedOutbox          FeedEventOutbox
+	trendingInvalidator TrendingInvalidator
+
+	// feedEmitter arrives through WireFeedEventEmitter after the feed context
+	// exists; see the comment there.
+	feedEmitter FeedEventEmitter
+
+	// Codohue, absent whenever CODOHUE_ENABLED is unset.
+	objectDeleter   ObjectDeleter
+	catalogIngester CatalogIngester
 }
 
-// NewPostService creates a new PostService. Required dependencies are passed as positional
-// arguments; optional ones are injected via PostServiceOption functions.
-func NewPostService(
-	pool *pgxpool.Pool,
-	postRepo *repository.PostRepository,
-	mediaRepo *repository.MediaRepository,
-	userReader userReader,
-	hashtagRepo *repository.HashtagRepository,
-	opts ...PostServiceOption,
-) *PostService {
+// PostDeps carries everything PostService needs.
+//
+// Likes and Mentions used to be functional options documented as optional, and
+// Notifications, TrendingInvalidator and FeedOutbox arrived by post-construction
+// mutation. All five are wired on every deployment, so the nil branches they
+// justified described a configuration that has never run.
+type PostDeps struct {
+	Pool                *pgxpool.Pool
+	Posts               *repository.PostRepository
+	Media               *repository.MediaRepository
+	Users               userReader
+	Hashtags            *repository.HashtagRepository
+	Likes               likeRepo
+	Mentions            *repository.MentionRepository
+	FollowChecker       followChecker
+	Notifications       notificationEmitter
+	TrendingInvalidator TrendingInvalidator
+	FeedOutbox          FeedEventOutbox
+}
+
+func (d PostDeps) validate() error {
+	return deps.Missing(map[string]any{
+		"Pool":                d.Pool,
+		"Posts":               d.Posts,
+		"Media":               d.Media,
+		"Users":               d.Users,
+		"Hashtags":            d.Hashtags,
+		"Likes":               d.Likes,
+		"Mentions":            d.Mentions,
+		"FollowChecker":       d.FollowChecker,
+		"Notifications":       d.Notifications,
+		"TrendingInvalidator": d.TrendingInvalidator,
+		"FeedOutbox":          d.FeedOutbox,
+	})
+}
+
+// NewPostService creates a new PostService.
+func NewPostService(deps PostDeps, opts ...PostServiceOption) (*PostService, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
 	s := &PostService{
-		pool:        pool,
-		postRepo:    &postRepoTxable{postRepo},
-		mediaRepo:   &mediaRepoTxable{mediaRepo},
-		userReader:  userReader,
-		hashtagRepo: &hashtagRepoTxable{hashtagRepo},
+		pool:                deps.Pool,
+		postRepo:            &postRepoTxable{deps.Posts},
+		mediaRepo:           &mediaRepoTxable{deps.Media},
+		userReader:          deps.Users,
+		hashtagRepo:         &hashtagRepoTxable{deps.Hashtags},
+		likeRepo:            deps.Likes,
+		mentionRepo:         &mentionRepoTxable{deps.Mentions},
+		followChecker:       deps.FollowChecker,
+		notifEmitter:        deps.Notifications,
+		trendingInvalidator: deps.TrendingInvalidator,
+		feedOutbox:          deps.FeedOutbox,
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
-	return s
+	return s, nil
 }
 
 // CreatePost creates a new post

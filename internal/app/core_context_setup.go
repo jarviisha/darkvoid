@@ -1,11 +1,27 @@
 package app
 
 import (
+	"github.com/jarviisha/darkvoid/internal/feature/feed"
+	feedcache "github.com/jarviisha/darkvoid/internal/feature/feed/cache"
+	"github.com/jarviisha/darkvoid/pkg/codohue"
 	"github.com/jarviisha/darkvoid/pkg/storage"
 )
 
-func (app *Application) setupUserContext(store storage.Storage, mail *mailInfra) {
-	app.User = SetupUserContext(app.pool, app.jwtService, store, app.cfg.RefreshToken.Expiry, app.cfg.Cookie, mail)
+func (app *Application) setupUserContext(
+	store storage.Storage,
+	mail *mailInfra,
+	feedCache feedcache.FeedCache,
+	feedOutbox *feed.PostgresOutbox,
+) error {
+	user, err := SetupUserContext(
+		app.pool, app.jwtService, store,
+		app.cfg.RefreshToken.Expiry, app.cfg.Cookie, mail,
+		feedCache, feed.NewOutboxPort(feedOutbox),
+	)
+	if err != nil {
+		return err
+	}
+	app.User = user
 	// The resolved cookie attributes are logged, not the raw variables: Secure is
 	// derived from ENVIRONMENT unless COOKIE_SECURE overrides it, and a wrong
 	// value shows up as a missing cookie in a browser rather than as an error
@@ -16,6 +32,7 @@ func (app *Application) setupUserContext(store storage.Storage, mail *mailInfra)
 		"cookie_domain", app.cfg.Cookie.Domain,
 		"refresh_token_expiry", app.cfg.RefreshToken.Expiry,
 	)
+	return nil
 }
 
 // wireMailDependencies gives the suppression gate its source of truth.
@@ -34,9 +51,31 @@ func (app *Application) setupStorageContext(store storage.Storage) {
 	app.log.Info("storage context initialized")
 }
 
-func (app *Application) setupPostContext(store storage.Storage) {
+func (app *Application) setupPostContext(
+	store storage.Storage,
+	feedCache feedcache.FeedCache,
+	feedOutbox *feed.PostgresOutbox,
+	codohueClient *codohue.Client,
+) error {
 	userPorts := app.User.Ports()
-	app.Post = SetupPostContext(app.pool, store, userPorts.PostUserRepo, app.redis)
-	app.Post.WireFollowChecker(userPorts.PostFollowService)
-	app.log.Info("post context initialized", "hashtag_cache", app.redis != nil)
+	post, err := SetupPostContext(PostContextDeps{
+		Pool:          app.pool,
+		Storage:       store,
+		UserRepo:      userPorts.PostUserRepo,
+		Redis:         app.redis,
+		FollowService: userPorts.PostFollowService,
+		Notifications: app.Notification,
+		Trending:      feedCache,
+		FeedOutbox:    feed.NewOutboxPort(feedOutbox),
+		Codohue:       codohueClient,
+	})
+	if err != nil {
+		return err
+	}
+	app.Post = post
+	app.log.Info("post context initialized",
+		"hashtag_cache", app.redis != nil,
+		"codohue", codohueClient != nil,
+	)
+	return nil
 }

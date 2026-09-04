@@ -26,10 +26,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jarviisha/darkvoid/internal/feature/feed"
+	feedcache "github.com/jarviisha/darkvoid/internal/feature/feed/cache"
+	notifcache "github.com/jarviisha/darkvoid/internal/feature/notification/cache"
+	notifentity "github.com/jarviisha/darkvoid/internal/feature/notification/entity"
+	notifrepo "github.com/jarviisha/darkvoid/internal/feature/notification/repository"
+	notifservice "github.com/jarviisha/darkvoid/internal/feature/notification/service"
 	postentity "github.com/jarviisha/darkvoid/internal/feature/post/entity"
 	postrepo "github.com/jarviisha/darkvoid/internal/feature/post/repository"
 	postservice "github.com/jarviisha/darkvoid/internal/feature/post/service"
 	userrepo "github.com/jarviisha/darkvoid/internal/feature/user/repository"
+	userservice "github.com/jarviisha/darkvoid/internal/feature/user/service"
 	"github.com/jarviisha/darkvoid/pkg/codohue"
 	"github.com/jarviisha/darkvoid/pkg/config"
 	"github.com/jarviisha/darkvoid/pkg/database"
@@ -416,8 +423,42 @@ func (r *seedUserReader) GetAuthorsByIDs(ctx context.Context, ids []uuid.UUID) (
 	return authors, nil
 }
 
+// seedNotificationUserReader is the notification context's view of the same
+// users seedUserReader serves to the post context. Two readers for one query
+// because each context owns its own actor shape.
+type seedNotificationUserReader struct {
+	userRepo *userrepo.UserRepository
+}
+
+func (r *seedNotificationUserReader) GetAuthorsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]*notifentity.Actor, error) {
+	users, err := r.userRepo.GetUsersByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	actors := make(map[uuid.UUID]*notifentity.Actor, len(users))
+	for _, u := range users {
+		actors[u.ID] = &notifentity.Actor{
+			ID:          u.ID,
+			Username:    u.Username,
+			DisplayName: u.DisplayName,
+			AvatarKey:   u.AvatarKey,
+		}
+	}
+	return actors, nil
+}
+
+// newSeedServices builds the post services the seeder writes through.
+//
+// It builds the same dependencies the API does, rather than leaving them out.
+// The services used to be constructed without a follow checker, a notification
+// emitter or a feed outbox, so seeded content was invisible to the feed and
+// produced no notifications — a difference nothing reported, and one that made
+// seeded data useless for exercising either.
 func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) (*seedServices, func(), error) {
+	cleanup := func() {}
+
 	userRepository := userrepo.NewUserRepository(pool)
+	followRepository := userrepo.NewFollowRepository(pool)
 	userReader := &seedUserReader{userRepo: userRepository}
 
 	postRepository := postrepo.NewPostRepository(pool)
@@ -430,27 +471,58 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 	mentionRepository := postrepo.NewMentionRepository(pool)
 	commentMentionRepository := postrepo.NewCommentMentionRepository(pool)
 
-	postSvc := postservice.NewPostService(pool, postRepository, mediaRepository, userReader, hashtagRepository,
-		postservice.WithLikeRepo(likeRepository),
-		postservice.WithMentionRepo(mentionRepository),
-	)
-	likeSvc := postservice.NewLikeService(likeRepository, postRepository)
-	commentSvc := postservice.NewCommentService(pool, commentRepository, commentMediaRepository, postRepository, userReader,
-		postservice.WithCommentLikeRepo(commentLikeRepository),
-		postservice.WithCommentMentionRepo(commentMentionRepository),
+	// Redis is connected unconditionally rather than only for Codohue: the feed
+	// cache and the notification cache both live in it, and the services below
+	// take them as required dependencies.
+	redisClient, err := pkgredis.New(ctx, &pkgredis.Config{
+		Host:     cfg.Redis.Host,
+		Port:     cfg.Redis.Port,
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+		PoolSize: cfg.Redis.PoolSize,
+	})
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("connect redis: %w", err)
+	}
+	cleanup = func() {
+		if closeErr := redisClient.Close(); closeErr != nil {
+			log.Printf("  warn close redis: %v", closeErr)
+		}
+	}
+
+	feedCache := feedcache.NewRedisFeedCache(redisClient)
+	outboxPort := feed.NewOutboxPort(feed.NewPostgresOutbox(pool))
+
+	followSvc, err := userservice.NewFollowService(userservice.FollowDeps{
+		Repo:            followRepository,
+		Pool:            pool,
+		FeedInvalidator: feedCache,
+		FeedOutbox:      outboxPort,
+	})
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("follow service: %w", err)
+	}
+
+	// No broker: the seeder has no SSE clients. Notifications are still written
+	// and their unread counts still invalidated; only the live push is absent.
+	notifSvc := notifservice.NewNotificationService(
+		notifrepo.NewNotificationRepository(pool),
+		notifcache.NewRedisNotificationCache(redisClient),
+		&seedNotificationUserReader{userRepo: userRepository},
 	)
 
-	var redisClient *pkgredis.Client
-	cleanup := func() {}
+	var postOpts []postservice.PostServiceOption
+	var likeOpts []postservice.LikeServiceOption
+	var commentOpts []postservice.CommentServiceOption
 	if cfg.Codohue.Enabled {
-		result, err := codohue.ProvisionNamespaceConfig(ctx, codohue.NamespaceProvisionConfig{
+		result, provErr := codohue.ProvisionNamespaceConfig(ctx, codohue.NamespaceProvisionConfig{
 			AdminBaseURL: cfg.Codohue.AdminURL,
 			AdminKey:     cfg.Codohue.AdminKey,
 			Namespace:    cfg.Codohue.Namespace,
 			EmbeddingDim: cfg.Codohue.EmbeddingDim,
 		})
-		if err != nil {
-			return nil, cleanup, fmt.Errorf("provision codohue namespace config: %w", err)
+		if provErr != nil {
+			return nil, cleanup, fmt.Errorf("provision codohue namespace config: %w", provErr)
 		}
 		if result.APIKey != "" {
 			cfg.Codohue.NamespaceKey = result.APIKey
@@ -459,36 +531,63 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 			return nil, cleanup, fmt.Errorf("codohue namespace %q already exists but CODOHUE_NAMESPACE_KEY is not configured", cfg.Codohue.Namespace)
 		}
 
-		redisClient, err = pkgredis.New(ctx, &pkgredis.Config{
-			Host:     cfg.Redis.Host,
-			Port:     cfg.Redis.Port,
-			Password: cfg.Redis.Password,
-			DB:       cfg.Redis.DB,
-			PoolSize: cfg.Redis.PoolSize,
-		})
-		if err != nil {
-			return nil, cleanup, fmt.Errorf("connect redis for codohue events: %w", err)
+		codohueClient, clientErr := codohue.NewClient(cfg.Codohue.BaseURL, cfg.Codohue.NamespaceKey, cfg.Codohue.Namespace, redisClient)
+		if clientErr != nil {
+			return nil, cleanup, fmt.Errorf("create codohue client: %w", clientErr)
 		}
-		cleanup = func() {
-			if closeErr := redisClient.Close(); closeErr != nil {
-				log.Printf("  warn close redis: %v", closeErr)
-			}
+		if pingErr := codohueClient.Ping(ctx); pingErr != nil {
+			return nil, cleanup, fmt.Errorf("codohue ping: %w", pingErr)
 		}
 
-		codohueClient, err := codohue.NewClient(cfg.Codohue.BaseURL, cfg.Codohue.NamespaceKey, cfg.Codohue.Namespace, redisClient)
-		if err != nil {
-			cleanup()
-			return nil, func() {}, fmt.Errorf("create codohue client: %w", err)
-		}
-		if err := codohueClient.Ping(ctx); err != nil {
-			cleanup()
-			return nil, func() {}, fmt.Errorf("codohue ping: %w", err)
-		}
-
-		postSvc.WithCatalogIngester(codohueClient)
-		likeSvc.WithBehaviorEventPublisher(codohueClient)
-		commentSvc.WithBehaviorEventPublisher(codohueClient)
+		postOpts = append(postOpts,
+			postservice.WithCatalogIngester(codohueClient),
+			postservice.WithObjectDeleter(codohueClient),
+		)
+		likeOpts = append(likeOpts, postservice.WithLikeBehaviorEventPublisher(codohueClient))
+		commentOpts = append(commentOpts, postservice.WithCommentBehaviorEventPublisher(codohueClient))
 		log.Printf("codohue wired for seed events and catalog ingest (namespace=%s)", cfg.Codohue.Namespace)
+	}
+
+	postSvc, err := postservice.NewPostService(postservice.PostDeps{
+		Pool:                pool,
+		Posts:               postRepository,
+		Media:               mediaRepository,
+		Users:               userReader,
+		Hashtags:            hashtagRepository,
+		Likes:               likeRepository,
+		Mentions:            mentionRepository,
+		FollowChecker:       followSvc,
+		Notifications:       notifSvc,
+		TrendingInvalidator: feedCache,
+		FeedOutbox:          outboxPort,
+	}, postOpts...)
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("post service: %w", err)
+	}
+
+	likeSvc, err := postservice.NewLikeService(postservice.LikeDeps{
+		Likes:         likeRepository,
+		Posts:         postRepository,
+		FollowChecker: followSvc,
+		Notifications: notifSvc,
+	}, likeOpts...)
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("like service: %w", err)
+	}
+
+	commentSvc, err := postservice.NewCommentService(postservice.CommentDeps{
+		Pool:            pool,
+		Comments:        commentRepository,
+		CommentMedia:    commentMediaRepository,
+		Posts:           postRepository,
+		Users:           userReader,
+		CommentLikes:    commentLikeRepository,
+		CommentMentions: commentMentionRepository,
+		FollowChecker:   followSvc,
+		Notifications:   notifSvc,
+	}, commentOpts...)
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("comment service: %w", err)
 	}
 
 	return &seedServices{

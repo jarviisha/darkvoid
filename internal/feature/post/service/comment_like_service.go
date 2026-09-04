@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	post "github.com/jarviisha/darkvoid/internal/feature/post"
 	"github.com/jarviisha/darkvoid/internal/feature/post/repository"
+	"github.com/jarviisha/darkvoid/pkg/deps"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
@@ -16,27 +17,43 @@ type CommentLikeService struct {
 	commentLikeRepo commentLikeRepo
 	commentRepo     commentRepo
 	postRepo        postRepo
-	followChecker   followChecker                  // optional: nil → followers content denied
-	notifEmitter    CommentLikeNotificationEmitter // optional, nil = no-op
+	followChecker   followChecker
+	notifEmitter    CommentLikeNotificationEmitter
+}
+
+// CommentLikeDeps carries everything CommentLikeService needs. Every field is
+// required: FollowChecker authorizes followers-only content, and a deployment
+// that reaches this service at all has a notification context.
+type CommentLikeDeps struct {
+	CommentLikes  *repository.CommentLikeRepository
+	Comments      *repository.CommentRepository
+	Posts         *repository.PostRepository
+	FollowChecker followChecker
+	Notifications CommentLikeNotificationEmitter
+}
+
+func (d CommentLikeDeps) validate() error {
+	return deps.Missing(map[string]any{
+		"CommentLikes":  d.CommentLikes,
+		"Comments":      d.Comments,
+		"Posts":         d.Posts,
+		"FollowChecker": d.FollowChecker,
+		"Notifications": d.Notifications,
+	})
 }
 
 // NewCommentLikeService creates a new CommentLikeService.
-func NewCommentLikeService(commentLikeRepo *repository.CommentLikeRepository, commentRepo *repository.CommentRepository, postRepo *repository.PostRepository) *CommentLikeService {
-	return &CommentLikeService{
-		commentLikeRepo: commentLikeRepo,
-		commentRepo:     &commentRepoTxable{commentRepo},
-		postRepo:        &postRepoTxable{postRepo},
+func NewCommentLikeService(deps CommentLikeDeps) (*CommentLikeService, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
-}
-
-// WithFollowChecker attaches the checker used to authorize followers-only posts.
-func (s *CommentLikeService) WithFollowChecker(checker followChecker) {
-	s.followChecker = checker
-}
-
-// WithNotificationEmitter attaches a notification emitter. Called at wire-up time.
-func (s *CommentLikeService) WithNotificationEmitter(e CommentLikeNotificationEmitter) {
-	s.notifEmitter = e
+	return &CommentLikeService{
+		commentLikeRepo: deps.CommentLikes,
+		commentRepo:     &commentRepoTxable{deps.Comments},
+		postRepo:        &postRepoTxable{deps.Posts},
+		followChecker:   deps.FollowChecker,
+		notifEmitter:    deps.Notifications,
+	}, nil
 }
 
 // Toggle likes or unlikes a comment depending on current state. Returns true if now liked.

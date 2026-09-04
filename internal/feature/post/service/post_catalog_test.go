@@ -35,8 +35,7 @@ func waitFor[T any](t *testing.T, ch chan T, what string) T {
 func TestIngestCatalogAsync_SendsContentTagsAndAuthor(t *testing.T) {
 	ingester := &mockCatalogIngester{items: make(chan capturedCatalogItem, 1)}
 	s := &PostService{}
-	s.WithCatalogIngester(ingester)
-
+	s.catalogIngester = ingester
 	s.ingestCatalogAsync("post-1", "hello world", []string{"go", "backend"}, "author-1")
 
 	got := waitFor(t, ingester.items, "catalog ingest")
@@ -87,8 +86,7 @@ func TestIndexText(t *testing.T) {
 func TestIngestCatalogAsync_UsesIndexText(t *testing.T) {
 	ingester := &mockCatalogIngester{items: make(chan capturedCatalogItem, 1)}
 	s := &PostService{}
-	s.WithCatalogIngester(ingester)
-
+	s.catalogIngester = ingester
 	content, tags := "bún chả Hà Nội", []string{"amthuc", "hanoi"}
 	s.ingestCatalogAsync("post-9", content, tags, "author-9")
 

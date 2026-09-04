@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/uuid"
 	appMiddleware "github.com/jarviisha/darkvoid/internal/app/middleware"
@@ -31,26 +32,36 @@ type AdminPorts struct {
 // SetupAdminContext initializes the admin context.
 // It uses narrow adapters over the user repositories instead of reaching into
 // the user sqlc layer directly.
-func SetupAdminContext(userRepo adminUserStoreSource, roleRepo *repository.RoleRepository, store storage.Storage) *AdminContext {
-	userStoreAdapter := newAdminUserStoreAdapter(userRepo)
-	svc := adminService.NewAdminService(userStoreAdapter, roleRepo, store)
-	h := adminHandler.NewAdminHandler(svc)
+func SetupAdminContext(
+	userRepo adminUserStoreSource,
+	roleRepo *repository.RoleRepository,
+	store storage.Storage,
+	notif *NotificationContext,
+) (*AdminContext, error) {
+	if notif == nil {
+		return nil, fmt.Errorf("admin context: missing required dependencies: Notifications")
+	}
+	svc, err := adminService.NewAdminService(adminService.AdminDeps{
+		Users:         newAdminUserStoreAdapter(userRepo),
+		Roles:         roleRepo,
+		Storage:       store,
+		Notifications: notif.notifService,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("admin context: %w", err)
+	}
 
 	return &AdminContext{
 		roleRepo:     roleRepo,
 		adminService: svc,
-		adminHandler: h,
-	}
+		adminHandler: adminHandler.NewAdminHandler(svc),
+	}, nil
 }
 
 func (ctx *AdminContext) Ports() AdminPorts {
 	return AdminPorts{
 		RoleChecker: ctx.adminService,
 	}
-}
-
-func (ctx *AdminContext) WireNotificationEmitter(notif *NotificationContext) {
-	ctx.adminService.WithNotificationEmitter(notif.notifService)
 }
 
 // GrantAdminRole grants the admin role to userID. It is idempotent — re-granting

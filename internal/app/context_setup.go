@@ -12,16 +12,21 @@ func (app *Application) setupContexts(ctx context.Context) error {
 
 	// The feed cache and the feed outbox come first because they need nothing
 	// from any context — Redis and the pool respectively — while the follow
-	// service and the post services all depend on them.
+	// service and the post services take both as constructor arguments.
 	feedCache, feedOutbox := app.setupFeedInfra()
 
-	app.setupUserContext(store, mail)
+	if err := app.setupUserContext(store, mail, feedCache, feedOutbox); err != nil {
+		return err
+	}
 	app.wireMailDependencies(mail)
 	app.setupStorageContext(store)
 
 	// Notification before Post: it reads the user repository and nothing else,
-	// while four post services take its emitter.
+	// while four post services take its emitter at construction.
 	app.setupNotificationContext(store)
+	if err := app.wireFollowNotificationEmitter(); err != nil {
+		return err
+	}
 
 	if provErr := app.ensureCodohueNamespaceConfig(ctx); provErr != nil {
 		// Codohue is an auxiliary recommender: a provisioning failure must not
@@ -48,15 +53,19 @@ func (app *Application) setupContexts(ctx context.Context) error {
 
 	// After provisioning, which is what fills in cfg.Codohue.NamespaceKey, and
 	// before Post, whose services ingest into the catalog with this same client.
-	codohueClient, err := app.setupCodohueClient()
-	if err != nil {
+	codohueClient, clientErr := app.setupCodohueClient()
+	if clientErr != nil {
+		return clientErr
+	}
+
+	if err := app.setupPostContext(store, feedCache, feedOutbox, codohueClient); err != nil {
+		return err
+	}
+	app.setupFeedContext(store, feedCache, feedOutbox, codohueClient)
+	if err := app.wireFeedDependencies(); err != nil {
 		return err
 	}
 
-	app.setupPostContext(store)
-	app.wireNotificationDependencies()
-	app.setupFeedContext(store, feedCache, feedOutbox, codohueClient)
-	app.wireFeedDependencies()
 	// After the feed context: the settings context owns the feed's runtime knobs,
 	// so it needs the holder the feed just built. Before the server serves, so the
 	// first request already sees the stored values rather than the defaults.
@@ -64,7 +73,9 @@ func (app *Application) setupContexts(ctx context.Context) error {
 	app.wireSettings()
 	app.wireCodohue(ctx, codohueClient)
 	app.setupSearchContext(store)
-	app.setupAdminContext(store)
+	if err := app.setupAdminContext(store); err != nil {
+		return err
+	}
 
 	return nil
 }

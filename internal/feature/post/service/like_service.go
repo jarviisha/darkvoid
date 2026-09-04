@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	post "github.com/jarviisha/darkvoid/internal/feature/post"
 	"github.com/jarviisha/darkvoid/internal/feature/post/repository"
+	"github.com/jarviisha/darkvoid/pkg/deps"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
@@ -16,29 +17,53 @@ import (
 type LikeService struct {
 	likeRepo       likeRepo
 	postRepo       postRepo
-	notifEmitter   LikeNotificationEmitter // optional, nil = no-op
-	eventPublisher BehaviorEventPublisher  // optional, nil = no-op
-	followChecker  followChecker           // optional: nil → followers content denied
+	notifEmitter   LikeNotificationEmitter
+	followChecker  followChecker
+	eventPublisher BehaviorEventPublisher // optional: absent unless Codohue is enabled
 }
 
-// WithFollowChecker attaches the checker used to authorize followers-only posts.
-func (s *LikeService) WithFollowChecker(checker followChecker) {
-	s.followChecker = checker
+// LikeDeps carries the dependencies LikeService cannot work without.
+type LikeDeps struct {
+	Likes         *repository.LikeRepository
+	Posts         *repository.PostRepository
+	FollowChecker followChecker
+	Notifications LikeNotificationEmitter
 }
 
-// NewLikeService creates a new LikeService
-func NewLikeService(likeRepo *repository.LikeRepository, postRepo *repository.PostRepository) *LikeService {
-	return &LikeService{likeRepo: likeRepo, postRepo: &postRepoTxable{postRepo}}
+func (d LikeDeps) validate() error {
+	return deps.Missing(map[string]any{
+		"Likes":         d.Likes,
+		"Posts":         d.Posts,
+		"FollowChecker": d.FollowChecker,
+		"Notifications": d.Notifications,
+	})
 }
 
-// WithNotificationEmitter attaches a notification emitter. Called at wire-up time.
-func (s *LikeService) WithNotificationEmitter(e LikeNotificationEmitter) {
-	s.notifEmitter = e
+// LikeServiceOption configures the dependencies LikeService can run without.
+type LikeServiceOption func(*LikeService)
+
+// WithLikeBehaviorEventPublisher attaches the Codohue behaviour-event publisher.
+// Absent on every deployment with CODOHUE_ENABLED unset, which is why it is an
+// option rather than a LikeDeps field.
+func WithLikeBehaviorEventPublisher(p BehaviorEventPublisher) LikeServiceOption {
+	return func(s *LikeService) { s.eventPublisher = p }
 }
 
-// WithBehaviorEventPublisher attaches a behavior event publisher. Called at wire-up time.
-func (s *LikeService) WithBehaviorEventPublisher(p BehaviorEventPublisher) {
-	s.eventPublisher = p
+// NewLikeService creates a new LikeService.
+func NewLikeService(deps LikeDeps, opts ...LikeServiceOption) (*LikeService, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
+	s := &LikeService{
+		likeRepo:      deps.Likes,
+		postRepo:      &postRepoTxable{deps.Posts},
+		followChecker: deps.FollowChecker,
+		notifEmitter:  deps.Notifications,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
 }
 
 // Like adds a like from userID to postID

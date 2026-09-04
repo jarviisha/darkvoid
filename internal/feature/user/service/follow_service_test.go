@@ -183,7 +183,7 @@ func (m *mockFollowFeedEmitter) EmitFollowDeleted(_ context.Context, followerID,
 }
 
 func newFollowService(repo followRepo) *FollowService {
-	return NewFollowService(repo)
+	return &FollowService{followRepo: repo}
 }
 
 // --------------------------------------------------------------------------
@@ -218,19 +218,19 @@ func TestFollow_Success(t *testing.T) {
 	emittedFollower, emittedFollowee := uuid.Nil, uuid.Nil
 
 	svc := newFollowService(&mockFollowRepo{})
-	svc.WithFeedInvalidator(&mockFeedInvalidator{
+	svc.feedInvalidator = &mockFeedInvalidator{
 		invalidate: func(_ context.Context, userID uuid.UUID) error {
 			invalidatedID = userID
 			return nil
 		},
-	})
-	svc.WithNotificationEmitter(&mockNotifEmitter{
+	}
+	svc.notifEmitter = &mockNotifEmitter{
 		emitFollow: func(_ context.Context, fwer, fwee uuid.UUID) error {
 			emittedFollower = fwer
 			emittedFollowee = fwee
 			return nil
 		},
-	})
+	}
 
 	if err := svc.Follow(context.Background(), followerID, followeeID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -249,8 +249,7 @@ func TestFollow_EmitsFeedEventAfterSuccess(t *testing.T) {
 	followerID, followeeID := uuid.New(), uuid.New()
 	emitter := &mockFollowFeedEmitter{}
 	svc := newFollowService(&mockFollowRepo{})
-	svc.WithFeedEventEmitter(emitter)
-
+	svc.feedEmitter = emitter
 	if err := svc.Follow(context.Background(), followerID, followeeID); err != nil {
 		t.Fatalf("Follow: %v", err)
 	}
@@ -261,8 +260,7 @@ func TestFollow_EmitsFeedEventAfterSuccess(t *testing.T) {
 
 func TestFollow_FeedEmitterFailureIsNonFatal(t *testing.T) {
 	svc := newFollowService(&mockFollowRepo{})
-	svc.WithFeedEventEmitter(&mockFollowFeedEmitter{err: fmt.Errorf("queue full")})
-
+	svc.feedEmitter = &mockFollowFeedEmitter{err: fmt.Errorf("queue full")}
 	if err := svc.Follow(context.Background(), uuid.New(), uuid.New()); err != nil {
 		t.Fatalf("Follow should ignore feed emitter error: %v", err)
 	}
@@ -278,9 +276,8 @@ func TestFollow_PersistsFeedOutboxInsideMutationTransaction(t *testing.T) {
 		pool:       &followMockTxBeginner{tx: tx},
 		withTx:     func(pgx.Tx) followRepo { return repo },
 	}
-	svc.WithFeedEventOutbox(outbox)
-	svc.WithFeedEventEmitter(emitter)
-
+	svc.feedOutbox = outbox
+	svc.feedEmitter = emitter
 	if err := svc.Follow(context.Background(), uuid.New(), uuid.New()); err != nil {
 		t.Fatalf("Follow: %v", err)
 	}
@@ -303,8 +300,7 @@ func TestUnfollow_OutboxFailureAbortsMutation(t *testing.T) {
 		pool:       &followMockTxBeginner{tx: tx},
 		withTx:     func(pgx.Tx) followRepo { return repo },
 	}
-	svc.WithFeedEventOutbox(&mockFollowOutbox{err: fmt.Errorf("outbox unavailable")})
-
+	svc.feedOutbox = &mockFollowOutbox{err: fmt.Errorf("outbox unavailable")}
 	if err := svc.Unfollow(context.Background(), uuid.New(), uuid.New()); err == nil {
 		t.Fatal("expected outbox failure")
 	}
@@ -368,11 +364,11 @@ func TestGetFollowingAmong_EmptyInputSkipsRepository(t *testing.T) {
 // and fail the Follow call.
 func TestFollow_CacheInvalidationError_DoesNotFail(t *testing.T) {
 	svc := newFollowService(&mockFollowRepo{})
-	svc.WithFeedInvalidator(&mockFeedInvalidator{
+	svc.feedInvalidator = &mockFeedInvalidator{
 		invalidate: func(_ context.Context, _ uuid.UUID) error {
 			return errors.ErrInternal
 		},
-	})
+	}
 
 	if err := svc.Follow(context.Background(), uuid.New(), uuid.New()); err != nil {
 		t.Fatalf("cache invalidation error must not propagate: %v", err)
@@ -428,12 +424,12 @@ func TestUnfollow_Success(t *testing.T) {
 	invalidatedID := uuid.Nil
 
 	svc := newFollowService(&mockFollowRepo{})
-	svc.WithFeedInvalidator(&mockFeedInvalidator{
+	svc.feedInvalidator = &mockFeedInvalidator{
 		invalidate: func(_ context.Context, userID uuid.UUID) error {
 			invalidatedID = userID
 			return nil
 		},
-	})
+	}
 
 	if err := svc.Unfollow(context.Background(), followerID, followeeID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -449,8 +445,7 @@ func TestUnfollow_EmitsFeedEventAfterSuccess(t *testing.T) {
 	followerID, followeeID := uuid.New(), uuid.New()
 	emitter := &mockFollowFeedEmitter{}
 	svc := newFollowService(&mockFollowRepo{})
-	svc.WithFeedEventEmitter(emitter)
-
+	svc.feedEmitter = emitter
 	if err := svc.Unfollow(context.Background(), followerID, followeeID); err != nil {
 		t.Fatalf("Unfollow: %v", err)
 	}
@@ -461,8 +456,7 @@ func TestUnfollow_EmitsFeedEventAfterSuccess(t *testing.T) {
 
 func TestUnfollow_FeedEmitterFailureIsNonFatal(t *testing.T) {
 	svc := newFollowService(&mockFollowRepo{})
-	svc.WithFeedEventEmitter(&mockFollowFeedEmitter{err: fmt.Errorf("queue full")})
-
+	svc.feedEmitter = &mockFollowFeedEmitter{err: fmt.Errorf("queue full")}
 	if err := svc.Unfollow(context.Background(), uuid.New(), uuid.New()); err != nil {
 		t.Fatalf("Unfollow should ignore feed emitter error: %v", err)
 	}
