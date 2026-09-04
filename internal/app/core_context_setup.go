@@ -41,9 +41,12 @@ func (app *Application) setupUserContext(
 // suppression table exists. Until this runs the gate passes everything through,
 // which is correct: no request is served yet, and the bootstrap mail (if any)
 // predates any suppression.
-func (app *Application) wireMailDependencies(mail *mailInfra) {
-	mail.gate.WithChecker(app.User.SuppressionChecker())
+func (app *Application) wireMailDependencies(mail *mailInfra) error {
+	if err := mail.gate.WireChecker(app.User.SuppressionChecker()); err != nil {
+		return err
+	}
 	app.log.Info("mail suppression gate wired")
+	return nil
 }
 
 func (app *Application) setupStorageContext(store storage.Storage) {

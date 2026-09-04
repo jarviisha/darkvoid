@@ -34,3 +34,35 @@ func TestNewFollowService_NamesEveryMissingDependency(t *testing.T) {
 		t.Errorf("error %q names Notifications — it is wired after construction because notification is built from the user repository", err)
 	}
 }
+
+// TestFollowServiceWires_RefuseNilAndSecondCall pins both deferred wires on the
+// follow service. Each is a real cycle — the dispatcher needs posts, the
+// notification context needs the user repository this service is built beside —
+// and each is read by concurrent requests, so a second write is a data race.
+func TestFollowServiceWires_RefuseNilAndSecondCall(t *testing.T) {
+	t.Run("feed event emitter", func(t *testing.T) {
+		svc := &FollowService{}
+		if err := svc.WireFeedEventEmitter(nil); err == nil {
+			t.Error("WireFeedEventEmitter(nil) returned a nil error — want a refusal")
+		}
+		if err := svc.WireFeedEventEmitter(&mockFollowFeedEmitter{}); err != nil {
+			t.Fatalf("first WireFeedEventEmitter returned %v — want it accepted", err)
+		}
+		if err := svc.WireFeedEventEmitter(&mockFollowFeedEmitter{}); err == nil {
+			t.Error("a second WireFeedEventEmitter returned a nil error — want a refusal")
+		}
+	})
+
+	t.Run("notification emitter", func(t *testing.T) {
+		svc := &FollowService{}
+		if err := svc.WireNotificationEmitter(nil); err == nil {
+			t.Error("WireNotificationEmitter(nil) returned a nil error — want a refusal")
+		}
+		if err := svc.WireNotificationEmitter(&mockNotifEmitter{}); err != nil {
+			t.Fatalf("first WireNotificationEmitter returned %v — want it accepted", err)
+		}
+		if err := svc.WireNotificationEmitter(&mockNotifEmitter{}); err == nil {
+			t.Error("a second WireNotificationEmitter returned a nil error — want a refusal")
+		}
+	})
+}

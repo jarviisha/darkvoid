@@ -53,8 +53,7 @@ func TestSuppressionGate_PassesThroughWithoutAChecker(t *testing.T) {
 func TestSuppressionGate_ForwardsAllowedRecipients(t *testing.T) {
 	inner := &recordingMailer{}
 	gate := NewSuppressionGate(inner)
-	gate.WithChecker(suppressList("blocked@example.com"))
-
+	mustWireChecker(t, gate, suppressList("blocked@example.com"))
 	if _, err := gate.Send(context.Background(), &Message{To: []string{"ok@example.com"}}); err != nil {
 		t.Fatalf("Send: unexpected error: %v", err)
 	}
@@ -66,8 +65,7 @@ func TestSuppressionGate_ForwardsAllowedRecipients(t *testing.T) {
 func TestSuppressionGate_AllRecipientsSuppressed(t *testing.T) {
 	inner := &recordingMailer{}
 	gate := NewSuppressionGate(inner)
-	gate.WithChecker(suppressList("blocked@example.com"))
-
+	mustWireChecker(t, gate, suppressList("blocked@example.com"))
 	id, err := gate.Send(context.Background(), &Message{To: []string{"blocked@example.com"}})
 	if !errors.Is(err, ErrSuppressed) {
 		t.Fatalf("err = %v, want ErrSuppressed", err)
@@ -83,8 +81,7 @@ func TestSuppressionGate_AllRecipientsSuppressed(t *testing.T) {
 func TestSuppressionGate_DropsOnlyTheSuppressedRecipients(t *testing.T) {
 	inner := &recordingMailer{}
 	gate := NewSuppressionGate(inner)
-	gate.WithChecker(suppressList("blocked@example.com"))
-
+	mustWireChecker(t, gate, suppressList("blocked@example.com"))
 	msg := &Message{To: []string{"ok@example.com", "blocked@example.com", "also-ok@example.com"}}
 	if _, err := gate.Send(context.Background(), msg); err != nil {
 		t.Fatalf("Send: unexpected error: %v", err)
@@ -107,7 +104,7 @@ func TestSuppressionGate_DropsOnlyTheSuppressedRecipients(t *testing.T) {
 func TestSuppressionGate_CheckerErrorFailsOpen(t *testing.T) {
 	inner := &recordingMailer{}
 	gate := NewSuppressionGate(inner)
-	gate.WithChecker(checkerFunc(func(_ context.Context, _ string) (bool, error) {
+	mustWireChecker(t, gate, checkerFunc(func(_ context.Context, _ string) (bool, error) {
 		return false, errors.New("database is down")
 	}))
 
@@ -123,9 +120,52 @@ func TestSuppressionGate_PropagatesInnerError(t *testing.T) {
 	sendErr := errors.New("provider rejected the message")
 	inner := &recordingMailer{err: sendErr}
 	gate := NewSuppressionGate(inner)
-	gate.WithChecker(suppressList())
-
+	mustWireChecker(t, gate, suppressList())
 	if _, err := gate.Send(context.Background(), &Message{To: []string{"user@example.com"}}); !errors.Is(err, sendErr) {
 		t.Fatalf("err = %v, want the inner mailer's error", err)
+	}
+}
+
+// TestWireChecker_RefusesNilAndSecondCall covers the last dependency in the
+// application that still arrived by silent assignment.
+//
+// It cannot move into the constructor: the mailer is built during infrastructure
+// setup, before the user context that owns the suppression table exists. But
+// forgetting it is the quietest failure in the mail stack — the gate passes
+// everything, so addresses that have hard-bounced keep receiving mail and the
+// sending domain's reputation degrades with nothing in the logs to say why.
+//
+// A second call is refused for a different reason: the checker is read by
+// concurrent Send calls without synchronisation, and a write after serving
+// starts is a data race rather than a reconfiguration.
+func TestWireChecker_RefusesNilAndSecondCall(t *testing.T) {
+	gate := NewSuppressionGate(&NopMailer{})
+
+	if err := gate.WireChecker(nil); err == nil {
+		t.Error("WireChecker(nil) returned a nil error — want a refusal, since a nil checker silently passes every recipient")
+	}
+
+	if err := gate.WireChecker(&stubSuppressionChecker{}); err != nil {
+		t.Fatalf("WireChecker on a fresh gate returned %v — want it accepted", err)
+	}
+
+	if err := gate.WireChecker(&stubSuppressionChecker{}); err == nil {
+		t.Error("a second WireChecker returned a nil error — want a refusal, since Send reads the field unsynchronised")
+	}
+}
+
+type stubSuppressionChecker struct{}
+
+func (s *stubSuppressionChecker) IsSuppressed(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+// mustWireChecker keeps the wiring contract in the test path: WireChecker can
+// now fail, and a setup line that swallowed that error would hide exactly the
+// mistake the guard exists to catch.
+func mustWireChecker(t *testing.T, g *SuppressionGate, c SuppressionChecker) {
+	t.Helper()
+	if err := g.WireChecker(c); err != nil {
+		t.Fatalf("WireChecker: %v", err)
 	}
 }

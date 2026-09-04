@@ -18,7 +18,9 @@ func (app *Application) setupContexts(ctx context.Context) error {
 	if err := app.setupUserContext(store, mail, feedCache, feedOutbox); err != nil {
 		return err
 	}
-	app.wireMailDependencies(mail)
+	if err := app.wireMailDependencies(mail); err != nil {
+		return err
+	}
 	app.setupStorageContext(store)
 
 	// Notification before Post: it reads the user repository and nothing else,

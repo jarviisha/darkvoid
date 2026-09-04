@@ -32,15 +32,31 @@ type SuppressionGate struct {
 	checker SuppressionChecker
 }
 
-// NewSuppressionGate wraps inner. Until WithChecker is called the gate passes
+// NewSuppressionGate wraps inner. Until WireChecker is called the gate passes
 // everything through, which is also the steady state for the nop provider.
 func NewSuppressionGate(inner Mailer) *SuppressionGate {
 	return &SuppressionGate{inner: inner}
 }
 
-// WithChecker injects the suppression source. Call during setup, before serving.
-func (g *SuppressionGate) WithChecker(checker SuppressionChecker) {
+// WireChecker injects the suppression source. Call during setup, before serving.
+//
+// It refuses a nil checker because the gate's failure mode is silence: with no
+// checker every recipient passes, so addresses that have hard-bounced keep
+// receiving mail and the sending domain's reputation degrades with nothing in
+// the logs naming the cause.
+//
+// It refuses a second call because Send reads the field without
+// synchronisation. Writing it once during setup is safe; writing it again once
+// requests are being served is a data race, not a reconfiguration.
+func (g *SuppressionGate) WireChecker(checker SuppressionChecker) error {
+	if checker == nil {
+		return errors.New("mailer: suppression checker is nil")
+	}
+	if g.checker != nil {
+		return errors.New("mailer: suppression checker is already wired")
+	}
 	g.checker = checker
+	return nil
 }
 
 // Send drops suppressed recipients and forwards the rest.

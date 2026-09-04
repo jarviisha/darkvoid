@@ -100,3 +100,26 @@ func TestNewPostService_NamesEveryMissingDependency(t *testing.T) {
 		}
 	}
 }
+
+// TestWireFeedEventEmitter_RefusesNilAndSecondCall pins the one dependency this
+// service still receives after construction.
+//
+// It has to: the dispatcher's fanout worker reads posts, so the feed context is
+// built after this one. Being the last deferred wire, it is also the last place
+// a post service can come up half-wired — which is why it refuses rather than
+// assigns. The second-call refusal matters separately: feedEmitter is read by
+// concurrent requests without synchronisation, so a later write is a data race,
+// not a reconfiguration.
+func TestWireFeedEventEmitter_RefusesNilAndSecondCall(t *testing.T) {
+	svc := &PostService{}
+
+	if err := svc.WireFeedEventEmitter(nil); err == nil {
+		t.Error("WireFeedEventEmitter(nil) returned a nil error — want a refusal")
+	}
+	if err := svc.WireFeedEventEmitter(&mockFeedEventEmitter{}); err != nil {
+		t.Fatalf("first WireFeedEventEmitter returned %v — want it accepted", err)
+	}
+	if err := svc.WireFeedEventEmitter(&mockFeedEventEmitter{}); err == nil {
+		t.Error("a second WireFeedEventEmitter returned a nil error — want a refusal")
+	}
+}
