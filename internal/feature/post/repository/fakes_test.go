@@ -37,6 +37,142 @@ type fakeQuerier struct {
 	repliesPreview func(context.Context, db.GetRepliesPreviewParams) ([]db.PostComment, error)
 	likedPostIDs   func(context.Context, db.GetLikedPostIDsParams) ([]uuid.UUID, error)
 	countLikes     func(context.Context, uuid.UUID) (int64, error)
+
+	likeComment     func(context.Context, db.LikeCommentParams) error
+	unlikeComment   func(context.Context, db.UnlikeCommentParams) error
+	isCommentLiked  func(context.Context, db.IsCommentLikedParams) (bool, error)
+	likedCommentIDs func(context.Context, db.GetLikedCommentIDsParams) ([]uuid.UUID, error)
+
+	insertCmtMention func(context.Context, db.InsertCommentMentionParams) error
+	delCmtMentions   func(context.Context, uuid.UUID) error
+	cmtMentionsByCmt func(context.Context, uuid.UUID) ([]db.PostCommentMention, error)
+	insertMention    func(context.Context, db.InsertMentionParams) error
+	delMentions      func(context.Context, uuid.UUID) error
+
+	addPostMedia    func(context.Context, db.AddPostMediaParams) (db.PostPostMedium, error)
+	delPostMedia    func(context.Context, db.DeletePostMediaParams) error
+	delAllPostMedia func(context.Context, uuid.UUID) error
+	addCmtMedia     func(context.Context, db.AddCommentMediaParams) (db.PostCommentMedium, error)
+	cmtMedia        func(context.Context, uuid.UUID) ([]db.PostCommentMedium, error)
+	delAllCmtMedia  func(context.Context, uuid.UUID) error
+
+	createComment  func(context.Context, db.CreateCommentParams) (db.PostComment, error)
+	commentByID    func(context.Context, uuid.UUID) (db.PostComment, error)
+	commentsByPost func(context.Context, db.GetCommentsByPostParams) ([]db.PostComment, error)
+	replies        func(context.Context, db.GetRepliesParams) ([]db.PostComment, error)
+	countComments  func(context.Context, uuid.UUID) (int64, error)
+	deleteComment  func(context.Context, uuid.UUID) error
+
+	likePost   func(context.Context, db.LikePostParams) error
+	unlikePost func(context.Context, db.UnlikePostParams) error
+	isLiked    func(context.Context, db.IsLikedParams) (bool, error)
+
+	hashtagsByPost func(context.Context, uuid.UUID) ([]db.PostHashtag, error)
+	tagsByPrefix   func(context.Context, db.SearchHashtagsByPrefixParams) ([]string, error)
+}
+
+func (f *fakeQuerier) CreateComment(ctx context.Context, arg db.CreateCommentParams) (db.PostComment, error) {
+	return f.createComment(ctx, arg)
+}
+
+func (f *fakeQuerier) GetCommentByID(ctx context.Context, id uuid.UUID) (db.PostComment, error) {
+	return f.commentByID(ctx, id)
+}
+
+func (f *fakeQuerier) GetCommentsByPost(ctx context.Context, arg db.GetCommentsByPostParams) ([]db.PostComment, error) {
+	return f.commentsByPost(ctx, arg)
+}
+
+func (f *fakeQuerier) GetReplies(ctx context.Context, arg db.GetRepliesParams) ([]db.PostComment, error) {
+	return f.replies(ctx, arg)
+}
+
+func (f *fakeQuerier) CountCommentsByPost(ctx context.Context, postID uuid.UUID) (int64, error) {
+	return f.countComments(ctx, postID)
+}
+
+func (f *fakeQuerier) DeleteComment(ctx context.Context, id uuid.UUID) error {
+	return f.deleteComment(ctx, id)
+}
+
+func (f *fakeQuerier) LikePost(ctx context.Context, arg db.LikePostParams) error {
+	return f.likePost(ctx, arg)
+}
+
+func (f *fakeQuerier) UnlikePost(ctx context.Context, arg db.UnlikePostParams) error {
+	return f.unlikePost(ctx, arg)
+}
+
+func (f *fakeQuerier) IsLiked(ctx context.Context, arg db.IsLikedParams) (bool, error) {
+	return f.isLiked(ctx, arg)
+}
+
+func (f *fakeQuerier) GetHashtagsByPostID(ctx context.Context, postID uuid.UUID) ([]db.PostHashtag, error) {
+	return f.hashtagsByPost(ctx, postID)
+}
+
+func (f *fakeQuerier) SearchHashtagsByPrefix(ctx context.Context, arg db.SearchHashtagsByPrefixParams) ([]string, error) {
+	return f.tagsByPrefix(ctx, arg)
+}
+
+func (f *fakeQuerier) LikeComment(ctx context.Context, arg db.LikeCommentParams) error {
+	return f.likeComment(ctx, arg)
+}
+
+func (f *fakeQuerier) UnlikeComment(ctx context.Context, arg db.UnlikeCommentParams) error {
+	return f.unlikeComment(ctx, arg)
+}
+
+func (f *fakeQuerier) IsCommentLiked(ctx context.Context, arg db.IsCommentLikedParams) (bool, error) {
+	return f.isCommentLiked(ctx, arg)
+}
+
+func (f *fakeQuerier) GetLikedCommentIDs(ctx context.Context, arg db.GetLikedCommentIDsParams) ([]uuid.UUID, error) {
+	return f.likedCommentIDs(ctx, arg)
+}
+
+func (f *fakeQuerier) InsertCommentMention(ctx context.Context, arg db.InsertCommentMentionParams) error {
+	return f.insertCmtMention(ctx, arg)
+}
+
+func (f *fakeQuerier) DeleteCommentMentionsByComment(ctx context.Context, commentID uuid.UUID) error {
+	return f.delCmtMentions(ctx, commentID)
+}
+
+func (f *fakeQuerier) GetCommentMentionsByComment(ctx context.Context, commentID uuid.UUID) ([]db.PostCommentMention, error) {
+	return f.cmtMentionsByCmt(ctx, commentID)
+}
+
+func (f *fakeQuerier) InsertMention(ctx context.Context, arg db.InsertMentionParams) error {
+	return f.insertMention(ctx, arg)
+}
+
+func (f *fakeQuerier) DeleteMentionsByPost(ctx context.Context, postID uuid.UUID) error {
+	return f.delMentions(ctx, postID)
+}
+
+func (f *fakeQuerier) AddPostMedia(ctx context.Context, arg db.AddPostMediaParams) (db.PostPostMedium, error) {
+	return f.addPostMedia(ctx, arg)
+}
+
+func (f *fakeQuerier) DeletePostMedia(ctx context.Context, arg db.DeletePostMediaParams) error {
+	return f.delPostMedia(ctx, arg)
+}
+
+func (f *fakeQuerier) DeleteAllPostMedia(ctx context.Context, postID uuid.UUID) error {
+	return f.delAllPostMedia(ctx, postID)
+}
+
+func (f *fakeQuerier) AddCommentMedia(ctx context.Context, arg db.AddCommentMediaParams) (db.PostCommentMedium, error) {
+	return f.addCmtMedia(ctx, arg)
+}
+
+func (f *fakeQuerier) GetCommentMedia(ctx context.Context, commentID uuid.UUID) ([]db.PostCommentMedium, error) {
+	return f.cmtMedia(ctx, commentID)
+}
+
+func (f *fakeQuerier) DeleteAllCommentMedia(ctx context.Context, commentID uuid.UUID) error {
+	return f.delAllCmtMedia(ctx, commentID)
 }
 
 func (f *fakeQuerier) CreatePost(ctx context.Context, arg db.CreatePostParams) (db.PostPost, error) {
