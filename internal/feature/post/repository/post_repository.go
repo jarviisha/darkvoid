@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -110,8 +111,29 @@ func (r *PostRepository) GetDiscoverWithCursor(ctx context.Context, cursorCreate
 	return rowsToPosts(rows), nil
 }
 
+// nullableTime unwraps a nullable timestamp column into the optional field the
+// entities carry. sqlc emits a distinct row type per projection, so the same
+// deleted_at column arrives as four unrelated Go types and its mapping cannot
+// be shared through the type system — but the branch can live in one place.
+func nullableTime(ts pgtype.Timestamptz) *time.Time {
+	if !ts.Valid {
+		return nil
+	}
+	t := ts.Time
+	return &t
+}
+
+// nullableUUID does the same for a nullable uuid column.
+func nullableUUID(id pgtype.UUID) *uuid.UUID {
+	if !id.Valid {
+		return nil
+	}
+	v := uuid.UUID(id.Bytes)
+	return &v
+}
+
 func rowToPost(row db.PostPost) *entity.Post {
-	p := &entity.Post{
+	return &entity.Post{
 		ID:           row.ID,
 		AuthorID:     row.AuthorID,
 		Content:      row.Content,
@@ -120,12 +142,8 @@ func rowToPost(row db.PostPost) *entity.Post {
 		CommentCount: row.CommentCount,
 		CreatedAt:    row.CreatedAt.Time,
 		UpdatedAt:    row.UpdatedAt.Time,
+		DeletedAt:    nullableTime(row.DeletedAt),
 	}
-	if row.DeletedAt.Valid {
-		t := row.DeletedAt.Time
-		p.DeletedAt = &t
-	}
-	return p
 }
 
 func rowsToPosts(rows []db.PostPost) []*entity.Post {
@@ -139,7 +157,7 @@ func rowsToPosts(rows []db.PostPost) []*entity.Post {
 func followingCursorRowsToPosts(rows []db.GetFollowingPostsWithCursorRow) []*entity.Post {
 	result := make([]*entity.Post, len(rows))
 	for i, row := range rows {
-		p := &entity.Post{
+		result[i] = &entity.Post{
 			ID:           row.ID,
 			AuthorID:     row.AuthorID,
 			Content:      row.Content,
@@ -148,12 +166,8 @@ func followingCursorRowsToPosts(rows []db.GetFollowingPostsWithCursorRow) []*ent
 			CommentCount: row.CommentCount,
 			CreatedAt:    row.CreatedAt.Time,
 			UpdatedAt:    row.UpdatedAt.Time,
+			DeletedAt:    nullableTime(row.DeletedAt),
 		}
-		if row.DeletedAt.Valid {
-			t := row.DeletedAt.Time
-			p.DeletedAt = &t
-		}
-		result[i] = p
 	}
 	return result
 }
@@ -193,10 +207,7 @@ func (r *PostRepository) GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]
 		p.Visibility = entity.Visibility(vis)
 		p.CreatedAt = createdAt.Time
 		p.UpdatedAt = updatedAt.Time
-		if deletedAt.Valid {
-			t := deletedAt.Time
-			p.DeletedAt = &t
-		}
+		p.DeletedAt = nullableTime(deletedAt)
 		posts = append(posts, &p)
 	}
 	return posts, database.MapDBError(rows.Err())
@@ -205,7 +216,7 @@ func (r *PostRepository) GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]
 func hashtagCursorRowsToPosts(rows []db.GetPostsByHashtagWithCursorRow) []*entity.Post {
 	result := make([]*entity.Post, len(rows))
 	for i, row := range rows {
-		p := &entity.Post{
+		result[i] = &entity.Post{
 			ID:           row.ID,
 			AuthorID:     row.AuthorID,
 			Content:      row.Content,
@@ -214,12 +225,8 @@ func hashtagCursorRowsToPosts(rows []db.GetPostsByHashtagWithCursorRow) []*entit
 			CommentCount: row.CommentCount,
 			CreatedAt:    row.CreatedAt.Time,
 			UpdatedAt:    row.UpdatedAt.Time,
+			DeletedAt:    nullableTime(row.DeletedAt),
 		}
-		if row.DeletedAt.Valid {
-			t := row.DeletedAt.Time
-			p.DeletedAt = &t
-		}
-		result[i] = p
 	}
 	return result
 }

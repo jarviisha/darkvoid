@@ -35,7 +35,7 @@ func (r *PostSearchRepository) SearchByQuery(ctx context.Context, query string, 
 func searchRowsToPosts(rows []db.SearchPostsRow) []*entity.Post {
 	result := make([]*entity.Post, len(rows))
 	for i, row := range rows {
-		p := &entity.Post{
+		result[i] = &entity.Post{
 			ID:           row.ID,
 			AuthorID:     row.AuthorID,
 			Content:      row.Content,
@@ -44,12 +44,8 @@ func searchRowsToPosts(rows []db.SearchPostsRow) []*entity.Post {
 			CommentCount: row.CommentCount,
 			CreatedAt:    row.CreatedAt.Time,
 			UpdatedAt:    row.UpdatedAt.Time,
+			DeletedAt:    nullableTime(row.DeletedAt),
 		}
-		if row.DeletedAt.Valid {
-			t := row.DeletedAt.Time
-			p.DeletedAt = &t
-		}
-		result[i] = p
 	}
 	return result
 }

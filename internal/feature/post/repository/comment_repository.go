@@ -119,7 +119,7 @@ func (r *CommentRepository) Delete(ctx context.Context, id uuid.UUID) error {
 }
 
 func rowToComment(row db.PostComment) *entity.Comment {
-	c := &entity.Comment{
+	return &entity.Comment{
 		ID:        row.ID,
 		PostID:    row.PostID,
 		AuthorID:  row.AuthorID,
@@ -127,16 +127,9 @@ func rowToComment(row db.PostComment) *entity.Comment {
 		LikeCount: row.LikeCount,
 		CreatedAt: row.CreatedAt.Time,
 		UpdatedAt: row.UpdatedAt.Time,
+		ParentID:  nullableUUID(row.ParentID),
+		DeletedAt: nullableTime(row.DeletedAt),
 	}
-	if row.ParentID.Valid {
-		id := uuid.UUID(row.ParentID.Bytes)
-		c.ParentID = &id
-	}
-	if row.DeletedAt.Valid {
-		t := row.DeletedAt.Time
-		c.DeletedAt = &t
-	}
-	return c
 }
 
 func rowsToComments(rows []db.PostComment) []*entity.Comment {
