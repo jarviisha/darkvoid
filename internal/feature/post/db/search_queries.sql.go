@@ -17,8 +17,8 @@ SELECT id, author_id, content, visibility, created_at, updated_at, deleted_at, l
 FROM post.posts
 WHERE deleted_at IS NULL
   AND visibility = 'public'
-  AND search_vector @@ plainto_tsquery('english', $1::text)
-ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1::text)) DESC, created_at DESC
+  AND search_vector @@ plainto_tsquery('simple', post.immutable_unaccent($1::text))
+ORDER BY ts_rank(search_vector, plainto_tsquery('simple', post.immutable_unaccent($1::text))) DESC, created_at DESC
 LIMIT $3 OFFSET $2
 `
 
@@ -41,6 +41,11 @@ type SearchPostsRow struct {
 }
 
 // SearchPosts performs a full-text search over public posts using tsvector.
+// The configuration and the normalization here must match the ones
+// post.posts.search_vector is generated with (migrations/post/000015). They are
+// two halves of one comparison: a query built with a different configuration
+// does not match worse, it matches nothing, and an empty page is
+// indistinguishable from an empty corpus.
 func (q *Queries) SearchPosts(ctx context.Context, arg SearchPostsParams) ([]SearchPostsRow, error) {
 	rows, err := q.db.Query(ctx, searchPosts, arg.Query, arg.Offset, arg.Limit)
 	if err != nil {
