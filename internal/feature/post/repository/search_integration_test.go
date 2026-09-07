@@ -2,11 +2,15 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jarviisha/darkvoid/internal/feature/post/entity"
 )
 
 // dsnEnv opts a run into the queries that need a real server. Every other test
@@ -136,4 +140,135 @@ func TestSearchByQuery_ReturnsMappedPublicPosts(t *testing.T) {
 			t.Errorf("post %v: content not scanned", p.ID)
 		}
 	}
+}
+
+// diacriticProbe pulls a word out of the live corpus that changes when its
+// marks are stripped, and returns it both ways. Taking the word from the corpus
+// rather than hard-coding one keeps the test about the search path instead of
+// about whether some fixture happens to be present.
+func diacriticProbe(t *testing.T, pool *pgxpool.Pool) (written, typed string) {
+	t.Helper()
+
+	err := pool.QueryRow(context.Background(),
+		`SELECT w.word, post.immutable_unaccent(w.word)
+		   FROM post.posts p,
+		        LATERAL (
+		            SELECT unnest(regexp_split_to_array(p.content, '[^[:alpha:]]+')) AS word
+		        ) w
+		  WHERE p.deleted_at IS NULL
+		    AND p.visibility = 'public'
+		    AND length(w.word) >= 4
+		    AND w.word <> post.immutable_unaccent(w.word)
+		  LIMIT 1`).Scan(&written, &typed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		t.Skip("no public post contains an accented word; nothing to strip")
+	}
+	if err != nil {
+		t.Fatalf("find an accented word: %v", err)
+	}
+	return written, typed
+}
+
+// Typing Vietnamese without diacritics is ordinary input, not an edge case.
+// Under the 'english' configuration this replaced, 'tiền' and 'tien' were
+// different lexemes, so the second search returned an empty page — which reads
+// as "no results" rather than as a broken search, and is why the bug survived.
+//
+// The two searches must agree exactly, not merely both be non-empty: after
+// unaccent both build the *same* tsquery, so any divergence means one half of
+// the comparison stopped normalizing the way the other does. That is the
+// failure this pins. It is deliberately end to end — the configuration is named
+// in the generated column and again in the query, and reviewing either site
+// alone cannot show that the two still match.
+func TestSearchByQuery_MatchesWithoutDiacritics(t *testing.T) {
+	pool := openTestPool(t)
+	written, typed := diacriticProbe(t, pool)
+	r := NewPostSearchRepository(pool)
+	ctx := context.Background()
+
+	asWritten, err := r.SearchByQuery(ctx, written, 50, 0)
+	if err != nil {
+		t.Fatalf("SearchByQuery(%q): %v", written, err)
+	}
+	if len(asWritten) == 0 {
+		t.Fatalf("%q is a word from the corpus and must match at least the post it came from", written)
+	}
+
+	asTyped, err := r.SearchByQuery(ctx, typed, 50, 0)
+	if err != nil {
+		t.Fatalf("SearchByQuery(%q): %v", typed, err)
+	}
+	if len(asTyped) == 0 {
+		t.Fatalf("searching %q found nothing while %q found %d — the query and the generated column no longer normalize the same way",
+			typed, written, len(asWritten))
+	}
+	if !sameIDs(asWritten, asTyped) {
+		t.Errorf("searching %q and %q must return the same rows in the same order: got %v and %v",
+			written, typed, postIDs(asWritten), postIDs(asTyped))
+	}
+}
+
+// stopwordProbe finds a word the corpus indexes that the 'english'
+// configuration would have thrown away. Vietnamese is full of them — to (big),
+// an (eat), do (because), no (it), so (compare), in (print) — and under
+// 'english' none of them was searchable at all.
+func stopwordProbe(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+
+	var word string
+	err := pool.QueryRow(context.Background(),
+		`SELECT w.word
+		   FROM post.posts p,
+		        LATERAL (
+		            SELECT unnest(regexp_split_to_array(p.content, '[^[:alpha:]]+')) AS word
+		        ) w
+		  WHERE p.deleted_at IS NULL
+		    AND p.visibility = 'public'
+		    AND length(w.word) >= 2
+		    AND to_tsvector('english', w.word) = ''::tsvector
+		    AND to_tsvector('simple', post.immutable_unaccent(w.word)) <> ''::tsvector
+		  LIMIT 1`).Scan(&word)
+	if errors.Is(err, pgx.ErrNoRows) {
+		t.Skip("no post contains a word the english configuration would discard")
+	}
+	if err != nil {
+		t.Fatalf("find a discarded word: %v", err)
+	}
+	return word
+}
+
+// The other half of the same bug: 'english' dropped these words from the index
+// before they could be searched for, so the miss was in the writing path and no
+// amount of fixing the query would have found them.
+func TestSearchByQuery_FindsWordsEnglishWouldDiscard(t *testing.T) {
+	pool := openTestPool(t)
+	word := stopwordProbe(t, pool)
+
+	posts, err := NewPostSearchRepository(pool).SearchByQuery(context.Background(), word, 10, 0)
+	if err != nil {
+		t.Fatalf("SearchByQuery(%q): %v", word, err)
+	}
+	if len(posts) == 0 {
+		t.Errorf("%q appears in a public post but matches nothing; the english configuration indexes it as an empty vector", word)
+	}
+}
+
+func postIDs(posts []*entity.Post) []uuid.UUID {
+	ids := make([]uuid.UUID, len(posts))
+	for i, p := range posts {
+		ids[i] = p.ID
+	}
+	return ids
+}
+
+func sameIDs(a, b []*entity.Post) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID {
+			return false
+		}
+	}
+	return true
 }
