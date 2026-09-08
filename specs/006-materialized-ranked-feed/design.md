@@ -1,11 +1,22 @@
 # Design: Materialized Ranked Feed (codohue-powered)
 
-> Trạng thái: **DRAFT v2 — đã qua vòng review 1 (2026-07-24)**. Vòng review đã
-> sửa 3 lỗ hổng: (1) score fan-out là hằng số → thêm encoding nhúng `createdAt`,
-> (2) `AddPostsBatch` dùng `NX` nên không ghi đè được score → thêm
-> `SetPostsBatch`, (3) thiếu kế hoạch migration → thêm §5 (key versioning).
-> Đồng thời chốt 2 quyết định review (cursor "mềm", blend cộng trọng số — xem
-> §11). Còn mở: Q3 (trigger), Q4 (candidate scope) — không chặn P1.
+> Trạng thái: **CLOSED (2026-09-08) — chỉ P1 được triển khai.** P1 (§9.1) đã
+> xong và merge; P2–P4 không bao giờ bắt đầu và giờ nằm ở GitHub issues, không
+> còn theo dõi trong tài liệu này: **#21** (P2 — cắm Codohue Rankings), **#22**
+> (P3 — trigger re-rank, kèm Q3 còn mở), **#23** (P4 — tinh chỉnh blend +
+> metrics). Q4 (candidate scope) đi theo #21.
+>
+> Hai điểm một người đọc sau này cần biết trước khi mở lại: bảng env ở §7 đã cũ
+> — `FEED_RANK_SOURCE` và `FEED_RANK_CF_WEIGHT` là knob vận hành nên thuộc về
+> `settings.feed` chứ không phải `.env` (runtime settings ra đời sau tài liệu
+> này); và toàn bộ đường timeline hiện không phục vụ ai — `timeline_enabled`
+> mặc định `FALSE`, rollout 0% (rollout hoãn từ 2026-08-05).
+>
+> Lịch sử: v2 đã qua vòng review 1 (2026-07-24), sửa 3 lỗ hổng: (1) score
+> fan-out là hằng số → thêm encoding nhúng `createdAt`, (2) `AddPostsBatch`
+> dùng `NX` nên không ghi đè được score → thêm `SetPostsBatch`, (3) thiếu kế
+> hoạch migration → thêm §5 (key versioning). Đồng thời chốt 2 quyết định
+> review (cursor "mềm", blend cộng trọng số — xem §11).
 >
 > Mục tiêu tài liệu: chốt kiến trúc trước khi động vào code, vì đây là thay đổi
 > lớn ở feed subsystem. Khi chốt xong sẽ chuyển sang `plan.md`/`tasks.md` theo

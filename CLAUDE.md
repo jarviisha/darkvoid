@@ -145,7 +145,8 @@ The five canonical roles, each label string equal to its name. See `docs/agents/
 Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
-at `specs/006-materialized-ranked-feed/plan.md`.
+There is no current plan. Everything under `specs/` is closed — read those
+documents as a record of why the feed subsystem looks the way it does, not as
+work in progress. Open work lives in GitHub issues (see Issue tracker above),
+and decisions that outlived their spec were moved to `docs/adr/`.
 <!-- SPECKIT END -->
