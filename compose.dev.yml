@@ -1,0 +1,122 @@
+# Merge with compose.yml. make docker-up uses this overlay.
+x-operations: &operations
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-local-connections: &local-connections
+  DB_HOST: darkvoid-postgres
+  DB_PORT: "5432"
+  DB_SSLMODE: disable
+  REDIS_HOST: darkvoid-redis
+  REDIS_PORT: "6379"
+
+services:
+  postgres:
+    image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    restart: unless-stopped
+    <<: *operations
+    stop_grace_period: 60s
+    shm_size: 256mb
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-darkvoid}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      default:
+        aliases: [darkvoid-postgres]
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-1g}
+
+  redis:
+    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    restart: unless-stopped
+    <<: *operations
+    stop_grace_period: 30s
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-256mb}
+    command:
+      - sh
+      - -ec
+      - |
+        set -- redis-server --maxmemory "$$REDIS_MAXMEMORY" --maxmemory-policy allkeys-lru
+        if [ -n "$$REDIS_PASSWORD" ]; then set -- "$$@" --requirepass "$$REDIS_PASSWORD"; fi
+        exec "$$@"
+    volumes:
+      - redis_data:/data
+    networks:
+      default:
+        aliases: [darkvoid-redis]
+    healthcheck:
+      test: ["CMD-SHELL", 'if [ -n "$$REDIS_PASSWORD" ]; then export REDISCLI_AUTH="$$REDIS_PASSWORD"; fi; redis-cli ping | grep -qx PONG']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    mem_limit: ${REDIS_MEMORY_LIMIT:-384m}
+
+  migrate:
+    image: migrate/migrate:v4.19.1@sha256:cc4ad8e19d66791e3689405d9a028ce6e9614f32032db14acda1469f7201d6e4
+    restart: "no"
+    <<: *operations
+    entrypoint: ["/bin/sh", "/migration-guard/run-all-safe.sh"]
+    environment:
+      PGHOST: darkvoid-postgres
+      PGPORT: "5432"
+      PGUSER: ${DB_USER:-postgres}
+      PGPASSWORD: ${DB_PASSWORD:-postgres}
+      PGDATABASE: ${DB_NAME:-darkvoid}
+      PGSSLMODE: disable
+    volumes:
+      - ${DARKVOID_RELEASE_DIR:-.}/migrations:/migrations:ro
+      - ${DARKVOID_RELEASE_DIR:-.}/scripts/migrations:/migration-guard:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    build: .
+    environment:
+      <<: *local-connections
+      CODOHUE_BASE_URL: ${CODOHUE_DOCKER_BASE_URL:-http://host.docker.internal:2001}
+      CODOHUE_ADMIN_URL: ${CODOHUE_DOCKER_ADMIN_URL:-http://host.docker.internal:2002}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  ctl:
+    environment:
+      <<: *local-connections
+      CODOHUE_BASE_URL: ${CODOHUE_DOCKER_BASE_URL:-http://host.docker.internal:2001}
+      CODOHUE_ADMIN_URL: ${CODOHUE_DOCKER_ADMIN_URL:-http://host.docker.internal:2002}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  seed:
+    environment:
+      <<: *local-connections
+      CODOHUE_BASE_URL: ${CODOHUE_DOCKER_BASE_URL:-http://host.docker.internal:2001}
+      CODOHUE_ADMIN_URL: ${CODOHUE_DOCKER_ADMIN_URL:-http://host.docker.internal:2002}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

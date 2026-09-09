@@ -25,6 +25,7 @@ vendor/
 .env
 .env.*
 !.env.example
+!.env.backup.example
 
 # IDE
 .vscode/
@@ -68,3 +69,9 @@ ai-*/
 uploads/
 docker-compose.override.yml
 localdocs/
+release/
+releases/
+incoming/
+current
+previous
+.deploy.lock

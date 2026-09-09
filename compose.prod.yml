@@ -1,0 +1,224 @@
+# Merge with compose.yml. Production and staging deploy from immutable digests.
+x-operations: &operations
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-local-connections: &local-connections
+  DB_HOST: darkvoid-postgres
+  DB_PORT: "5432"
+  DB_SSLMODE: disable
+  REDIS_HOST: darkvoid-redis
+  REDIS_PORT: "6379"
+
+x-production-runtime: &production-runtime
+  image: ${APP_IMAGE:-ghcr.io/jarviisha/darkvoid}@${APP_DIGEST:?set APP_DIGEST to the deployed sha256 digest}
+  environment: &production-environment
+    <<: *local-connections
+    ENVIRONMENT: ${ENVIRONMENT:-production}
+    DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+    CODOHUE_BASE_URL: ${CODOHUE_BASE_URL:-http://host.docker.internal:2001}
+    CODOHUE_ADMIN_URL: ${CODOHUE_ADMIN_URL:-http://host.docker.internal:2002}
+
+services:
+  postgres:
+    image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    restart: unless-stopped
+    <<: *operations
+    stop_grace_period: 60s
+    shm_size: 256mb
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_NAME:-darkvoid}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      default:
+        aliases: [darkvoid-postgres]
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-1g}
+
+  redis:
+    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    restart: unless-stopped
+    <<: *operations
+    stop_grace_period: 30s
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-256mb}
+    command:
+      - sh
+      - -ec
+      - |
+        set -- redis-server --maxmemory "$$REDIS_MAXMEMORY" --maxmemory-policy allkeys-lru
+        if [ -n "$$REDIS_PASSWORD" ]; then set -- "$$@" --requirepass "$$REDIS_PASSWORD"; fi
+        exec "$$@"
+    volumes:
+      - redis_data:/data
+    networks:
+      default:
+        aliases: [darkvoid-redis]
+    healthcheck:
+      test: ["CMD-SHELL", 'if [ -n "$$REDIS_PASSWORD" ]; then export REDISCLI_AUTH="$$REDIS_PASSWORD"; fi; redis-cli ping | grep -qx PONG']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    mem_limit: ${REDIS_MEMORY_LIMIT:-384m}
+
+  migrate:
+    image: migrate/migrate:v4.19.1@sha256:cc4ad8e19d66791e3689405d9a028ce6e9614f32032db14acda1469f7201d6e4
+    restart: "no"
+    <<: *operations
+    entrypoint: ["/bin/sh", "/migration-guard/run-all-safe.sh"]
+    environment:
+      PGHOST: darkvoid-postgres
+      PGPORT: "5432"
+      PGUSER: ${DB_USER:-postgres}
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      PGDATABASE: ${DB_NAME:-darkvoid}
+      PGSSLMODE: disable
+    volumes:
+      - ${DARKVOID_RELEASE_DIR:-.}/migrations:/migrations:ro
+      - ${DARKVOID_RELEASE_DIR:-.}/scripts/migrations:/migration-guard:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    <<: *production-runtime
+    environment:
+      <<: *production-environment
+      TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}"
+    mem_limit: ${APP_MEMORY_LIMIT:-768m}
+    pids_limit: ${APP_PIDS_LIMIT:-512}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  ctl:
+    <<: *production-runtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  seed:
+    <<: *production-runtime
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  migrate-bot-destructive:
+    image: migrate/migrate:v4.19.1@sha256:cc4ad8e19d66791e3689405d9a028ce6e9614f32032db14acda1469f7201d6e4
+    profiles: [destructive-migration]
+    restart: "no"
+    <<: *operations
+    entrypoint: ["/bin/sh", "/migration-guard/run-bot-destructive.sh"]
+    volumes:
+      - ${DARKVOID_RELEASE_DIR:-.}/migrations:/migrations:ro
+      - ${DARKVOID_RELEASE_DIR:-.}/scripts/migrations:/migration-guard:ro
+      - backup_state:/backup-state:ro
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      PGHOST: darkvoid-postgres
+      PGPORT: "5432"
+      PGUSER: ${DB_USER:-postgres}
+      PGDATABASE: ${DB_NAME:-darkvoid}
+      PGSSLMODE: disable
+      MIGRATION_DATABASE_URL: postgres:///?x-migrations-table=schema_migrations_bot
+      MIGRATION_PATH: /migrations/bot
+      BOT_SAFE_MIGRATION_VERSION: "8"
+      BOT_RETIRED_MIGRATION_VERSION: "9"
+      BOT_SCHEMA_DROP_APPROVAL: ${BOT_SCHEMA_DROP_APPROVAL:-}
+      BOT_DATA_HANDOFF_REFERENCE: ${BOT_DATA_HANDOFF_REFERENCE:-}
+      BOT_DROP_BACKUP_MAX_AGE_SECONDS: ${BOT_DROP_BACKUP_MAX_AGE_SECONDS:-172800}
+      BOT_DROP_RESTORE_MAX_AGE_SECONDS: ${BOT_DROP_RESTORE_MAX_AGE_SECONDS:-604800}
+      BACKUP_STATE_DIR: /backup-state
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pg-backup:
+        condition: service_healthy
+
+
+  pg-backup:
+    image: ${BACKUP_IMAGE:-ghcr.io/jarviisha/darkvoid-backup}@${BACKUP_DIGEST:?set BACKUP_DIGEST to the deployed sha256 digest}
+    restart: unless-stopped
+    <<: *operations
+    mem_limit: ${BACKUP_MEMORY_LIMIT:-512m}
+    cpus: ${BACKUP_CPU_LIMIT:-1.0}
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    stop_grace_period: 30s
+    environment:
+      PGHOST: darkvoid-postgres
+      PGPORT: "5432"
+      PGUSER: ${DB_USER:-postgres}
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      PGDATABASE: ${DB_NAME:-darkvoid}
+
+      RESTIC_REPOSITORY: ${BACKUP_RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD: ${BACKUP_RESTIC_PASSWORD:-}
+      RESTIC_CACHE_DIR: /state/cache
+
+      AWS_ACCESS_KEY_ID: ${BACKUP_AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${BACKUP_AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${BACKUP_AWS_SESSION_TOKEN:-}
+      AWS_DEFAULT_REGION: ${BACKUP_AWS_REGION:-us-east-1}
+
+      BACKUP_ALERT_WEBHOOK_URL: ${BACKUP_ALERT_WEBHOOK_URL:-}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RESTORE_DRILL_ENABLED: ${BACKUP_RESTORE_DRILL_ENABLED:-true}
+      BACKUP_RESTORE_PGHOST: ${BACKUP_RESTORE_PGHOST:-}
+      BACKUP_RESTORE_PGPORT: ${BACKUP_RESTORE_PGPORT:-}
+      BACKUP_RESTORE_PGUSER: ${BACKUP_RESTORE_PGUSER:-}
+      BACKUP_RESTORE_PGPASSWORD: ${BACKUP_RESTORE_PGPASSWORD:-}
+      BACKUP_RESTORE_DRILL_INTERVAL_SECONDS: ${BACKUP_RESTORE_DRILL_INTERVAL_SECONDS:-604800}
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-14}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-8}
+      BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-12}
+      BACKUP_RESTIC_TAG: ${BACKUP_RESTIC_TAG:-darkvoid-postgres}
+      BACKUP_RESTIC_HOST: ${BACKUP_RESTIC_HOST:-darkvoid-production}
+      BACKUP_RESTORE_DATABASE: ${BACKUP_RESTORE_DATABASE:-}
+      BACKUP_MAX_AGE_SECONDS: ${BACKUP_MAX_AGE_SECONDS:-172800}
+      BACKUP_STATE_DIR: /state
+    volumes:
+      - backup_state:/state
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'test -r /state/last-success && now=$$(date +%s) && last=$$(cat /state/last-success) && test $$((now - last)) -le "$$BACKUP_MAX_AGE_SECONDS"',
+        ]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: ${BACKUP_START_PERIOD:-30m}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+
+networks:
+  default:
+    name: ${COMPOSE_NETWORK_NAME:-darkvoid}
+
+volumes:
+  postgres_data:
+  redis_data:
+  backup_state:

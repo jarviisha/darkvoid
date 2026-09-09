@@ -15,6 +15,9 @@ on:
 jobs:
   retire_bot_schema:
     runs-on: ubuntu-latest
+    concurrency:
+      group: darkvoid-deploy-production
+      cancel-in-progress: false
     permissions:
       contents: read
       deployments: read
@@ -85,9 +88,7 @@ jobs:
             : "${DEPLOY_DIR:?configure DEPLOY_DIR on the production GitHub environment}"
             cd "$DEPLOY_DIR"
 
-            COMPOSE="docker compose -f docker-compose.prod.yml"
-            if grep -qs 'docker-compose\.codohue\.yml' .env; then
-              COMPOSE="$COMPOSE -f docker-compose.codohue.yml"
-            fi
+            export DARKVOID_DIR="$DEPLOY_DIR"
             export BOT_SCHEMA_DROP_APPROVAL BOT_DATA_HANDOFF_REFERENCE
-            $COMPOSE --profile destructive-migration run --rm migrate-bot-destructive
+            flock -x "$DEPLOY_DIR/.deploy.lock" bash "$DEPLOY_DIR/current/scripts/dv" \
+              --profile destructive-migration run --rm migrate-bot-destructive

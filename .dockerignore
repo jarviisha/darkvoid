@@ -26,3 +26,8 @@ Dockerfile*
 .dockerignore
 docker-compose.override.yml
 specs
+release
+releases
+incoming
+current
+previous

@@ -5,38 +5,31 @@ FROM ${GO_IMAGE} AS builder
 
 WORKDIR /app
 
-RUN apk add --no-cache git
-
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/darkvoid ./cmd/api
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/seed ./cmd/seed
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/darkvoidctl ./cmd/darkvoidctl
+RUN --mount=type=cache,target=/root/.cache/go-build \
+	CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+		-o /out/ ./cmd/api ./cmd/seed ./cmd/darkvoidctl \
+	&& mv /out/api /out/darkvoid
 
 FROM ${RUNTIME_IMAGE}
 
 WORKDIR /app
 
-# The uid and gid are pinned rather than left to adduser -S, which allocates
-# whatever system id happens to be free in the base image. A Docker named volume
-# takes its ownership from the image that first populated it, so the uploads
-# volume on every existing deployment is owned by these exact numbers; letting a
-# base image bump shift them would make the app unable to write its own uploads.
-# 100:101 are the values adduser -S allocated when the unprivileged user was
-# introduced, so pinning them changes nothing for volumes already in use.
-# docs/uploads-volume-ownership-runbook.md depends on them too.
-RUN apk add --no-cache ca-certificates tzdata wget \
+# Keep the identity used by existing uploads volumes; see
+# docs/uploads-volume-ownership-runbook.md. Only uploads needs to be writable.
+# Alpine's BusyBox supplies wget for the Compose HTTP health check.
+RUN apk add --no-cache ca-certificates tzdata \
 	&& addgroup -S -g 101 darkvoid \
 	&& adduser -S -u 100 -G darkvoid -h /app darkvoid \
 	&& mkdir -p /app/uploads \
-	&& chown -R darkvoid:darkvoid /app
+	&& chown darkvoid:darkvoid /app/uploads \
+	&& chown root:root /app
 
-COPY --from=builder --chown=darkvoid:darkvoid /out/darkvoid /app/darkvoid
-COPY --from=builder --chown=darkvoid:darkvoid /out/seed /app/seed
-COPY --from=builder --chown=darkvoid:darkvoid /out/darkvoidctl /app/darkvoidctl
+COPY --from=builder /out/ /app/
 
 USER darkvoid
 

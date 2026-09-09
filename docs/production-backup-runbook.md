@@ -8,7 +8,10 @@ and a disposable Restic cache.
 
 ## Required configuration
 
-Set these values in the deployment `.env` before running `dv up -d`. They are
+Set these values in the deployment `.env.backup` before running `dv up -d`.
+Legacy values in `.env` still work; neither file is injected wholesale into app
+containers. `dv` resolves both files and Compose passes only backup credentials
+to `pg-backup`. They are
 required by the scheduler, not by Compose: an unset variable in the Compose file
 fails every `docker compose` command, including the `dv logs` needed to find out
 why, so the container starts, names everything that is missing at once, alerts if
@@ -31,10 +34,12 @@ Restic password outside that storage account: losing it makes every snapshot
 unrecoverable, while exposing it together with the repository defeats the
 separation between encrypted data and its key.
 
-CD publishes both images with a full commit-SHA tag for traceability, then
-records the immutable `APP_DIGEST` and `BACKUP_DIGEST` returned by the registry
-in the deployment `.env`. Rollbacks must restore both digests from the same
-verified deployment. Other Restic remote backends (`sftp`, REST over HTTPS,
+CD publishes both images with a full commit-SHA tag for traceability and records
+the immutable image pair in each release's `release.env`. The `current` symlink
+selects the verified release; `.env` remains operator-owned. Production deploys
+wait for backup health as well as app readiness. See
+[container deployment](container-deployment.md) for recovery and release selection.
+Other Restic remote backends (`sftp`, REST over HTTPS,
 Azure and GCS) are accepted by the scheduler, but need a deployment-specific
 Compose override for their credential files or environment variables.
 
@@ -116,7 +121,7 @@ verified snapshot.
 
 ## Secret rotation
 
-Rotating S3 credentials does not rewrite snapshots; update `.env` and recreate
+Rotating S3 credentials does not rewrite snapshots; update `.env.backup` and recreate
 `pg-backup`. Restic password rotation changes repository key material and must be
 performed with `restic key` while the old password is still available. Verify a
 snapshot and complete a restore drill before deleting the old key.

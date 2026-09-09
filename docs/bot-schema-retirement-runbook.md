@@ -4,6 +4,12 @@ Migration `migrations/bot/000009_drop_bot_schema.up.sql` permanently drops the
 legacy `bot` schema. A normal deploy stops bot migrations at `000008`; databases
 already at `000009` are left there and are never automatically downgraded.
 
+The normal Compose `migrate` job applies user, post, notification, guarded bot,
+then settings in order. The protected workflow uses the currently verified
+release's `dv` wrapper and takes the same host `.deploy.lock` as normal deploys.
+Complete the release-layout upgrade in [container deployment](container-deployment.md)
+before invoking the retirement workflow.
+
 Do not run `migrate up` directly for the bot module. The SQL migration itself
 requires a session-only approval parameter, so an accidental direct invocation
 fails before `DROP SCHEMA`. Because golang-migrate records a version as dirty

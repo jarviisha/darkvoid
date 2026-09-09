@@ -10,12 +10,14 @@ SHELL := /bin/bash
 	migrate-up migrate-down migrate-up-user migrate-up-post migrate-up-notification migrate-up-bot migrate-up-settings migrate-down-notification migrate-create migrate-status migrate-force \
 	db-reset install-tools install-lint
 
-# Load .env if it exists.
+# Docker targets let dv parse dotenv values; native targets keep Make's interface.
+ifeq ($(filter docker-%,$(MAKECMDGOALS)),)
 -include .env
+endif
 export
 
 GO ?= go
-DOCKER_COMPOSE ?= docker compose
+DOCKER_COMPOSE ?= bash scripts/dv
 
 # Must satisfy the `version: "2"` schema in .golangci.yml.
 GOLANGCI_LINT_VERSION ?= v2.11.4
@@ -145,6 +147,17 @@ test: test-ops ## Run all tests
 	$(GO) test ./...
 
 test-ops: test-backup test-storage-migration test-deployment-defaults test-production-images test-migration-gates test-destructive-migration-policy test-container-user ## Validate production operation contracts
+	bash scripts/ci/compose-characterization_test.sh
+	python3 scripts/ci/deployment_test.py
+	bash -n scripts/dv scripts/dvctl scripts/create-release.sh scripts/deploy-release.sh scripts/ci/container-runtime_test.sh
+
+.PHONY: test-container-runtime
+test-container-runtime: ## Smoke-test the app and backup images without live infrastructure
+	bash scripts/ci/container-runtime_test.sh
+
+.PHONY: test-compose-integration
+test-compose-integration: ## Boot and remove an isolated stack using APP_TEST_IMAGE
+	bash scripts/ci/compose-integration_test.sh
 
 test-backup: ## Validate the production backup scheduler
 	bash -n scripts/backup/postgres-restic.sh
@@ -163,6 +176,7 @@ test-production-images: ## Reject mutable production image references
 test-migration-gates: ## Validate destructive migration isolation and approval
 	bash -n scripts/migrations/*.sh scripts/migrations/testdata/*.sh
 	bash scripts/migrations/bot_migration_test.sh
+	bash scripts/migrations/all_migration_test.sh
 
 test-destructive-migration-policy: ## Ensure normal deploy cannot retire bot schema
 	bash scripts/ci/destructive_migration_policy_test.sh
@@ -201,25 +215,33 @@ docker-rebuild: ## Rebuild the app image from the working tree and restart it
 	$(DOCKER_COMPOSE) up -d --build app
 
 docker-up-app: ## Start only the app container and connect to external/local infra
-	$(DOCKER_COMPOSE) up -d app-external
+	DARKVOID_COMPOSE=compose.yml:compose.dev.yml $(DOCKER_COMPOSE) build app
+	DARKVOID_COMPOSE=compose.yml $(DOCKER_COMPOSE) up -d app
 
 docker-seed: ## Seed data inside Docker (usage: make docker-seed SEED_POSTS=500)
+	$(DOCKER_COMPOSE) build app
 	$(DOCKER_COMPOSE) --profile tools run --rm seed
 
 docker-seed-reset: ## Reset seeded data and seed again inside Docker
-	$(DOCKER_COMPOSE) --profile tools run --rm seed --reset --posts=$${SEED_POSTS:-500} --likes-per-post=$${SEED_LIKES_PER_POST:-40} --comments-per-post=$${SEED_COMMENTS_PER_POST:-5}
+	$(DOCKER_COMPOSE) build app
+	# Reuse the dotenv/overlay-resolved command; keep defaults in Compose only.
+	@set -euo pipefail; \
+	seed_command="$$( $(DOCKER_COMPOSE) --profile tools config --format json | \
+		jq -ce '.services.seed.command | select(type == "array" and length > 0 and all(.[]; type == "string"))')"; \
+	mapfile -d '' -t seed_args < <(jq -j '.[] + "\u0000"' <<< "$$seed_command"); \
+	$(DOCKER_COMPOSE) --profile tools run --rm seed "$${seed_args[@]}" --reset
 
 docker-down: ## Stop Docker containers (all profiles)
-	$(DOCKER_COMPOSE) --profile external down
+	$(DOCKER_COMPOSE) --profile tools down
 
 docker-down-app: ## Stop the app-only container
-	$(DOCKER_COMPOSE) --profile external down app-external
+	DARKVOID_COMPOSE=compose.yml $(DOCKER_COMPOSE) stop app
 
 docker-logs: ## View Docker container logs
 	$(DOCKER_COMPOSE) logs -f
 
 docker-logs-app: ## View app-only Docker container logs
-	$(DOCKER_COMPOSE) logs -f app-external
+	DARKVOID_COMPOSE=compose.yml $(DOCKER_COMPOSE) logs -f app
 
 migrate-up: ## Run safe pending migrations; bot stops at 000008
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up DB_PASSWORD=secret)
@@ -288,7 +310,7 @@ db-reset: ## Reset dockerized database volumes after confirmation
 	@echo "WARNING: This will delete Docker volumes and all local data."
 	@read -r -p "Are you sure? [y/N] " reply; \
 	if [[ "$$reply" =~ ^[Yy]$$ ]]; then \
-		$(DOCKER_COMPOSE) --profile external down -v; \
+		$(DOCKER_COMPOSE) --profile tools down -v; \
 		$(DOCKER_COMPOSE) up -d; \
 	else \
 		echo "Aborted."; \

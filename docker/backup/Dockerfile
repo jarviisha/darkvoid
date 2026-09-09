@@ -4,9 +4,10 @@ FROM ${POSTGRES_IMAGE}
 
 RUN apk add --no-cache bash ca-certificates curl jq restic tzdata \
 	&& mkdir -p /state/cache \
-	&& chown -R postgres:postgres /state
+	&& chown postgres:postgres /state /state/cache
 
-COPY --chown=postgres:postgres scripts/backup/postgres-restic.sh /usr/local/bin/postgres-restic.sh
+# The scheduler only writes to /state and /tmp; its script stays root-owned.
+COPY scripts/backup/postgres-restic.sh /usr/local/bin/postgres-restic.sh
 
 USER postgres
 

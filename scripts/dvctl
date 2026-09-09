@@ -1,42 +1,6 @@
 #!/usr/bin/env bash
-# dvctl — run the darkvoidctl operator CLI as a one-off container inside the
-# deployment's compose project, so the database is reachable by service name
-# and the CLI travels with the deployed image (no hand-installed host binary).
-#
-# Installed onto the server by the CD pipeline (see .github/workflows/cd.yml).
-# Override the deployment location / compose file per environment:
-#
-#   DARKVOID_DIR      deployment directory        (default: /opt/darkvoid-dev)
-#   DARKVOID_COMPOSE  base compose file to use    (default: docker-compose.prod.yml)
-#
-# docker-compose.codohue.yml is a server-local override (not in this repo) that
-# attaches the app to the codohue stack's network and Redis. It is included here
-# whenever it exists, matching what the CD pipeline does, so every compose command
-# against this deployment describes the same stack. Running with only the base file
-# is not merely incomplete — it recreates the app detached from codohue, and the app
-# decides at boot whether codohue is reachable, so it then stays disabled for the
-# whole process with nothing but a startup warning to say so.
-#
-# Password input is never passed as a flag — reset-password/create prompt
-# interactively (echo off), or read DARKVOIDCTL_PASSWORD, which this wrapper
-# forwards into the container when set. Examples:
-#
-#   dvctl user list
-#   dvctl user reset-password -username root          # interactive prompt
-#   DARKVOIDCTL_PASSWORD='New123' dvctl user reset-password -username root
-#
-# --no-deps: never implicitly start postgres/redis; the CLI just connects to
-# whatever is already running (fail fast if the stack is down).
+# Same release, project and file selection as dv; no implicit infrastructure boot.
 set -euo pipefail
-
-cd "${DARKVOID_DIR:-/opt/darkvoid-dev}"
-
-compose_files=(-f "${DARKVOID_COMPOSE:-docker-compose.prod.yml}")
-if [ -f docker-compose.codohue.yml ]; then
-  compose_files+=(-f docker-compose.codohue.yml)
-fi
-
-exec docker compose "${compose_files[@]}" \
-  --profile tools run --rm --no-deps \
-  -e DARKVOIDCTL_PASSWORD \
-  ctl "$@"
+script_dir="$(CDPATH='' cd -- "$(dirname "$0")" && pwd)"
+exec bash "$script_dir/dv" --profile tools run --rm --no-deps \
+	-e DARKVOIDCTL_PASSWORD ctl "$@"

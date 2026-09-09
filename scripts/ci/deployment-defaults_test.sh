@@ -9,8 +9,9 @@
 
 set -euo pipefail
 
-repo_root="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
-compose_file="${repo_root}/docker-compose.prod.yml"
+repo_root="$(CDPATH='' cd -- "$(dirname "$0")/../.." && pwd)"
+compose_file="${repo_root}/compose.prod.yml"
+base_file="${repo_root}/compose.yml"
 
 fail() {
 	printf 'deployment defaults: %s\n' "$*" >&2
@@ -53,9 +54,9 @@ done < <(grep -vE '^[[:space:]]*#' "$compose_file" \
 # Non-production deployments run on this file with the local provider. Without
 # the mount their uploads live in the container's writable layer and disappear
 # on the next deploy.
-grep -Fq 'uploads:/app/uploads' "$compose_file" || fail 'the app service does not mount the uploads volume'
-grep -Eq '^  uploads:$' "$compose_file" || fail 'the uploads volume is not declared'
-grep -Fq 'STORAGE_LOCAL_DIR: /app/uploads' "$compose_file" \
+grep -Fq 'uploads:/app/uploads' "$base_file" || fail 'the app service does not mount the uploads volume'
+grep -Eq '^  uploads:$' "$base_file" || fail 'the uploads volume is not declared'
+grep -Fq 'STORAGE_LOCAL_DIR: "/app/uploads"' "$base_file" \
 	|| fail 'STORAGE_LOCAL_DIR does not point at the mounted uploads volume'
 
 echo 'deployment defaults tests passed'

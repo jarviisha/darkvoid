@@ -1,0 +1,19 @@
+# Optional overlay for an independently deployed Codohue stack.
+# Darkvoid DB/cache aliases are declared by the dev/prod infrastructure overlays.
+x-codohue-network: &codohue-network
+  networks: [default, codohue]
+
+services:
+  app:
+    <<: *codohue-network
+    environment:
+      CODOHUE_EVENTS_REDIS_HOST: ${CODOHUE_EVENTS_REDIS_HOST:-${CODOHUE_STACK:-codohue-dev}-redis-1}
+  ctl:
+    <<: *codohue-network
+  seed:
+    <<: *codohue-network
+
+networks:
+  codohue:
+    external: true
+    name: ${CODOHUE_NETWORK_NAME:-${CODOHUE_STACK:-codohue-dev}_default}

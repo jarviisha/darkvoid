@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""Resolve real Compose configuration; record lifecycle calls without a daemon."""
+import json
+import os
+import sys
+
+if "config" in sys.argv:
+    os.execv(os.environ["REAL_DOCKER"], [os.environ["REAL_DOCKER"], *sys.argv[1:]])
+with open(os.environ["DEPLOY_TEST_LOG"], "a", encoding="utf-8") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\n")
+phase = ""
+if "run" in sys.argv and sys.argv[-1] == "migrate":
+    phase = "migrate"
+elif "up" in sys.argv and sys.argv[-1] in ("app", "pg-backup"):
+    phase = sys.argv[-1]
+sys.exit(17 if phase and phase == os.environ.get("DEPLOY_TEST_FAIL") else 0)

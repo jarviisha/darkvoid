@@ -7,9 +7,14 @@ set -eu
 
 command_name=""
 command_arg=""
+module=""
 while [ "$#" -gt 0 ]; do
 	case "$1" in
-		-path|-database)
+		-path)
+			module="${2##*/}"
+			shift 2
+			;;
+		-database)
 			shift 2
 			;;
 		version|goto|up)
@@ -24,8 +29,14 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
-printf 'command=%s arg=%s pgoptions=%s\n' \
-	"$command_name" "$command_arg" "${PGOPTIONS:-}" >> "$FAKE_MIGRATION_LOG"
+printf 'module=%s command=%s arg=%s pgoptions=%s\n' \
+	"$module" "$command_name" "$command_arg" "${PGOPTIONS:-}" >> "$FAKE_MIGRATION_LOG"
+
+if [ "${FAKE_MULTI_MODULE:-false}" = true ] && [ "$module" != bot ]; then
+	[ "$module" != "${FAKE_FAIL_MODULE:-}" ] || exit 17
+	[ "$command_name" = up ] && [ -z "$command_arg" ]
+	exit "$?"
+fi
 
 case "$command_name" in
 	version)

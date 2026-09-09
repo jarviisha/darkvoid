@@ -1,40 +1,77 @@
 #!/usr/bin/env bash
-# dv — docker compose for this deployment, with the correct file list every time.
-#
-# Use this instead of calling `docker compose -f docker-compose.prod.yml ...` by
-# hand. A deployment can carry override files, and leaving one out does not fail —
-# it silently builds a different stack. On the dev box, omitting
-# docker-compose.codohue.yml recreates the app detached from the codohue network;
-# the app then decides at boot that codohue is unreachable and serves the whole
-# process with indexing off, announced by one startup warning and nothing else.
-#
-# COMPOSE_FILE in the deployment's .env covers a bare `docker compose`, but an
-# explicit -f overrides it, which is exactly what a copy-pasted command carries.
-# This wrapper is the version that cannot be half-specified.
-#
-# Which overrides apply is read from COMPOSE_FILE rather than from which files
-# happen to be on disk. They ship with the repo now, so their presence says
-# nothing about intent — every deployment has them, and only some want them.
-# COMPOSE_FILE is where the operator already declares the answer.
-#
-# Installed system-wide by the CD pipeline (see .github/workflows/cd.yml).
-#
-#   DARKVOID_DIR      deployment directory      (default: /opt/darkvoid-dev)
-#   DARKVOID_COMPOSE  base compose file         (default: docker-compose.prod.yml)
-#
-# Examples:
-#
-#   dv up -d                  # the whole stack, correctly composed
-#   dv ps
-#   dv logs -f app
-#   dv logs -f pg-backup
+# One Compose entrypoint for Make, CD and operators. Requires Compose >= 2.24, jq.
 set -euo pipefail
-
-cd "${DARKVOID_DIR:-/opt/darkvoid-dev}"
-
-compose_files=(-f "${DARKVOID_COMPOSE:-docker-compose.prod.yml}")
-if grep -qs 'docker-compose\.codohue\.yml' .env; then
-  compose_files+=(-f docker-compose.codohue.yml)
+script_root="$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)"
+if [ -f "$script_root/compose.yml" ]; then
+	default_root="$script_root"
+else
+	default_root=/opt/darkvoid-dev
 fi
+root="$(CDPATH='' cd -- "${DARKVOID_DIR:-$default_root}" && pwd)"
+release="${DARKVOID_RELEASE_DIR:-$root/current}"
+if [ ! -d "$release" ]; then
+	if [ -n "${DARKVOID_RELEASE_DIR:-}" ] || [ -L "$root/current" ]; then
+		echo "release directory does not exist: $release" >&2; exit 1
+	fi
+	release="$root"
+fi
+release="$(CDPATH='' cd -- "$release" && pwd -P)"
+export DARKVOID_RELEASE_DIR="$release"
+cd "$root"
 
-exec docker compose "${compose_files[@]}" "$@"
+# Native dotenv parsing handles quotes, comments and shell overrides. Never
+# source .env or print interpolation values, which include deployment secrets.
+env_files=(--env-file /dev/null)
+for file in .env .env.app .env.backup; do
+	if [ -f "$root/$file" ]; then env_files+=(--env-file "$root/$file"); fi
+done
+if [ -f "$release/release.env" ]; then
+	# The release owns its image pair, even when an operator shell exports old values.
+	unset APP_IMAGE APP_DIGEST BACKUP_IMAGE BACKUP_DIGEST
+	env_files+=(--env-file "$release/release.env")
+fi
+selection="$(docker compose --project-directory "$root" "${env_files[@]}" \
+	-f "$release/compose.yml" config --format json)"
+file_list="$(jq -r '."x-deployment".files' <<< "$selection")"
+profiles="$(jq -r '."x-deployment".profiles' <<< "$selection")"
+project="$(jq -r '.name' <<< "$selection")"
+unset selection
+if [ -z "$file_list" ]; then
+	if [[ ",$profiles," == *,external,* ]]; then
+		file_list=compose.yml
+	elif [ -f "$release/release.env" ] || [ "$root" != "$script_root" ]; then
+		file_list=compose.yml:compose.prod.yml
+	else
+		file_list=compose.yml:compose.dev.yml
+		if [ -f "$root/docker-compose.override.yml" ]; then
+			file_list+=":$root/docker-compose.override.yml"
+		fi
+	fi
+fi
+# external used to select a second app service. It now selects the base file.
+profiles=",$profiles,"
+profiles="${profiles//,external,/,}"
+profiles="${profiles#,}"
+export COMPOSE_PROFILES="${profiles%,}"
+unset COMPOSE_FILE
+files=()
+add_file() {
+	local file="$1" existing
+	if [[ "$file" != /* ]]; then
+		if [ -f "$release/$file" ]; then file="$release/$file"
+		else file="$root/$file"; fi
+	fi
+	for existing in "${files[@]}"; do [ "$existing" != "$file" ] || return 0; done
+	files+=(-f "$file")
+}
+IFS=: read -r -a requested <<< "$file_list"
+for file in "${requested[@]}"; do
+	case "$file" in
+		docker-compose.yml) add_file compose.yml; add_file compose.dev.yml ;;
+		docker-compose.prod.yml) add_file compose.yml; add_file compose.prod.yml ;;
+		docker-compose.codohue.yml) add_file compose.codohue.yml ;;
+		*) add_file "$file" ;;
+	esac
+done
+exec docker compose --project-directory "$root" --project-name "$project" \
+	"${env_files[@]}" "${files[@]}" "$@"

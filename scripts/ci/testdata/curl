@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+
+with open(os.environ["DEPLOY_TEST_LOG"], "a", encoding="utf-8") as log:
+    log.write(json.dumps(["curl", *sys.argv[1:]]) + "\n")
+sys.exit(22 if os.environ.get("DEPLOY_TEST_FAIL") == "curl" else 0)
