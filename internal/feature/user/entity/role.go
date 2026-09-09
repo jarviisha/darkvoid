@@ -27,7 +27,7 @@ const (
 
 // roleDescriptions is the authoritative set of known roles. Keep it in sync with
 // the CHECK constraint, most recently narrowed in
-// migrations/user/000012_add_bot_role.up.sql.
+// migrations/user/000001_init.up.sql.
 var roleDescriptions = map[Role]string{
 	RoleAdmin:     "Full access to the admin API",
 	RoleModerator: "Reserved for content moderation",

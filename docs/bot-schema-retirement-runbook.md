@@ -1,7 +1,8 @@
 # Legacy bot schema retirement runbook
 
 Migration `migrations/bot/000009_drop_bot_schema.up.sql` permanently drops the
-legacy `bot` schema. A normal deploy stops bot migrations at `000008`; databases
+legacy `bot` schema. Fresh databases skip this retired module entirely. A normal
+deploy on an existing bot database stops bot migrations at `000008`; databases
 already at `000009` are left there and are never automatically downgraded.
 
 The normal Compose `migrate` job applies user, post, notification, guarded bot,

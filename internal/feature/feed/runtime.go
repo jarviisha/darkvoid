@@ -7,7 +7,7 @@ import (
 
 // RuntimeSettings are the feed knobs that can change while the process runs.
 // Every one of them was a FEED_* environment variable or, for ScorerConfig, a
-// literal in this package; see migrations/settings/000002 for why they moved and
+// literal in this package; see migrations/settings/000001_init.up.sql for why they moved and
 // why the fanout worker count and queue size did not.
 //
 // It is a value type and every reader takes a copy, so a single request cannot

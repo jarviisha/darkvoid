@@ -18,6 +18,10 @@ if [ "$safe_version" -ge "$retired_version" ]; then
 fi
 
 current_version="$(current_migration_version)"
+if [ "$current_version" -eq 0 ]; then
+	echo "no legacy bot migrations applied; skipping retired module on a fresh database"
+	exit 0
+fi
 if [ "$current_version" -lt "$safe_version" ]; then
 	echo "advancing bot migrations from $current_version to safe version $safe_version"
 	run_migrate goto "$safe_version"

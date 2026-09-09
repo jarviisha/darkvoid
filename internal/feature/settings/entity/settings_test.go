@@ -110,7 +110,7 @@ func TestDurationSecondsRoundTrip(t *testing.T) {
 // it, so a changed DEFAULT fails here instead of quietly giving every restart a
 // brief window on different numbers.
 func TestDefaultFeedSettings_MatchesMigrationDefaults(t *testing.T) {
-	raw, err := os.ReadFile("../../../../migrations/settings/000002_create_feed_settings_table.up.sql")
+	raw, err := os.ReadFile("../../../../migrations/settings/000001_init.up.sql")
 	if err != nil {
 		t.Fatalf("read migration: %v", err)
 	}

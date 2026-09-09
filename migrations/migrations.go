@@ -1,10 +1,3 @@
-// Package migrations embeds the SQL migrations shipped with this binary so the
-// running process can tell whether the database it connected to has caught up
-// with them.
-//
-// It exists because connectivity is not the same question as correctness: a
-// health check that pings PostgreSQL reports a reachable database, never one
-// holding the tables this build was compiled against.
 package migrations
 
 import (

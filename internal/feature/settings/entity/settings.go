@@ -35,7 +35,7 @@ const (
 // FeedSettings are the feed knobs an operator can change while the API is
 // running. Everything here was either a FEED_* environment variable or, for the
 // three ranking weights, a literal in the feed package — see
-// migrations/settings/000002 for why each one moved and why the two fanout
+// migrations/settings/000001_init.up.sql for why each one moved and why the two fanout
 // sizing knobs did not.
 //
 // This is a value type, copied on read. The feed components hold a snapshot

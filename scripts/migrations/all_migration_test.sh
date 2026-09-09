@@ -14,8 +14,8 @@ for version in none 7 8 9; do
 	actual="$(sed -n 's/^module=\([^ ]*\).*/\1/p' "$FAKE_MIGRATION_LOG" | uniq | paste -sd ,)"
 	[ "$actual" = user,post,notification,bot,settings ]
 	if grep -q 'module=bot command=up' "$FAKE_MIGRATION_LOG"; then exit 1; fi
-	if [ "$version" = 9 ]; then
-		[ "$(cat "$FAKE_MIGRATION_STATE")" = 9 ]
+	if [ "$version" = 9 ] || [ "$version" = none ]; then
+		[ "$(cat "$FAKE_MIGRATION_STATE")" = "$version" ]
 	else
 		[ "$(cat "$FAKE_MIGRATION_STATE")" = 8 ]
 	fi

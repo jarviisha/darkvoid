@@ -45,10 +45,11 @@ run_safe >/dev/null
 [ "$(cat "$state_file")" = 8 ] || { echo 'safe runner did not advance version 7 to 8' >&2; exit 1; }
 grep -Fq 'command=goto arg=8' "$log_file" || { echo 'safe runner did not use goto 8' >&2; exit 1; }
 
-for version in 8 9; do
+for version in none 8 9; do
 	printf '%s\n' "$version" > "$state_file"
 	: > "$log_file"
 	run_safe >/dev/null
+	[ "$(cat "$state_file")" = "$version" ]
 	if grep -Fq 'command=goto' "$log_file"; then
 		echo "safe runner attempted to move database from version $version" >&2
 		exit 1

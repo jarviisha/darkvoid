@@ -234,7 +234,7 @@ func loadRedisConfig() RedisConfig {
 // FEED_TIMELINE_REFRESH_ON_MISS, FEED_FANOUT_ENABLED and
 // FEED_FANOUT_MAX_FOLLOWERS — is no longer read here. Those live in settings.feed
 // and are edited through PATCH /admin/settings/feed, so setting them in the
-// environment now does nothing. See migrations/settings/000002 for why these two
+// environment now does nothing. See migrations/settings/000001_init.up.sql for why these two
 // stayed behind.
 func loadFeedFanoutConfig() FeedFanoutConfig {
 	return FeedFanoutConfig{

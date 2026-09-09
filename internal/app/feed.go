@@ -77,7 +77,7 @@ func SetupFeedContext(
 	fanoutWorker := feed.NewFanoutWorker(followReader, timelineStore, refresher, settings)
 	// Workers and queue size stay environment-fed: they allocate a goroutine pool
 	// and a channel here, so a stored value could not take effect without
-	// rebuilding the dispatcher. See migrations/settings/000002.
+	// rebuilding the dispatcher. See migrations/settings/000001_init.up.sql.
 	dispatcher := feed.NewEventDispatcher(settings, feedFanoutCfg.Workers, feedFanoutCfg.QueueSize, fanoutWorker)
 	dispatcher.WithOutbox(outbox)
 

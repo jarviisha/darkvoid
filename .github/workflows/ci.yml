@@ -86,3 +86,12 @@ jobs:
 
       - name: Test production operation contracts
         run: make test-ops
+
+      - name: Test migration round trip on PostgreSQL
+        run: make test-migrations
+
+      - name: Verify SQLC generation is reproducible
+        run: |
+          make install-sqlc
+          make sqlc-generate
+          git diff --exit-code -- internal/feature/*/db

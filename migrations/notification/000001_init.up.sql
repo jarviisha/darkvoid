@@ -1,3 +1,7 @@
+-- Initial schema baseline. Add future changes in a new numbered migration.
+
+CREATE SCHEMA IF NOT EXISTS notification;
+
 CREATE TABLE notification.notifications (
     id            UUID        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
     recipient_id  UUID        NOT NULL,
@@ -7,7 +11,8 @@ CREATE TABLE notification.notifications (
     secondary_id  UUID,
     group_key     TEXT        NOT NULL,
     is_read       BOOLEAN     NOT NULL DEFAULT FALSE,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    message       TEXT
 );
 
 -- Cursor-based pagination: newest first, keyset on (created_at, id)

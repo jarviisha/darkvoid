@@ -26,7 +26,8 @@ Always prefer the `Makefile` — it loads `.env` automatically and scopes migrat
 
 Migrations are **split per module** — each module uses its own `schema_migrations_<module>` table. Connection comes from the same `DB_*` variables the app uses, so only `DB_PASSWORD` has no default and is what the targets check for. There is deliberately no `DATABASE_URL`: golang-migrate wants one URL where the app wants discrete fields, and holding a second copy of the connection details meant a stale one silently migrated the wrong database and still exited 0. The Makefile exports `DB_*` as `PG*` instead and passes `postgres:///?x-migrations-table=…`, letting lib/pq fill in the rest — which also keeps the password out of the migrate process's argv.
 
-- `make migrate-up` — runs user → post → notification → bot → settings in order (`MIGRATION_MODULES`). `bot` has no Go code behind it any more: the content bot moved to its own project and `migrations/bot/000009` drops the schema. The module stays in the list until every environment has run that migration — removing it sooner strands the schema in each deployed database with nothing left here to clean it up.
+- `make migrate-up` — runs user → post → notification → bot → settings in order (`MIGRATION_MODULES`). Active modules start at `000001_init`; see `migrations/README.md` for adopting the baseline on an existing database. `bot` is frozen legacy history: fresh databases skip it, existing installations advance at most to 8, and guarded migration 9 retires it.
+- `make migrate-create module=post name=add_example_field` — creates the next validated up/down pair. Run `make migrate-check`, `make test-migrations`, and `make sqlc-generate` before committing; never edit a deployed migration.
 - `make migrate-up-user` / `make migrate-up-post` / `make migrate-up-notification` / `make migrate-up-bot` / `make migrate-up-settings`
 - `make migrate-down` — rolls back **one** step per module, in `MIGRATION_MODULES_REVERSED` order. Adding a module means editing both lists.
 - `make migrate-create module=post name=add_xxx` — creates a new migration pair (module must be one of `user`, `post`, `notification`, `bot`, `settings`)
@@ -48,7 +49,7 @@ Because contexts can't depend on each other at construction time, cross-context 
 
 ### Feed Subsystem (recently refactored — see `memory/` notes)
 
-- **DB cursor pagination** via `(created_at, id) < (cursor_ts, cursor_id)` row value comparison (see `migrations/post/000007_add_feed_cursor_index.up.sql` for the composite partial index).
+- **DB cursor pagination** via `(created_at, id) < (cursor_ts, cursor_id)` row value comparison (see `migrations/post/000001_init.up.sql` for the composite partial index).
 - **Page 1**: merge ~60 following posts with cached trending, score+sort, return top 20. **Page 2+**: pure following in DB order, no trending injection. **Discover fallback**: when a user has an empty following feed, cursor hands off seamlessly to `GetDiscoverWithCursor` because `FollowingCursor` and `DiscoverCursor` share fields.
 - **Cache keys**: `following:ids:{userID}` (5m TTL), `trending:posts` (15m TTL). No per-user feed cache. Redis is a **hard dependency** — see Configuration below.
 - **Scoring**: `score = log(1+likes)*10 + RecencyScale/(1+hours)^decay + RelationshipBonus`, defaults `RelationshipBonus=10, RecencyScale=20, DecayExponent=1.5`. The three weights are stored in `settings.feed`, not compiled in — see Runtime settings below. Local ranker is the default; Codohue CF recommender plugs in via `feedSvc.WithRecommender(...)` when `CODOHUE_ENABLED=true`.

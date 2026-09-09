@@ -42,7 +42,7 @@ type SearchPostsRow struct {
 
 // SearchPosts performs a full-text search over public posts using tsvector.
 // The configuration and the normalization here must match the ones
-// post.posts.search_vector is generated with (migrations/post/000015). They are
+// post.posts.search_vector is generated with (migrations/post/000001_init.up.sql). They are
 // two halves of one comparison: a query built with a different configuration
 // does not match worse, it matches nothing, and an empty page is
 // indistinguishable from an empty corpus.

@@ -26,7 +26,7 @@ address="$(compose port app 8080)"
 curl --fail --silent --show-error --max-time 10 "http://$address/health"
 test "$(compose exec -T app printenv DB_PASSWORD)" = "integration\$p#word"
 test "$(compose exec -T postgres psql -U postgres -d darkvoid -Atc \
-	'SELECT version::text || chr(58) || dirty::text FROM schema_migrations_bot')" = 8:false
+	"SELECT count(*) FROM pg_namespace WHERE nspname = 'bot'")" = 0
 # The second run must be safe and idempotent against a populated schema.
 compose run --rm --no-deps migrate
 echo 'Fresh Compose stack and migration rerun passed'

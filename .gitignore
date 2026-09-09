@@ -9,6 +9,9 @@ bin/
 # Test binary
 *.test
 
+# Python operation-test cache
+__pycache__/
+
 # Output of the go coverage tool
 *.out
 

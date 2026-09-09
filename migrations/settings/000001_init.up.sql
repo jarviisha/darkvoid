@@ -1,3 +1,7 @@
+-- Initial schema baseline. Add future changes in a new numbered migration.
+
+CREATE SCHEMA IF NOT EXISTS settings;
+
 -- Feed knobs that used to be FEED_* environment variables, plus the three ranking
 -- weights that were never configurable at all (they were literals in
 -- feed.DefaultScorerConfig).

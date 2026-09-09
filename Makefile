@@ -21,6 +21,8 @@ DOCKER_COMPOSE ?= bash scripts/dv
 
 # Must satisfy the `version: "2"` schema in .golangci.yml.
 GOLANGCI_LINT_VERSION ?= v2.11.4
+SQLC_VERSION ?= v1.30.0
+MIGRATE_VERSION ?= v4.19.1
 
 BIN_DIR := bin
 APP_BIN := $(BIN_DIR)/api
@@ -57,7 +59,8 @@ export PGPASSWORD := $(DB_PASSWORD)
 export PGDATABASE := $(DB_NAME)
 export PGSSLMODE  := $(DB_SSLMODE)
 
-# MIGRATION_MODULES is the status/create allowlist. Generic up/down recipes name
+# MIGRATION_MODULES is the status/force allowlist. Creation only permits active
+# modules (scripts/migrations/manage.py). Generic up/down recipes name
 # their safe sequences explicitly below because bot retirement 000009 is
 # intentionally asymmetric: it has a guarded up path and no automatic data down.
 #
@@ -65,6 +68,7 @@ export PGSSLMODE  := $(DB_SSLMODE)
 # project and migrations/bot/000009 drops the schema. Dropping the module from
 # these lists before every environment has run that migration would strand the
 # schema in each deployed database with nothing left here to clean it up.
+# Fresh databases skip bot entirely; its history is retained for old installs.
 MIGRATION_MODULES          := user post notification bot settings
 # Bot is deliberately absent from the generic down chain: version 000009's down
 # recreates only empty structure and is not a data rollback. Restore a verified
@@ -177,6 +181,8 @@ test-migration-gates: ## Validate destructive migration isolation and approval
 	bash -n scripts/migrations/*.sh scripts/migrations/testdata/*.sh
 	bash scripts/migrations/bot_migration_test.sh
 	bash scripts/migrations/all_migration_test.sh
+	python3 scripts/migrations/manage_test.py
+	$(MAKE) migrate-check
 
 test-destructive-migration-policy: ## Ensure normal deploy cannot retire bot schema
 	bash scripts/ci/destructive_migration_policy_test.sh
@@ -243,7 +249,7 @@ docker-logs: ## View Docker container logs
 docker-logs-app: ## View app-only Docker container logs
 	DARKVOID_COMPOSE=compose.yml $(DOCKER_COMPOSE) logs -f app
 
-migrate-up: ## Run safe pending migrations; bot stops at 000008
+migrate-up: ## Run pending migrations; legacy bot stops at 000008, fresh DBs skip it
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-up DB_PASSWORD=secret)
 	$(call run_migrations,user post notification,Running,up)
 	@MIGRATE_BIN="$(MIGRATE)" \
@@ -252,7 +258,7 @@ migrate-up: ## Run safe pending migrations; bot stops at 000008
 		sh scripts/migrations/run-bot-safe.sh
 	$(call run_migrations,settings,Running,up)
 
-migrate-down: ## Roll back one non-destructive migration per module; excludes bot
+migrate-down: ## Roll back one migration per active module (may delete data)
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-down DB_PASSWORD=secret)
 	$(call run_migrations,$(MIGRATION_MODULES_REVERSED),Rolling back,down 1)
 
@@ -286,9 +292,14 @@ migrate-down-notification: ## Roll back the last migration for notification modu
 migrate-create: ## Create a new migration (usage: make migrate-create module=post name=add_example_field)
 	$(call require_var,module,make migrate-create module=post name=add_example_field)
 	$(call require_var,name,make migrate-create module=post name=add_example_field)
-	$(call require_module,$(module))
-	@echo "Creating migration '$(name)' in module '$(module)'..."
-	$(MIGRATE) create -ext sql -dir migrations/$(module) -seq $(name)
+	python3 scripts/migrations/manage.py create "$${module}" "$${name}"
+
+.PHONY: migrate-check test-migrations
+migrate-check: ## Validate migration pairs, names, sequence and SQL content
+	python3 scripts/migrations/manage.py check
+
+test-migrations: migrate-check ## Test up/down/up and SQL behavior on isolated PostgreSQL (Docker)
+	bash scripts/migrations/integration_test.sh
 
 migrate-status: ## Show current migration status for all modules
 	$(call require_var,DB_PASSWORD,set DB_* in .env or: make migrate-status DB_PASSWORD=secret)
@@ -316,13 +327,16 @@ db-reset: ## Reset dockerized database volumes after confirmation
 		echo "Aborted."; \
 	fi
 
-install-tools: install-lint ## Install development tools
+install-tools: install-lint install-sqlc ## Install development tools
 	@echo "Installing development tools..."
-	$(GO) install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 	$(GO) install github.com/swaggo/swag/cmd/swag@latest
 	$(GO) install github.com/air-verse/air@latest
-	$(GO) install -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+	$(GO) install -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION)
 	@echo "Done."
+
+.PHONY: install-sqlc
+install-sqlc: ## Install the pinned SQLC generator
+	$(GO) install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
 
 # Pinned rather than @latest, and split out so CI installs the same binary a
 # developer runs. .golangci.yml is a v2 schema file, which a v1 binary rejects
