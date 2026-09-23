@@ -32,8 +32,10 @@ Use clear conventional commit subjects with an optional scope:
 subject when it is useful, such as coverage changes or migration counts.
 
 For substantial changes, include a body that summarizes the changed files,
-behavior, test coverage, and relevant spec or plan. The body can be omitted for
-small, obvious changes.
+behavior, and test coverage. The body can be omitted for small, obvious changes.
+Do not point the body at a spec or plan file — see the Commits section of
+CLAUDE.md for why, and for the one cross-reference that is allowed: a
+`Closes #<n>` trailer naming the GitHub issue.
 
 Preferred format:
 
@@ -51,7 +53,7 @@ test(user/handler): add meaningful coverage - 68.4% -> 96.2%
   is_following enrichment
 - follow_handler_test.go: GetFollowing service error case
 
-Spec: specs/001-handler-tests/plan.md
+Closes #42
 ```
 
 PRs should describe the behavior change, note config or migration impact, list test coverage, and include example requests/responses when API behavior changes.

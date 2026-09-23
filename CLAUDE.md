@@ -99,7 +99,11 @@ Respect `.golangci.yml` — all production and test code must pass `make lint` b
 
 ## Commits
 
-A commit message describes **only the change in that commit** — what it does and why, in terms of the code itself. Do **not** reference specs, plans, task ids, or docs paths (`specs/006-…`, `plan.md`, `T-042`, "per the spec"): those live outside the history and rot independently of it, so a reader six months out follows the pointer to a file that has moved, changed meaning, or is no longer there. Anything the reader needs in order to understand the change belongs in the message body, spelled out.
+A commit message describes **only the change in that commit** — what it does and why, in terms of the code itself. Do **not** reference specs, plans, or docs paths (`specs/006-…`, `plan.md`, "per the spec"), nor task ids from a tracker this repo does not own (`T-042`, `JIRA-1234`): those live outside the history and rot independently of it, so a reader six months out follows the pointer to a file that has moved, changed meaning, or is no longer there. Anything the reader needs in order to understand the change belongs in the message body, spelled out.
+
+**GitHub issue numbers are the exception.** End a message that closes one with a `Closes #<n>` trailer (`Refs #<n>` when it only advances the work). Issues live in this repo alongside the history rather than outside it, GitHub renders the link in both directions, and the body still has to stand on its own — the trailer is a cross-reference, never a substitute for explaining the change. When one commit closes several issues, one trailer per issue.
+
+Note what the trailer does on push: GitHub closes the issue itself, so `gh issue close` is no longer what closes it. Still comment on the issue when the implementation deviated from what it asked — which option was taken, what the issue got wrong, what was left out. That belongs on the issue, not in the commit message.
 
 ## Configuration
 
