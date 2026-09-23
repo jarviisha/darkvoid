@@ -25,19 +25,19 @@ func RequireRole(checker RoleChecker, roles ...string) func(http.Handler) http.H
 
 			userID := httputil.GetUserID(ctx)
 			if userID == nil {
-				errors.WriteErrorResponse(w, errors.NewUnauthorizedError("missing authorization token"))
+				errors.WriteJSON(w, errors.NewUnauthorizedError("missing authorization token"))
 				return
 			}
 
 			ok, err := checker.UserHasAnyRole(ctx, *userID, roles)
 			if err != nil {
 				logger.LogError(ctx, err, "role check failed", "user_id", *userID)
-				errors.WriteErrorResponse(w, errors.NewInternalError(err))
+				errors.WriteJSON(w, errors.NewInternalError(err))
 				return
 			}
 			if !ok {
 				logger.Warn(ctx, "access denied: insufficient role", "user_id", *userID, "required_roles", roles)
-				errors.WriteErrorResponse(w, errors.NewForbiddenError("insufficient permissions"))
+				errors.WriteJSON(w, errors.NewForbiddenError("insufficient permissions"))
 				return
 			}
 

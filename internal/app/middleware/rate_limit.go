@@ -17,7 +17,7 @@ func RateLimitByIP(limit int, window time.Duration) func(http.Handler) http.Hand
 		window,
 		httprate.WithKeyFuncs(httprate.KeyByIP),
 		httprate.WithLimitHandler(func(w http.ResponseWriter, r *http.Request) {
-			errors.WriteErrorResponse(w, errors.New("RATE_LIMIT_EXCEEDED", "too many requests, please slow down", http.StatusTooManyRequests))
+			errors.WriteJSON(w, errors.New("RATE_LIMIT_EXCEEDED", "too many requests, please slow down", http.StatusTooManyRequests))
 		}),
 	)
 }

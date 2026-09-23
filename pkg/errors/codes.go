@@ -4,23 +4,14 @@ import "net/http"
 
 // Common HTTP error codes
 
-// Generic errors
+// Sentinels that call sites match with errors.Is. Everything else builds its
+// error through the New*Error constructors below, which attach details.
 var (
-	ErrInternal        = New("INTERNAL_ERROR", "Internal server error", http.StatusInternalServerError)
-	ErrBadRequest      = New("BAD_REQUEST", "Bad request", http.StatusBadRequest)
-	ErrUnauthorized    = New("UNAUTHORIZED", "Unauthorized", http.StatusUnauthorized)
-	ErrForbidden       = New("FORBIDDEN", "Forbidden", http.StatusForbidden)
-	ErrNotFound        = New("NOT_FOUND", "Resource not found", http.StatusNotFound)
-	ErrConflict        = New("CONFLICT", "Resource conflict", http.StatusConflict)
-	ErrTooManyRequests = New("TOO_MANY_REQUESTS", "Too many requests", http.StatusTooManyRequests)
-)
-
-// Validation errors
-var (
-	ErrValidation    = New("VALIDATION_ERROR", "Validation failed", http.StatusBadRequest)
-	ErrInvalidInput  = New("INVALID_INPUT", "Invalid input", http.StatusBadRequest)
-	ErrMissingField  = New("MISSING_FIELD", "Required field missing", http.StatusBadRequest)
-	ErrInvalidFormat = New("INVALID_FORMAT", "Invalid format", http.StatusBadRequest)
+	ErrInternal     = New("INTERNAL_ERROR", "Internal server error", http.StatusInternalServerError)
+	ErrUnauthorized = New("UNAUTHORIZED", "Unauthorized", http.StatusUnauthorized)
+	ErrForbidden    = New("FORBIDDEN", "Forbidden", http.StatusForbidden)
+	ErrNotFound     = New("NOT_FOUND", "Resource not found", http.StatusNotFound)
+	ErrConflict     = New("CONFLICT", "Resource conflict", http.StatusConflict)
 )
 
 // Helper functions to create common errors

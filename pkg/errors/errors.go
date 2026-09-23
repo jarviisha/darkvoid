@@ -87,12 +87,3 @@ func GetAppError(err error) *AppError {
 	}
 	return nil
 }
-
-// Standard library error functions
-var (
-	// Join returns an error that wraps the given errors
-	Join = errors.Join
-
-	// Unwrap returns the result of calling the Unwrap method on err
-	Unwrap = errors.Unwrap
-)

@@ -49,7 +49,7 @@ func Auth(jwtService *jwt.Service) func(http.Handler) http.Handler {
 			tokenString := extractToken(r)
 			if tokenString == "" {
 				logger.Warn(ctx, "missing authorization token")
-				errors.WriteErrorResponse(w, errors.NewUnauthorizedError("missing authorization token"))
+				errors.WriteJSON(w, errors.NewUnauthorizedError("missing authorization token"))
 				return
 			}
 
@@ -60,13 +60,13 @@ func Auth(jwtService *jwt.Service) func(http.Handler) http.Handler {
 
 				switch err {
 				case jwt.ErrExpiredToken:
-					errors.WriteErrorResponse(w, errors.NewUnauthorizedError("token expired"))
+					errors.WriteJSON(w, errors.NewUnauthorizedError("token expired"))
 				case jwt.ErrInvalidToken:
-					errors.WriteErrorResponse(w, errors.NewUnauthorizedError("invalid token"))
+					errors.WriteJSON(w, errors.NewUnauthorizedError("invalid token"))
 				case jwt.ErrTokenNotYetValid:
-					errors.WriteErrorResponse(w, errors.NewUnauthorizedError("token not yet valid"))
+					errors.WriteJSON(w, errors.NewUnauthorizedError("token not yet valid"))
 				default:
-					errors.WriteErrorResponse(w, errors.ErrUnauthorized)
+					errors.WriteJSON(w, errors.ErrUnauthorized)
 				}
 				return
 			}
@@ -74,7 +74,7 @@ func Auth(jwtService *jwt.Service) func(http.Handler) http.Handler {
 			// Validate subject (user ID) exists
 			if claims.Subject == "" {
 				logger.Warn(ctx, "token missing subject")
-				errors.WriteErrorResponse(w, errors.NewUnauthorizedError("invalid token claims"))
+				errors.WriteJSON(w, errors.NewUnauthorizedError("invalid token claims"))
 				return
 			}
 
@@ -82,7 +82,7 @@ func Auth(jwtService *jwt.Service) func(http.Handler) http.Handler {
 			userID, err := uuid.Parse(claims.Subject)
 			if err != nil {
 				logger.Warn(ctx, "invalid user ID format in token", "subject", claims.Subject, "error", err)
-				errors.WriteErrorResponse(w, errors.NewUnauthorizedError("invalid token claims"))
+				errors.WriteJSON(w, errors.NewUnauthorizedError("invalid token claims"))
 				return
 			}
 

@@ -59,7 +59,8 @@ func NewServer(cfg *config.Config, log *logger.Logger, pool *pgxpool.Pool, redis
 	// sole source of request ID generation and X-Request-ID header propagation.
 	router.Use(trustedRealIP)
 	router.Use(logger.HTTPMiddleware(log))
-	router.Use(chimiddleware.Recoverer)
+	// errors.ErrorHandler is the only panic recovery: registered here it is the
+	// inner handler, so an outer chimiddleware.Recoverer would never see a panic.
 	router.Use(errors.ErrorHandler)
 	router.Use(appmiddleware.SecurityHeaders)
 

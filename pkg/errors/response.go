@@ -38,19 +38,14 @@ func (e *AppError) WriteHTTP(w http.ResponseWriter) {
 	_ = json.NewEncoder(w).Encode(e.ToResponse())
 }
 
-// WriteErrorResponse writes any error as HTTP response
-func WriteErrorResponse(w http.ResponseWriter, err error) {
+// WriteJSON writes any error as a JSON HTTP response
+func WriteJSON(w http.ResponseWriter, err error) {
 	appErr := GetAppError(err)
 	if appErr == nil {
 		// Unknown error - return generic internal error
 		appErr = NewInternalError(err)
 	}
 	appErr.WriteHTTP(w)
-}
-
-// WriteJSON is an alias for WriteErrorResponse for convenience
-func WriteJSON(w http.ResponseWriter, err error) {
-	WriteErrorResponse(w, err)
 }
 
 // ErrorHandler is a middleware that recovers from panics and returns error response

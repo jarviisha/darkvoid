@@ -34,7 +34,7 @@ func TestAppError_WrapAndResponseLifecycle(t *testing.T) {
 	if got := wrapped.Error(); !strings.Contains(got, sentinel.Error()) {
 		t.Fatalf("Error() = %q, want underlying error", got)
 	}
-	if !stderrors.Is(wrapped, sentinel) || Unwrap(wrapped) != sentinel || GetAppError(wrapped) != wrapped {
+	if !stderrors.Is(wrapped, sentinel) || stderrors.Unwrap(wrapped) != sentinel || GetAppError(wrapped) != wrapped {
 		t.Fatal("wrapped error chain was not preserved")
 	}
 	var target *AppError
@@ -62,10 +62,10 @@ func TestAppError_WrapAndResponseLifecycle(t *testing.T) {
 	}
 }
 
-func TestWriteErrorResponse_HidesUnknownError(t *testing.T) {
+func TestWriteJSON_HidesUnknownError(t *testing.T) {
 	t.Parallel()
 	recorder := httptest.NewRecorder()
-	WriteErrorResponse(recorder, stderrors.New("credential-secret"))
+	WriteJSON(recorder, stderrors.New("credential-secret"))
 	if recorder.Code != http.StatusInternalServerError || strings.Contains(recorder.Body.String(), "credential-secret") {
 		t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
 	}
@@ -95,10 +95,6 @@ func TestCommonErrorConstructors(t *testing.T) {
 				t.Fatalf("error = %#v", tt.err)
 			}
 		})
-	}
-	joined := Join(stderrors.New("one"), stderrors.New("two"))
-	if joined == nil {
-		t.Fatal("Join() returned nil")
 	}
 }
 
