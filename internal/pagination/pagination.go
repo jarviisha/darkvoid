@@ -31,12 +31,6 @@ type PaginationResponse struct {
 	Offset int32 `json:"offset" example:"0"`  // Number of items to skip
 }
 
-// SearchRequest combines search query with pagination
-type SearchRequest struct {
-	Query string `json:"query,omitempty" example:"search term"`
-	PaginationRequest
-}
-
 // Validate validates and applies defaults to pagination parameters
 func (p *PaginationRequest) Validate() {
 	if p.Limit <= 0 || p.Limit > 100 {
@@ -54,30 +48,4 @@ func NewPaginationResponse(total int64, limit, offset int32) PaginationResponse 
 		Limit:  limit,
 		Offset: offset,
 	}
-}
-
-// HasNextPage returns true if there are more pages
-func (p *PaginationResponse) HasNextPage() bool {
-	return int64(p.Offset+p.Limit) < p.Total
-}
-
-// HasPrevPage returns true if there are previous pages
-func (p *PaginationResponse) HasPrevPage() bool {
-	return p.Offset > 0
-}
-
-// TotalPages returns total number of pages
-func (p *PaginationResponse) TotalPages() int64 {
-	if p.Limit == 0 {
-		return 0
-	}
-	return (p.Total + int64(p.Limit) - 1) / int64(p.Limit)
-}
-
-// CurrentPage returns current page number (1-indexed)
-func (p *PaginationResponse) CurrentPage() int64 {
-	if p.Limit == 0 {
-		return 0
-	}
-	return int64(p.Offset)/int64(p.Limit) + 1
 }
