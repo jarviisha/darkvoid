@@ -2,10 +2,11 @@ package service
 
 import (
 	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/jarviisha/darkvoid/internal/feature/user"
 	"github.com/jarviisha/darkvoid/internal/feature/user/dto"
-	"github.com/jarviisha/darkvoid/internal/validation"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 )
 
@@ -47,7 +48,7 @@ func validateUpdateRequest(req *dto.UpdateUserRequest) error {
 }
 
 func validateUsername(username string) error {
-	if err := validation.ValidateRequired("username", username); err != nil {
+	if err := requireField("username", username); err != nil {
 		return err
 	}
 	if !usernameRegex.MatchString(username) {
@@ -57,7 +58,7 @@ func validateUsername(username string) error {
 }
 
 func validateEmail(email string) error {
-	if err := validation.ValidateRequired("email", email); err != nil {
+	if err := requireField("email", email); err != nil {
 		return err
 	}
 	if !emailRegex.MatchString(email) {
@@ -67,14 +68,14 @@ func validateEmail(email string) error {
 }
 
 func validateDisplayName(displayName string) error {
-	if err := validation.ValidateRequired("display_name", displayName); err != nil {
+	if err := requireField("display_name", displayName); err != nil {
 		return err
 	}
-	return validation.ValidateLength("display_name", displayName, minDisplayNameLength, maxDisplayNameLength)
+	return requireLength("display_name", displayName, minDisplayNameLength, maxDisplayNameLength)
 }
 
 func validatePassword(password string) error {
-	if err := validation.ValidateRequired("password", password); err != nil {
+	if err := requireField("password", password); err != nil {
 		return err
 	}
 	if len(password) < minPasswordLength {
@@ -85,6 +86,20 @@ func validatePassword(password string) error {
 	}
 	if !letterRegex.MatchString(password) || !numberRegex.MatchString(password) {
 		return user.ErrWeakPassword.WithDetail("requirement", "must contain letters and numbers")
+	}
+	return nil
+}
+
+func requireField(field, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return errors.NewValidationError(field, "required")
+	}
+	return nil
+}
+
+func requireLength(field, value string, min, max int) error {
+	if length := len(strings.TrimSpace(value)); length < min || length > max {
+		return errors.NewValidationError(field, "must be between "+strconv.Itoa(min)+" and "+strconv.Itoa(max)+" characters")
 	}
 	return nil
 }

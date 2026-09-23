@@ -11,7 +11,6 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/user/db"
 	"github.com/jarviisha/darkvoid/internal/feature/user/dto"
 	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
-	"github.com/jarviisha/darkvoid/internal/validation"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 	"github.com/jarviisha/darkvoid/pkg/storage"
@@ -103,7 +102,7 @@ func (s *UserService) GetUserByID(ctx context.Context, id uuid.UUID) (*entity.Us
 }
 
 func (s *UserService) GetUserByUsername(ctx context.Context, username string) (*entity.User, error) {
-	if err := validation.ValidateRequired("username", username); err != nil {
+	if err := requireField("username", username); err != nil {
 		return nil, err
 	}
 
@@ -124,7 +123,7 @@ func (s *UserService) GetUserByUsername(ctx context.Context, username string) (*
 }
 
 func (s *UserService) GetUserByEmail(ctx context.Context, email string) (*entity.User, error) {
-	if err := validation.ValidateRequired("email", email); err != nil {
+	if err := requireField("email", email); err != nil {
 		return nil, err
 	}
 
