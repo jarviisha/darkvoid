@@ -64,13 +64,17 @@ jobs:
       - name: Run vet
         run: go vet ./...
 
+      # quay.io, not Docker Hub: `docker pull minio/minio` now answers "pull access
+      # denied ... repository does not exist", which fails this step before any test
+      # runs. The digest is unchanged — quay serves the identical manifest — so this
+      # is a registry swap, not a version bump.
       - name: Start S3-compatible integration store
         run: |
           docker run --detach --rm --name darkvoid-ci-minio \
             --publish 9000:9000 \
             --env MINIO_ROOT_USER=darkvoid-test \
             --env MINIO_ROOT_PASSWORD=darkvoid-test-secret \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
             server /data
           for _attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
