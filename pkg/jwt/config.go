@@ -17,17 +17,6 @@ type Config struct {
 	Expiry time.Duration
 }
 
-// DefaultConfig returns a default JWT configuration
-// Note: Secret must be set before use, as it cannot have a sensible default
-func DefaultConfig() Config {
-	return Config{
-		Issuer:   "darkvoid",
-		Audience: "darkvoid-api",
-		Expiry:   15 * time.Minute,
-		// Secret must be set by caller
-	}
-}
-
 // Validate checks if the configuration is valid
 func (c Config) Validate() error {
 	if len(c.Secret) == 0 {

@@ -75,7 +75,7 @@ func SetupUserContext(
 
 	// Services
 	userService := service.NewUserService(userRepo, store)
-	refreshTokenService := service.NewRefreshTokenServiceWithExpiry(refreshTokenRepo, refreshTokenExpiry)
+	refreshTokenService := service.NewRefreshTokenService(refreshTokenRepo, refreshTokenExpiry)
 	authService := service.NewAuthService(userRepo, userService, jwtService, refreshTokenService, store)
 	followService, err := service.NewFollowService(service.FollowDeps{
 		Repo:            followRepo,

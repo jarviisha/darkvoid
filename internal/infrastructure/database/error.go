@@ -63,17 +63,3 @@ func mapPgError(pgErr *pgconn.PgError) error {
 			WithDetail("pg_message", pgErr.Message)
 	}
 }
-
-// IsNotFound checks if the error is a "not found" error
-func IsNotFound(err error) bool {
-	return err == pgx.ErrNoRows || errors.Is(err, errors.ErrNotFound)
-}
-
-// IsConflict checks if the error is a conflict error
-func IsConflict(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return pgErr.Code == "23505" || pgErr.Code == "40001" || pgErr.Code == "40P01"
-	}
-	return errors.Is(err, errors.ErrConflict)
-}

@@ -484,25 +484,9 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// IsDevelopment checks if running in development environment
-func (c *Config) IsDevelopment() bool {
-	return isDevelopmentEnv(c.App.Environment)
-}
-
 // isDevelopmentEnv is the single definition of what counts as development.
 // loadCookieConfig needs it to derive the Secure default before a Config exists,
-// so it cannot be a method — and duplicating the comparison there would let the
-// cookie disagree with IsDevelopment about which environment this is.
+// so it cannot be a method.
 func isDevelopmentEnv(name string) bool {
 	return name == "development"
-}
-
-// IsProduction checks if running in production environment
-func (c *Config) IsProduction() bool {
-	return c.App.Environment == "production"
-}
-
-// IsStaging checks if running in staging environment
-func (c *Config) IsStaging() bool {
-	return c.App.Environment == "staging"
 }

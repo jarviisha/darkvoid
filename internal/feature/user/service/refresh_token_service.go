@@ -27,11 +27,7 @@ type RefreshTokenService struct {
 	expiry time.Duration
 }
 
-func NewRefreshTokenService(repo *repository.RefreshTokenRepository) *RefreshTokenService {
-	return &RefreshTokenService{repo: repo, expiry: DefaultRefreshTokenExpiry}
-}
-
-func NewRefreshTokenServiceWithExpiry(repo *repository.RefreshTokenRepository, expiry time.Duration) *RefreshTokenService {
+func NewRefreshTokenService(repo *repository.RefreshTokenRepository, expiry time.Duration) *RefreshTokenService {
 	return &RefreshTokenService{repo: repo, expiry: expiry}
 }
 
