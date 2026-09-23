@@ -1,2 +1,2 @@
-// Package database provides shared PostgreSQL configuration and test helpers.
+// Package database provides the shared PostgreSQL connection pool and its statistics.
 package database

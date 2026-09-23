@@ -1,2 +1,2 @@
-// Package database provides internal database migration and infrastructure helpers.
+// Package database maps PostgreSQL driver errors onto the shared error sentinels.
 package database

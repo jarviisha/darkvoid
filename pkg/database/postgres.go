@@ -22,22 +22,6 @@ type Config struct {
 	MaxConnIdleTime time.Duration
 }
 
-// DefaultConfig returns default database configuration
-func DefaultConfig() *Config {
-	return &Config{
-		Host:            "localhost",
-		Port:            5432,
-		User:            "postgres",
-		Password:        "postgres",
-		Database:        "darkvoid",
-		SSLMode:         "disable",
-		MaxConns:        25,
-		MinConns:        5,
-		MaxConnLifetime: time.Hour,
-		MaxConnIdleTime: 30 * time.Minute,
-	}
-}
-
 // NewPostgresPool creates a new PostgreSQL connection pool
 func NewPostgresPool(ctx context.Context, cfg *Config) (*pgxpool.Pool, error) {
 	// Build connection string
