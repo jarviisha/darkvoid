@@ -36,15 +36,6 @@ func (a *searchPostAdapter) SearchByQuery(ctx context.Context, query string, lim
 	return postsToSearchResults(posts), nil
 }
 
-// searchHashtagAdapter implements searchsvc.hashtagSearcher using the hashtag repository.
-type searchHashtagAdapter struct {
-	repo hashtagSearchRepo
-}
-
-func (a *searchHashtagAdapter) SearchByPrefix(ctx context.Context, prefix string, limit int32) ([]string, error) {
-	return a.repo.SearchByPrefix(ctx, prefix, limit)
-}
-
 func usersToSearchResults(users []*userentity.User, store storage.Storage) []searchdto.UserResult {
 	results := make([]searchdto.UserResult, 0, len(users))
 	for _, u := range users {
