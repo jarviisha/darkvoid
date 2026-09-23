@@ -124,7 +124,7 @@ func TestFeedCursor_FollowingAndDiscoverRoundTrip(t *testing.T) {
 	}
 
 	following := decoded.FollowingPosition()
-	if following == nil || !following.CreatedAt.Equal(flTS) || following.PostID != flPostID || following.Mode != ModeFollowing {
+	if following == nil || !following.CreatedAt.Equal(flTS) || following.PostID != flPostID {
 		t.Fatalf("following position = %+v, want (%s, %s)", following, flTS, flPostID)
 	}
 	discover := decoded.DiscoverPosition()

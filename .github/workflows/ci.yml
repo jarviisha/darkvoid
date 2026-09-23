@@ -33,6 +33,15 @@ jobs:
       - name: Run lint
         run: make lint
 
+      # go.mod drifts quietly: deleting a file can leave a require line with no
+      # importer, and nothing fails — the next `make deps` then lands an unrelated
+      # dependency diff in whoever's commit runs it first. Same shape as the sqlc
+      # reproducibility check in the test job.
+      - name: Verify go.mod and go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
   test:
     runs-on: ubuntu-latest
     services:

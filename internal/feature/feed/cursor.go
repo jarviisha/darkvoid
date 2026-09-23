@@ -185,7 +185,7 @@ func (c *FeedCursor) FollowingPosition() *FollowingCursor {
 	if c == nil || c.FollowingCreatedAt == nil {
 		return nil
 	}
-	return &FollowingCursor{Mode: ModeFollowing, CreatedAt: time.Unix(0, *c.FollowingCreatedAt).UTC(), PostID: c.FollowingPostID}
+	return &FollowingCursor{CreatedAt: time.Unix(0, *c.FollowingCreatedAt).UTC(), PostID: c.FollowingPostID}
 }
 
 // DiscoverPosition returns the discover stream continuation point.
@@ -249,33 +249,12 @@ func DefaultDiscoverPgParams() (pgtype.Timestamptz, uuid.UUID) {
 	return pgtype.Timestamptz{Time: MaxDiscoverTime, Valid: true}, uuid.Max
 }
 
-// FeedMode indicates which phase of the feed the cursor belongs to.
-type FeedMode string
-
-const (
-	// ModeFollowing means the cursor points into the following timeline.
-	ModeFollowing FeedMode = "f"
-	// ModeDiscover means the cursor points into the discover (public) timeline.
-	ModeDiscover FeedMode = "d"
-)
-
-// FollowingCursor is a DB cursor for the feed endpoint.
-// Mode distinguishes between the following phase and the discover-fallback phase.
-// Encoded as base64("mode,unix_nano,post_id").
+// FollowingCursor is the following source's position, handed to the DB query.
+// It never travels to a client on its own: FeedCursor is the wire format, and
+// FollowingPosition reconstructs this from it.
 type FollowingCursor struct {
-	Mode      FeedMode
 	CreatedAt time.Time
 	PostID    string
-}
-
-// Encode returns the base64-encoded string representation of the following cursor.
-func (c *FollowingCursor) Encode() string {
-	mode := c.Mode
-	if mode == "" {
-		mode = ModeFollowing
-	}
-	raw := fmt.Sprintf("%s,%d,%s", mode, c.CreatedAt.UnixNano(), c.PostID)
-	return base64.StdEncoding.EncodeToString([]byte(raw))
 }
 
 // PgParams returns the cursor fields as pgx-compatible types for DB queries.
