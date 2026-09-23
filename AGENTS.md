@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`cmd/api` and `cmd/seed` contain executable entrypoints. Core application wiring lives in `internal/app`. Business logic is organized by feature under `internal/feature/<feature>` with subpackages such as `handler`, `service`, `repository`, `dto`, and `entity`. Shared infrastructure is in `internal/http`, `internal/infrastructure`, `internal/validation`, and `pkg/*`. SQL migrations live in `migrations/*`; generated Swagger files are in `docs/`.
+`cmd/api` and `cmd/seed` contain executable entrypoints. Core application wiring lives in `internal/app`. Business logic is organized by feature under `internal/feature/<feature>` with subpackages such as `handler`, `service`, `repository`, `dto`, and `entity`. Shared infrastructure is in `internal/http`, `internal/infrastructure`, and `pkg/*`. SQL migrations live in `migrations/*`; generated Swagger files are in `docs/`.
 
 Keep package boundaries explicit. When adding or changing a package, include a `docs.go` file that states the package purpose. If a package’s responsibilities or behavior change, update its `docs.go` in the same change.
 

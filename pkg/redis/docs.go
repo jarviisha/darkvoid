@@ -1,4 +1,6 @@
-// Package redis provides Redis configuration and client construction helpers.
+// Package redis constructs the Redis client. It does not read the environment:
+// pkg/config is the single loader of REDIS_*, and this package takes the result as
+// a Config.
 //
 // Two constructors, differing only in what a server that is down at
 // construction time costs. New pings and returns an error, for a Redis the

@@ -28,7 +28,7 @@ Shared runtime and infrastructure concerns are kept outside feature packages:
 - `internal/app/middleware`: auth, role, and rate-limit middleware
 - `internal/http`: success response helpers and request context helpers
 - `internal/infrastructure`: infrastructure adapters such as database and mailer
-- `internal/pagination`, `internal/validation`: shared request utilities
+- `internal/pagination`: limit/offset request utilities; cursor-paginated surfaces carry their own cursors
 - `pkg/*`: reusable packages for config, logger, errors, jwt, redis, storage,
   database, and the Codohue integration
 

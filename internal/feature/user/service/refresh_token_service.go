@@ -17,10 +17,7 @@ import (
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
 
-const (
-	RefreshTokenLength        = 32
-	DefaultRefreshTokenExpiry = 7 * 24 * time.Hour
-)
+const RefreshTokenLength = 32
 
 type RefreshTokenService struct {
 	repo   refreshTokenRepo

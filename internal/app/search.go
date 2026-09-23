@@ -14,10 +14,12 @@ type SearchContext struct {
 	handler *searchhandler.SearchHandler
 }
 
-// SetupSearchContext wires the unified search bounded context. The parameters are
-// the concrete adapters rather than interfaces: searchsvc declares the ports it
-// consumes, and these satisfy them structurally, so restating them here would be
-// the composition root declaring an interface against itself.
+// SetupSearchContext wires the unified search bounded context. searchsvc already
+// declares the ports it consumes, and these arguments satisfy them structurally,
+// so restating those ports here would be the composition root declaring an
+// interface against itself. The two adapters are therefore passed as their
+// concrete types; hashtags keeps an interface only because hashtagSearchRepo is
+// what types PostPorts.SearchHashtagRepo.
 func SetupSearchContext(
 	users *searchUserAdapter,
 	posts *searchPostAdapter,
