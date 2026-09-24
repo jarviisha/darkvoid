@@ -515,20 +515,14 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 	var likeOpts []postservice.LikeServiceOption
 	var commentOpts []postservice.CommentServiceOption
 	if cfg.Codohue.Enabled {
-		result, provErr := codohue.ProvisionNamespaceConfig(ctx, codohue.NamespaceProvisionConfig{
+		if _, provErr := codohue.ProvisionNamespaceConfig(ctx, codohue.NamespaceProvisionConfig{
 			AdminBaseURL: cfg.Codohue.AdminURL,
-			AdminKey:     cfg.Codohue.AdminKey,
+			AdminToken:   cfg.Codohue.AdminToken,
+			NamespaceKey: cfg.Codohue.NamespaceKey,
 			Namespace:    cfg.Codohue.Namespace,
 			EmbeddingDim: cfg.Codohue.EmbeddingDim,
-		})
-		if provErr != nil {
+		}); provErr != nil {
 			return nil, cleanup, fmt.Errorf("provision codohue namespace config: %w", provErr)
-		}
-		if result.APIKey != "" {
-			cfg.Codohue.NamespaceKey = result.APIKey
-		}
-		if cfg.Codohue.NamespaceKey == "" {
-			return nil, cleanup, fmt.Errorf("codohue namespace %q already exists but CODOHUE_NAMESPACE_KEY is not configured", cfg.Codohue.Namespace)
 		}
 
 		codohueClient, clientErr := codohue.NewClient(cfg.Codohue.BaseURL, cfg.Codohue.NamespaceKey, cfg.Codohue.Namespace, redisClient)

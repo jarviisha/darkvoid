@@ -34,27 +34,22 @@ func (app *Application) setupContexts(ctx context.Context) error {
 		// Codohue is an auxiliary recommender: a provisioning failure must not
 		// take the API down.
 		//
-		// Provisioning only creates the namespace and hands back its key. With a
-		// key already configured there is nothing left to wait for, so a failure
-		// here means Codohue was briefly unreachable, not that it is unusable —
-		// carry on wired and degraded, and let the monitor notice it recover.
-		// Without a key nothing can authenticate, and only then is it off.
-		if app.cfg.Codohue.NamespaceKey != "" {
-			app.log.Error("codohue provisioning failed, serving degraded with the configured namespace key",
-				"base_url", app.cfg.Codohue.BaseURL,
-				"error", provErr,
-			)
-		} else {
-			app.log.Error("codohue provisioning failed and no namespace key is configured, disabling codohue",
-				"base_url", app.cfg.Codohue.BaseURL,
-				"error", provErr,
-			)
-			app.cfg.Codohue.Enabled = false
-		}
+		// Provisioning creates the namespace; the key is configuration and is
+		// already in hand, so a failure here means Codohue was briefly
+		// unreachable rather than unusable. Carry on wired and degraded and let
+		// the monitor notice it recover. The branch that disabled Codohue when no
+		// key was configured is gone with the model that produced it: validateCodohue
+		// refuses that boot outright, so by here an enabled Codohue always has one.
+		app.log.Error("codohue provisioning failed, serving degraded with the configured namespace key",
+			"base_url", app.cfg.Codohue.BaseURL,
+			"error", provErr,
+		)
 	}
 
-	// After provisioning, which is what fills in cfg.Codohue.NamespaceKey, and
-	// before Post, whose services ingest into the catalog with this same client.
+	// After provisioning, so the namespace exists before anything calls into it,
+	// and before Post, whose services ingest into the catalog with this same
+	// client. Provisioning no longer supplies the namespace key — we send it —
+	// so this order is about the namespace, not about a value being filled in.
 	codohueClient, clientErr := app.setupCodohueClient()
 	if clientErr != nil {
 		return clientErr

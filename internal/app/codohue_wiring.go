@@ -13,9 +13,10 @@ import (
 // log, short enough that recovery is noticed within a few minutes.
 const codohueProbeInterval = 2 * time.Minute
 
-// ensureCodohueNamespaceConfig provisions the Codohue namespace and resolves
-// the namespace key. Errors are non-fatal by design: the caller downgrades
-// them to a degraded state rather than taking the API down.
+// ensureCodohueNamespaceConfig provisions the Codohue namespace. It resolves
+// nothing: the namespace key is configuration, and this sends it rather than
+// reading one back. Errors are non-fatal by design: the caller downgrades them to
+// a degraded state rather than taking the API down.
 func (app *Application) ensureCodohueNamespaceConfig(ctx context.Context) error {
 	if !app.cfg.Codohue.Enabled {
 		return nil
@@ -26,19 +27,13 @@ func (app *Application) ensureCodohueNamespaceConfig(ctx context.Context) error 
 
 	result, err := codohue.ProvisionNamespaceConfig(provisionCtx, codohue.NamespaceProvisionConfig{
 		AdminBaseURL: app.cfg.Codohue.AdminURL,
-		AdminKey:     app.cfg.Codohue.AdminKey,
+		AdminToken:   app.cfg.Codohue.AdminToken,
+		NamespaceKey: app.cfg.Codohue.NamespaceKey,
 		Namespace:    app.cfg.Codohue.Namespace,
 		EmbeddingDim: app.cfg.Codohue.EmbeddingDim,
 	})
 	if err != nil {
 		return fmt.Errorf("provision codohue namespace config: %w", err)
-	}
-
-	if result.APIKey != "" {
-		app.cfg.Codohue.NamespaceKey = result.APIKey
-	}
-	if app.cfg.Codohue.NamespaceKey == "" {
-		return fmt.Errorf("codohue namespace %q already exists but CODOHUE_NAMESPACE_KEY is not configured", app.cfg.Codohue.Namespace)
 	}
 
 	app.log.Info("codohue namespace config sent",
@@ -93,10 +88,12 @@ func (app *Application) wireCodohue(ctx context.Context, codohueClient *codohue.
 
 // probeCodohue pings Codohue and records the outcome as the reported state.
 func (app *Application) probeCodohue(ctx context.Context, client *codohue.Client) error {
-	pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	if err := client.Ping(pingCtx); err != nil {
+	// No deadline of our own. Ping bounds itself by what the call it makes is
+	// allowed, and a wrapper here was 3s against Ping's 3s — the outer context
+	// starts first, so it always expired first and Ping's bound was dead. Two
+	// deadlines racing over one call also means widening the real one silently
+	// achieves nothing, which is how this survived a review that changed it.
+	if err := client.Ping(ctx); err != nil {
 		app.codohue.set(CodohueDegraded, err.Error())
 		return err
 	}

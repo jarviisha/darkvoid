@@ -91,9 +91,12 @@ const (
 // exclude_authored) took it out. Treating those as score 0 would blend
 // "excluded" and "irrelevant" into the same number.
 //
-// Score is no longer per-request min-max normalized either: v0.8.0 maps it with
-// x/(x+k), which is batch-independent and comparable across calls, but not
-// comparable with values recorded before the upgrade.
+// Score is not per-request min-max normalized, and its scale has now changed
+// twice: v0.8.0 replaced min-max with a batch-independent x/(x+k) map, and
+// v0.12.0 replaced that curve with a clamp so the dot product is a cosine.
+// Values are comparable across calls but not across those upgrades — and mixed
+// feed multiplies this by a weight picked against the x/(x+k) range, which is
+// tracked separately.
 type RankedItem struct {
 	ObjectID string
 	Score    float64
@@ -145,7 +148,13 @@ func NewClient(baseURL, nsKey, namespace string, redisClient *pkgredis.Client) (
 	}, nil
 }
 
-// Ping checks whether the Codohue service is reachable via the official SDK.
+// Ping reports whether Codohue can actually serve this deployment.
+//
+// It reads the namespace rather than calling the SDK's Ping, which needs no
+// credentials and so cannot see the failures that actually take this integration
+// down — the package doc has the incident. Trending is the cheapest
+// namespace-scoped read: no subject required, and it sits behind Codohue's own
+// cache. The page is discarded; only the verdict matters.
 //
 // It deliberately bypasses the circuit breaker: this is the health probe, and a
 // probe answered from a cached "circuit is open" tells you nothing about whether
@@ -153,14 +162,20 @@ func NewClient(baseURL, nsKey, namespace string, redisClient *pkgredis.Client) (
 // that succeeds closes the circuit immediately instead of waiting for the next
 // cooldown to expire.
 func (c *Client) Ping(ctx context.Context) error {
-	if c == nil || c.http == nil {
+	if c == nil || c.http == nil || c.ns == nil {
 		return fmt.Errorf("codohue client is not configured")
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	// trendingTimeout, not a tighter probe-specific one: this *is* a trending
+	// call, so a deadline below what trending is allowed would time out on the
+	// cold-cache rebuild that constant exists to permit — and a timeout trips the
+	// breaker, so three of them would open the circuit against a healthy Codohue.
+	// A probe that manufactures the outage it is watching for is worse than a
+	// slow one; nothing waits on this tick.
+	reqCtx, cancel := context.WithTimeout(ctx, trendingTimeout)
 	defer cancel()
 
-	err := c.http.Ping(reqCtx)
+	_, err := c.ns.Trending(reqCtx, sdk.WithLimit(1))
 	c.breaker.observe(err)
 	return err
 }

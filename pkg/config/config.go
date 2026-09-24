@@ -36,14 +36,19 @@ type Config struct {
 //
 // Auth model (two-tier):
 //   - NamespaceKey (CODOHUE_NAMESPACE_KEY): used for all runtime endpoints (events, recommendations, rank, trending, delete).
-//   - AdminKey     (CODOHUE_ADMIN_KEY):     used only for namespace provisioning via the admin plane
-//     (session login + PUT /api/admin/v1/namespaces/{ns} on AdminURL).
+//   - AdminToken   (CODOHUE_ADMIN_TOKEN):   used only for namespace provisioning via the admin plane
+//     (bearer on PUT /api/admin/v1/namespaces/{ns} and its /catalog sibling, on AdminURL).
 type CodohueConfig struct {
-	Enabled      bool   // enable Codohue integration
-	BaseURL      string // data-plane HTTP base URL (cmd/api), e.g. "http://codohue-host:2001"
-	AdminURL     string // admin-plane HTTP base URL (cmd/admin), e.g. "http://codohue-host:2002"; required for provisioning
-	NamespaceKey string // namespace key — returned once on namespace creation; used for all API calls
-	AdminKey     string // admin key — only for namespace provisioning, not used in the request path
+	Enabled  bool   // enable Codohue integration
+	BaseURL  string // data-plane HTTP base URL (cmd/api), e.g. "http://codohue-host:2001"
+	AdminURL string // admin-plane HTTP base URL (cmd/admin), e.g. "http://codohue-host:2002"; required for provisioning
+	// Codohue v0.12.0's "admin ports default to loopback" is about where the
+	// admin server publishes on its *host*, not where it listens: measured on
+	// v0.12.1, the container still listens on all interfaces, so a container-to-
+	// container URL like http://codohue-admin-1:2002 keeps working. A host-side
+	// URL against a published port is the one that breaks.
+	NamespaceKey string // namespace key — supplied by us at provisioning time; used for all API calls
+	AdminToken   string // admin-plane service token — only for namespace provisioning, not used in the request path
 	Namespace    string // namespace identifier for this app's events and recommendations
 	EmbeddingDim int    // dimension Codohue's catalog embedder produces; must be one of 64/128/256/512
 
@@ -428,7 +433,39 @@ func (c *Config) Validate() error {
 	if c.Settings.RefreshInterval <= 0 {
 		return fmt.Errorf("settings refresh interval must be positive")
 	}
+	if err := c.validateCodohue(); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+// validateCodohue fails the boot on the two credentials provisioning cannot
+// invent.
+//
+// Both used to be optional in a way that only looked like it worked. The
+// namespace key was minted by the server and read out of the provisioning
+// response, so an empty one was normal — until a retry produced a second key and
+// the two ends disagreed about which was current. Now we supply it, which makes
+// an empty value a configuration error rather than a request for a fresh key.
+// The admin token is what replaced the global admin key Codohue v0.12.0 retired;
+// without it provisioning gets a 403 it cannot recover from, and the integration
+// then reports itself healthy while every namespace-scoped call is rejected.
+func (c *Config) validateCodohue() error {
+	if !c.Codohue.Enabled {
+		return nil
+	}
+	if c.Codohue.NamespaceKey == "" {
+		return fmt.Errorf("CODOHUE_NAMESPACE_KEY is required when CODOHUE_ENABLED is true: it is sent at provisioning time, not returned by it")
+	}
+	// Gated on AdminURL because only the deployment that provisions needs the
+	// token. In practice that gate is always open: every shipped compose file
+	// defaults CODOHUE_ADMIN_URL with :-, so a container cannot present an empty
+	// one. The condition is kept for the bare-metal case and for honesty about
+	// which credential each plane needs, not as a way to opt out.
+	if c.Codohue.AdminURL != "" && c.Codohue.AdminToken == "" {
+		return fmt.Errorf("CODOHUE_ADMIN_TOKEN is required to provision through CODOHUE_ADMIN_URL: Codohue no longer accepts the global admin key")
+	}
 	return nil
 }
 

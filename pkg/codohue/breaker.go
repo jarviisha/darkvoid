@@ -3,6 +3,7 @@ package codohue
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync/atomic"
 	"time"
 
@@ -72,8 +73,9 @@ func (b *breaker) allow() bool {
 // observe records the outcome of a call that was allowed through.
 func (b *breaker) observe(err error) {
 	if !tripsBreaker(err) {
-		// Includes 4xx: the service answered, so it is available. Whatever is
-		// wrong with the request will not be fixed by cutting off every caller.
+		// Includes most 4xx: the service answered, so it is available. Whatever
+		// is wrong with the request will not be fixed by cutting off every
+		// caller. 401/403 are excluded — see tripsBreaker.
 		b.failures.Store(0)
 		b.openedAt.Store(0)
 		return
@@ -84,6 +86,17 @@ func (b *breaker) observe(err error) {
 		// outage.
 		b.openedAt.CompareAndSwap(0, b.now().UnixNano())
 	}
+}
+
+// namespaceFaultCodes are the error codes that condemn the namespace rather than
+// the request. Every caller is affected identically and no retry helps, so they
+// count as unavailability even though their statuses are 4xx.
+// namespace_config_unavailable is a 503 and would trip on status anyway; it is
+// listed so the set reads as the one place this judgement is recorded.
+var namespaceFaultCodes = map[string]struct{}{
+	"namespace_not_found":          {},
+	"namespace_not_active":         {},
+	"namespace_config_unavailable": {},
 }
 
 // tripsBreaker reports whether err means Codohue is unavailable, as opposed to
@@ -98,8 +111,27 @@ func tripsBreaker(err error) bool {
 	}
 	var apiErr *sdk.APIError
 	if errors.As(err, &apiErr) {
-		// 4xx is our bug — a malformed request would otherwise open the circuit
-		// and disable the integration for everyone.
+		// 401/403 are the exception to the rule below. They are not one call
+		// site's bug: the credential is wrong, expired or no longer scoped to
+		// this namespace, so every request from every caller fails identically
+		// and will keep failing until an operator changes something. Treating
+		// them as "the service answered, so it is available" is what let a dead
+		// namespace key read as healthy — the breaker stayed closed, so /health
+		// had nothing to override its stale "active" with, and every feed page
+		// paid a round trip to be told no.
+		if apiErr.Status == http.StatusUnauthorized || apiErr.Status == http.StatusForbidden {
+			return true
+		}
+		// Same reasoning, reached by code rather than status: a 404 can be one
+		// missing object, but namespace_not_found is the whole namespace, and
+		// that is what the September 2026 incident actually was — the namespace
+		// was deleted when its Codohue instance was rebuilt. Status alone cannot
+		// separate the two, so the code does it.
+		if _, nsFault := namespaceFaultCodes[apiErr.Code]; nsFault {
+			return true
+		}
+		// Any other 4xx is our bug — a malformed request would otherwise open
+		// the circuit and disable the integration for everyone.
 		return apiErr.Status >= 500
 	}
 	// Transport failure: DNS, connection refused, TLS, deadline exceeded.

@@ -125,7 +125,7 @@ func loadRootConfig() RootConfig {
 //	CODOHUE_BASE_URL       (default: "") — data-plane API (cmd/api)
 //	CODOHUE_ADMIN_URL      (default: "") — admin plane (cmd/admin); required for namespace provisioning
 //	CODOHUE_NAMESPACE_KEY  (default: "") — namespace key from one-time namespace creation
-//	CODOHUE_ADMIN_KEY      (default: CODOHUE_API_KEY) — admin key for namespace provisioning only
+//	CODOHUE_ADMIN_TOKEN    (default: "") — admin-plane service token, for namespace provisioning only
 //	CODOHUE_NAMESPACE      (default: "darkvoid_feed")
 //	CODOHUE_EMBEDDING_DIM  (default: 64) — dim of Codohue's catalog embedder: 64, 128, 256 or 512
 //
@@ -142,7 +142,7 @@ func loadCodohueConfig() CodohueConfig {
 		BaseURL:      getEnv("CODOHUE_BASE_URL", ""),
 		AdminURL:     getEnv("CODOHUE_ADMIN_URL", ""),
 		NamespaceKey: getEnv("CODOHUE_NAMESPACE_KEY", ""),
-		AdminKey:     getEnv("CODOHUE_ADMIN_KEY", getEnv("CODOHUE_API_KEY", "")),
+		AdminToken:   getEnv("CODOHUE_ADMIN_TOKEN", ""),
 		Namespace:    getEnv("CODOHUE_NAMESPACE", "darkvoid_feed"),
 		EmbeddingDim: getEnvInt("CODOHUE_EMBEDDING_DIM", 64),
 		EventsRedis:  loadCodohueEventsRedisConfig(),

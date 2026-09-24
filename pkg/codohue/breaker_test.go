@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -135,7 +136,11 @@ func TestBreaker_FailedTrialStartsANewCooldown(t *testing.T) {
 // rejected is our bug. Opening the circuit on it would disable the integration
 // for every caller because one call site sent something malformed.
 func TestBreaker_ClientErrorsDoNotOpenTheCircuit(t *testing.T) {
-	for _, status := range []int{400, 401, 404, 422} {
+	// 401 and 403 used to be in this list — see TestBreaker_AuthFailuresOpenTheCircuit.
+	// 404 and 409 stay, but only with a request-shaped code: the same statuses
+	// carrying a namespace code are condemnations of the whole namespace, which
+	// TestBreaker_NamespaceFaultsOpenTheCircuit covers.
+	for _, status := range []int{400, 404, 409, 422} {
 		t.Run(fmt.Sprintf("status_%d", status), func(t *testing.T) {
 			b, _ := newTestBreaker()
 			apiErr := &sdk.APIError{Status: status, Code: "bad_request", Message: "nope"}
@@ -148,6 +153,70 @@ func TestBreaker_ClientErrorsDoNotOpenTheCircuit(t *testing.T) {
 				t.Errorf("a %d answer means the service is up; the circuit must stay closed", status)
 			}
 		})
+	}
+}
+
+// A rejected credential is not one caller's mistake — it fails every request
+// identically until an operator changes something. Leaving the circuit closed
+// meant /health had no live signal to override a stale "active" with, which is
+// how a deleted namespace went unnoticed for six days.
+func TestBreaker_AuthFailuresOpenTheCircuit(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(fmt.Sprintf("status_%d", status), func(t *testing.T) {
+			b, _ := newTestBreaker()
+			apiErr := &sdk.APIError{Status: status, Code: "unauthorized", Message: "invalid or missing bearer token"}
+
+			for range breakerThreshold {
+				b.observe(apiErr)
+			}
+
+			if b.allow() {
+				t.Errorf("a %d means every caller is rejected; the circuit must open", status)
+			}
+		})
+	}
+}
+
+// The incident that motivated the auth cases was not actually a bad key — the
+// namespace had been deleted when its Codohue instance was rebuilt, which answers
+// 404 namespace_not_found. Leaving that closed means every feed page pays a round
+// trip to be told the namespace is gone, for as long as it stays gone.
+func TestBreaker_NamespaceFaultsOpenTheCircuit(t *testing.T) {
+	cases := []struct {
+		status int
+		code   string
+	}{
+		{http.StatusNotFound, "namespace_not_found"},
+		{http.StatusConflict, "namespace_not_active"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			b, _ := newTestBreaker()
+			apiErr := &sdk.APIError{Status: tc.status, Code: tc.code, Message: "namespace unusable"}
+
+			for range breakerThreshold {
+				b.observe(apiErr)
+			}
+
+			if b.allow() {
+				t.Errorf("%d %s condemns the namespace for every caller; the circuit must open", tc.status, tc.code)
+			}
+		})
+	}
+}
+
+// The other half of the same judgement: a 404 that names one object must not
+// disable the integration. DeleteObject on an already-deleted post is routine.
+func TestBreaker_ObjectNotFoundDoesNotOpenTheCircuit(t *testing.T) {
+	b, _ := newTestBreaker()
+	apiErr := &sdk.APIError{Status: http.StatusNotFound, Code: "object_not_found", Message: "no such object"}
+
+	for range breakerThreshold * 2 {
+		b.observe(apiErr)
+	}
+
+	if !b.allow() {
+		t.Error("a missing object is one request's problem; the circuit must stay closed")
 	}
 }
 

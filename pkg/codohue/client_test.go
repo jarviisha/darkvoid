@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -224,5 +225,98 @@ func TestNewClient_EmptyBaseURLIsAnError(t *testing.T) {
 	}
 	if client != nil {
 		t.Fatalf(`NewClient("") returned client %v — want nil alongside the error`, client)
+	}
+}
+
+// The failure this exists to catch, reproduced exactly: Codohue is up and /ping
+// answers 200 without credentials, while every namespace-scoped call is rejected.
+// The old probe called the SDK's Ping and reported the deployment healthy for six
+// days, through a window in which not one recommendation, rank or ingest
+// succeeded.
+func TestPing_FailsWhenTheNamespaceRejectsTheCredential(t *testing.T) {
+	var authenticatedCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ping" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		authenticatedCalls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"unauthorized","message":"invalid or missing bearer token"}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "stale-key", "ns", nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if err := client.Ping(context.Background()); err == nil {
+		t.Fatal("Ping reported success against a namespace that rejects every call")
+	}
+	if authenticatedCalls == 0 {
+		t.Fatal("Ping never touched the authenticated surface, so it cannot see a dead credential")
+	}
+}
+
+// Consequence of the above for /health: the probe's verdict must reach the
+// breaker, because an open circuit is what overrides a stale "active".
+func TestPing_RepeatedAuthFailuresOpenTheCircuit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"unauthorized","message":"nope"}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "stale-key", "ns", nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	for range breakerThreshold {
+		_ = client.Ping(context.Background())
+	}
+
+	if !client.CircuitOpen() {
+		t.Error("the circuit stayed closed after repeated rejected probes, so /health would still read active")
+	}
+}
+
+// The probe must still be able to report recovery: once the credential works
+// again, one successful probe closes the circuit rather than waiting out a
+// cooldown.
+func TestPing_SuccessAfterAuthFailureClosesTheCircuit(t *testing.T) {
+	var reject atomic.Bool
+	reject.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if reject.Load() {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"code":"unauthorized","message":"nope"}}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(codohuetypes.TrendingResponse{})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "key", "ns", nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	for range breakerThreshold {
+		_ = client.Ping(context.Background())
+	}
+	if !client.CircuitOpen() {
+		t.Fatal("precondition: circuit should be open")
+	}
+
+	reject.Store(false)
+	if err := client.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping after recovery: %v", err)
+	}
+	if client.CircuitOpen() {
+		t.Error("a successful probe must close the circuit immediately")
 	}
 }
