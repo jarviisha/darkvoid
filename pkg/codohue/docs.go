@@ -39,6 +39,16 @@
 // they fail every caller identically until an operator intervenes, and an open
 // circuit is what lets /health override a stale "active".
 //
+// Behavior events carry the namespace lifecycle generation, taken from what
+// provisioning reports and stamped by newEventProducer. Codohue accepts an
+// unstamped envelope only for a generation-1 namespace whose legacy gate is still
+// open, so once that gate closes — or once the namespace is deleted and recreated,
+// which mints a new generation — an unstamped event is dropped when the consumer
+// reads it. Publishing is fire-and-forget, so that loss is silent. Generation zero
+// means nothing was reported (the caller does not provision, or provisioning
+// failed) and publishes unstamped, which is the behaviour from before the field
+// existed rather than a new failure mode.
+//
 // Behavior events are the exception to "runtime traffic goes over HTTP": they
 // are published to the codohue:events Redis Stream, which Codohue's consumer
 // reads from whichever Redis Codohue owns. The Redis client is therefore passed

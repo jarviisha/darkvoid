@@ -77,8 +77,10 @@ func cmdReindex(args []string) error {
 	posts := postrepo.NewPostRepository(d.pool)
 	hashtags := postrepo.NewHashtagRepository(d.pool)
 
-	// Redis is nil: this pushes index entries, never behavior events.
-	client, err := codohue.NewClient(cfg.Codohue.BaseURL, cfg.Codohue.NamespaceKey, cfg.Codohue.Namespace, nil)
+	// Redis is nil: this pushes index entries, never behavior events. Generation 0
+	// for the same reason — ctl does not provision, so it has no generation to
+	// report, and with no producer there is nothing for one to stamp.
+	client, err := codohue.NewClient(cfg.Codohue.BaseURL, cfg.Codohue.NamespaceKey, cfg.Codohue.Namespace, 0, nil)
 	if err != nil {
 		return fmt.Errorf("could not build a codohue client for %q: %w", cfg.Codohue.BaseURL, err)
 	}

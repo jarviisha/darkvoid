@@ -124,7 +124,11 @@ type Client struct {
 // what CODOHUE_BASE_URL defaults to. A nil *Client assigned to an interface
 // field reads as present and dereferences on first use, so the caller has to be
 // able to tell construction apart from success.
-func NewClient(baseURL, nsKey, namespace string, redisClient *pkgredis.Client) (*Client, error) {
+// generation is the namespace lifecycle generation, as reported by provisioning.
+// Zero means unknown — a caller that does not provision has nothing to report,
+// and a Codohue predating the lifecycle work reports nothing. Both cases publish
+// unstamped events, which is what happened before the field existed.
+func NewClient(baseURL, nsKey, namespace string, generation int64, redisClient *pkgredis.Client) (*Client, error) {
 	httpClient, err := sdk.New(
 		baseURL,
 		sdk.WithTimeout(5*time.Second),
@@ -136,16 +140,34 @@ func NewClient(baseURL, nsKey, namespace string, redisClient *pkgredis.Client) (
 
 	var producer *redistream.Producer
 	if redisClient != nil {
-		producer = redistream.NewProducer(cappedXAdder{inner: redisClient, maxLen: eventsStreamMaxLen})
+		producer = newEventProducer(redisClient, generation)
 	}
 
 	return &Client{
-		http:      httpClient,
-		ns:        httpClient.Namespace(namespace, nsKey),
+		http: httpClient,
+		// NamespaceWithOptions rather than Namespace: the wrapper carries the
+		// generation so the SDK can qualify requests with it too.
+		ns:        httpClient.NamespaceWithOptions(namespace, nsKey, sdk.WithNamespaceGeneration(generation)),
 		namespace: namespace,
 		producer:  producer,
 		breaker:   newBreaker(),
 	}, nil
+}
+
+// newEventProducer builds the behavior-events producer: the stream cap and the
+// generation stamp, in one place.
+//
+// Separate from NewClient because NewClient takes a concrete *pkgredis.Client and
+// so cannot be handed a fake, which would leave the two decisions here provable
+// only by reading them. The stamp in particular has to be pinned by a test:
+// Codohue accepts an unstamped envelope only for a generation-1 namespace with the
+// legacy gate still open, so a dropped generation means every event vanishes on
+// read — and the publish path logs and continues, so nothing would report it.
+func newEventProducer(xadder redistream.XAdder, generation int64) *redistream.Producer {
+	return redistream.NewProducer(
+		cappedXAdder{inner: xadder, maxLen: eventsStreamMaxLen},
+		redistream.WithNamespaceGeneration(generation),
+	)
 }
 
 // Ping reports whether Codohue can actually serve this deployment.

@@ -14,9 +14,10 @@ import (
 // breaker's state is per-client, so a second one would learn about an outage
 // separately and report a different answer to /health than the feed experiences.
 //
-// It runs after ensureCodohueNamespaceConfig so the namespace exists before the
-// first call reaches it. That is the only reason for the order now: the namespace
-// key comes from configuration, not from the provisioning response.
+// It runs after ensureCodohueNamespaceConfig for two reasons now: the namespace has
+// to exist before the first call reaches it, and that step is where the lifecycle
+// generation comes from. The namespace key is not one of them — that is
+// configuration, not something provisioning hands back.
 func (app *Application) setupCodohueClient() (*codohue.Client, error) {
 	if !app.cfg.Codohue.Enabled {
 		// A nil client is not a missing value here, it is the documented
@@ -29,6 +30,7 @@ func (app *Application) setupCodohueClient() (*codohue.Client, error) {
 		app.cfg.Codohue.BaseURL,
 		app.cfg.Codohue.NamespaceKey,
 		app.cfg.Codohue.Namespace,
+		app.codohueGeneration,
 		app.codohueEventsClient(),
 	)
 	if err != nil {
