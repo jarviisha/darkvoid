@@ -14,9 +14,9 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
-	github.com/jarviisha/codohue/pkg/codohuetypes v0.5.0
-	github.com/jarviisha/codohue/sdk/go v0.5.0
-	github.com/jarviisha/codohue/sdk/go/redistream v0.5.0
+	github.com/jarviisha/codohue/pkg/codohuetypes v0.7.0
+	github.com/jarviisha/codohue/sdk/go v0.7.0
+	github.com/jarviisha/codohue/sdk/go/redistream v0.7.0
 	github.com/joho/godotenv v1.5.1
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/swaggo/files v1.0.1
