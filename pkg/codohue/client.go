@@ -31,10 +31,6 @@ const (
 	// cache and a single-flight rebuild, so per cache window exactly one
 	// caller pays this worst case rather than every request.
 	trendingTimeout = 3 * time.Second
-	// pingTimeout caps the health probe. It stays tight because the probe runs
-	// on a ticker with nothing waiting on it, and a probe that hangs longer than
-	// the interval would overlap itself.
-	pingTimeout = 2 * time.Second
 
 	// eventsStreamMaxLen bounds the behavior-events stream at the producer
 	// (XADD MAXLEN ~, approximate so it costs nothing per publish). The
@@ -154,17 +150,11 @@ func NewClient(baseURL, nsKey, namespace string, redisClient *pkgredis.Client) (
 
 // Ping reports whether Codohue can actually serve this deployment.
 //
-// It reads the namespace rather than calling the SDK's Ping, because /ping needs
-// no credentials and answers 200 from a server that rejects every real call. A
-// namespace that has been deleted, a namespace key that no longer authenticates,
-// permissions narrowed on the token — none of it is reachability, and all of it
-// makes the integration useless. Probing the unauthenticated surface reported
-// "active" for six days while every recommendation, rank and ingest returned 401.
-// One namespace-scoped read costs the same round trip and cannot lie that way.
-//
-// Trending is the cheapest such read: namespace-scoped, needs no subject, and
-// sits behind Codohue's own cache. The page is discarded — only the verdict
-// matters.
+// It reads the namespace rather than calling the SDK's Ping, which needs no
+// credentials and so cannot see the failures that actually take this integration
+// down — the package doc has the incident. Trending is the cheapest
+// namespace-scoped read: no subject required, and it sits behind Codohue's own
+// cache. The page is discarded; only the verdict matters.
 //
 // It deliberately bypasses the circuit breaker: this is the health probe, and a
 // probe answered from a cached "circuit is open" tells you nothing about whether
@@ -176,7 +166,13 @@ func (c *Client) Ping(ctx context.Context) error {
 		return fmt.Errorf("codohue client is not configured")
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+	// trendingTimeout, not a tighter probe-specific one: this *is* a trending
+	// call, so a deadline below what trending is allowed would time out on the
+	// cold-cache rebuild that constant exists to permit — and a timeout trips the
+	// breaker, so three of them would open the circuit against a healthy Codohue.
+	// A probe that manufactures the outage it is watching for is worse than a
+	// slow one; nothing waits on this tick.
+	reqCtx, cancel := context.WithTimeout(ctx, trendingTimeout)
 	defer cancel()
 
 	_, err := c.ns.Trending(reqCtx, sdk.WithLimit(1))

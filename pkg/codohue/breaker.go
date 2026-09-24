@@ -88,6 +88,17 @@ func (b *breaker) observe(err error) {
 	}
 }
 
+// namespaceFaultCodes are the error codes that condemn the namespace rather than
+// the request. Every caller is affected identically and no retry helps, so they
+// count as unavailability even though their statuses are 4xx.
+// namespace_config_unavailable is a 503 and would trip on status anyway; it is
+// listed so the set reads as the one place this judgement is recorded.
+var namespaceFaultCodes = map[string]struct{}{
+	"namespace_not_found":          {},
+	"namespace_not_active":         {},
+	"namespace_config_unavailable": {},
+}
+
 // tripsBreaker reports whether err means Codohue is unavailable, as opposed to
 // the request being wrong or the caller giving up.
 func tripsBreaker(err error) bool {
@@ -109,6 +120,14 @@ func tripsBreaker(err error) bool {
 		// had nothing to override its stale "active" with, and every feed page
 		// paid a round trip to be told no.
 		if apiErr.Status == http.StatusUnauthorized || apiErr.Status == http.StatusForbidden {
+			return true
+		}
+		// Same reasoning, reached by code rather than status: a 404 can be one
+		// missing object, but namespace_not_found is the whole namespace, and
+		// that is what the September 2026 incident actually was — the namespace
+		// was deleted when its Codohue instance was rebuilt. Status alone cannot
+		// separate the two, so the code does it.
+		if _, nsFault := namespaceFaultCodes[apiErr.Code]; nsFault {
 			return true
 		}
 		// Any other 4xx is our bug — a malformed request would otherwise open

@@ -13,9 +13,10 @@ import (
 // log, short enough that recovery is noticed within a few minutes.
 const codohueProbeInterval = 2 * time.Minute
 
-// ensureCodohueNamespaceConfig provisions the Codohue namespace and resolves
-// the namespace key. Errors are non-fatal by design: the caller downgrades
-// them to a degraded state rather than taking the API down.
+// ensureCodohueNamespaceConfig provisions the Codohue namespace. It resolves
+// nothing: the namespace key is configuration, and this sends it rather than
+// reading one back. Errors are non-fatal by design: the caller downgrades them to
+// a degraded state rather than taking the API down.
 func (app *Application) ensureCodohueNamespaceConfig(ctx context.Context) error {
 	if !app.cfg.Codohue.Enabled {
 		return nil

@@ -39,9 +39,14 @@ type Config struct {
 //   - AdminToken   (CODOHUE_ADMIN_TOKEN):   used only for namespace provisioning via the admin plane
 //     (bearer on PUT /api/admin/v1/namespaces/{ns} and its /catalog sibling, on AdminURL).
 type CodohueConfig struct {
-	Enabled      bool   // enable Codohue integration
-	BaseURL      string // data-plane HTTP base URL (cmd/api), e.g. "http://codohue-host:2001"
-	AdminURL     string // admin-plane HTTP base URL (cmd/admin), e.g. "http://codohue-host:2002"; required for provisioning
+	Enabled  bool   // enable Codohue integration
+	BaseURL  string // data-plane HTTP base URL (cmd/api), e.g. "http://codohue-host:2001"
+	AdminURL string // admin-plane HTTP base URL (cmd/admin), e.g. "http://codohue-host:2002"; required for provisioning
+	// Codohue v0.12.0's "admin ports default to loopback" is about where the
+	// admin server publishes on its *host*, not where it listens: measured on
+	// v0.12.1, the container still listens on all interfaces, so a container-to-
+	// container URL like http://codohue-admin-1:2002 keeps working. A host-side
+	// URL against a published port is the one that breaks.
 	NamespaceKey string // namespace key — supplied by us at provisioning time; used for all API calls
 	AdminToken   string // admin-plane service token — only for namespace provisioning, not used in the request path
 	Namespace    string // namespace identifier for this app's events and recommendations

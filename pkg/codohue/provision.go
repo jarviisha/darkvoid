@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 const maxProvisionErrorBodyBytes = 1 << 20
@@ -51,15 +50,16 @@ type NamespaceProvisionConfig struct {
 // NamespaceProvisionResult contains the relevant response fields from Codohue.
 // The response's api_key is deliberately not read: the caller supplied the key.
 type NamespaceProvisionResult struct {
-	Namespace string    `json:"namespace"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Namespace string `json:"namespace"`
 }
 
 type namespaceProvisionPayload struct {
-	// ProvisionAPIKey is the namespace key we want this namespace to carry.
-	// Omitted on an update, where the key already exists and resending it would
-	// be a rotation nobody asked for.
-	ProvisionAPIKey string             `json:"provision_api_key,omitempty"`
+	// ProvisionAPIKey is the namespace key we want this namespace to carry. Always
+	// sent: validateCodohue refuses to boot without one, and provisioning runs on
+	// every start, so there is no path here with an empty key. Resending it on an
+	// update is not a rotation — the server treats the value as immutable, which
+	// is what makes a retried call safe.
+	ProvisionAPIKey string             `json:"provision_api_key"`
 	ActionWeights   map[string]float64 `json:"action_weights"`
 	Lambda          float64            `json:"lambda"`
 	Gamma           float64            `json:"gamma"`
@@ -97,8 +97,16 @@ type catalogConfigPayload struct {
 // over plain HTTP inside a compose network.
 //
 // It always provisions catalog auto-embedding: darkvoid ships raw post content
-// and Codohue embeds it. Two requests rather than one, because the namespace
-// upsert refuses dense_source "catalog" — only the catalog endpoint may set it.
+// and Codohue embeds it. That takes two requests here, because this payload omits
+// dense_source — recorded when the namespace upsert was measured to reject
+// "catalog" on that route.
+//
+// That may no longer hold. sdk/go/admin's ProvisionCatalogNamespace sends
+// dense_source "catalog" in the same PUT and documents it as "validated
+// server-side ... exactly like the dedicated catalog endpoint", which would
+// collapse this to one request. Left as two until it can be exercised against a
+// server: the namespace this provisions does not currently exist, so the single
+// request cannot be tried, and guessing wrong here fails provisioning outright.
 //
 // Still hand-rolled rather than using sdk/go/admin, for the reason recorded when
 // that package first appeared and re-checked against v0.7.0: its
