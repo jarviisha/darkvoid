@@ -3,6 +3,7 @@ package codohue
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync/atomic"
 	"time"
 
@@ -72,8 +73,9 @@ func (b *breaker) allow() bool {
 // observe records the outcome of a call that was allowed through.
 func (b *breaker) observe(err error) {
 	if !tripsBreaker(err) {
-		// Includes 4xx: the service answered, so it is available. Whatever is
-		// wrong with the request will not be fixed by cutting off every caller.
+		// Includes most 4xx: the service answered, so it is available. Whatever
+		// is wrong with the request will not be fixed by cutting off every
+		// caller. 401/403 are excluded — see tripsBreaker.
 		b.failures.Store(0)
 		b.openedAt.Store(0)
 		return
@@ -98,8 +100,19 @@ func tripsBreaker(err error) bool {
 	}
 	var apiErr *sdk.APIError
 	if errors.As(err, &apiErr) {
-		// 4xx is our bug — a malformed request would otherwise open the circuit
-		// and disable the integration for everyone.
+		// 401/403 are the exception to the rule below. They are not one call
+		// site's bug: the credential is wrong, expired or no longer scoped to
+		// this namespace, so every request from every caller fails identically
+		// and will keep failing until an operator changes something. Treating
+		// them as "the service answered, so it is available" is what let a dead
+		// namespace key read as healthy — the breaker stayed closed, so /health
+		// had nothing to override its stale "active" with, and every feed page
+		// paid a round trip to be told no.
+		if apiErr.Status == http.StatusUnauthorized || apiErr.Status == http.StatusForbidden {
+			return true
+		}
+		// Any other 4xx is our bug — a malformed request would otherwise open
+		// the circuit and disable the integration for everyone.
 		return apiErr.Status >= 500
 	}
 	// Transport failure: DNS, connection refused, TLS, deadline exceeded.

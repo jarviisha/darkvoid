@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -135,7 +136,9 @@ func TestBreaker_FailedTrialStartsANewCooldown(t *testing.T) {
 // rejected is our bug. Opening the circuit on it would disable the integration
 // for every caller because one call site sent something malformed.
 func TestBreaker_ClientErrorsDoNotOpenTheCircuit(t *testing.T) {
-	for _, status := range []int{400, 401, 404, 422} {
+	// 401 and 403 used to be in this list. They are not request-shaped failures:
+	// see TestBreaker_AuthFailuresOpenTheCircuit.
+	for _, status := range []int{400, 404, 409, 422} {
 		t.Run(fmt.Sprintf("status_%d", status), func(t *testing.T) {
 			b, _ := newTestBreaker()
 			apiErr := &sdk.APIError{Status: status, Code: "bad_request", Message: "nope"}
@@ -146,6 +149,27 @@ func TestBreaker_ClientErrorsDoNotOpenTheCircuit(t *testing.T) {
 
 			if !b.allow() {
 				t.Errorf("a %d answer means the service is up; the circuit must stay closed", status)
+			}
+		})
+	}
+}
+
+// A rejected credential is not one caller's mistake — it fails every request
+// identically until an operator changes something. Leaving the circuit closed
+// meant /health had no live signal to override a stale "active" with, which is
+// how a deleted namespace went unnoticed for six days.
+func TestBreaker_AuthFailuresOpenTheCircuit(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(fmt.Sprintf("status_%d", status), func(t *testing.T) {
+			b, _ := newTestBreaker()
+			apiErr := &sdk.APIError{Status: status, Code: "unauthorized", Message: "invalid or missing bearer token"}
+
+			for range breakerThreshold {
+				b.observe(apiErr)
+			}
+
+			if b.allow() {
+				t.Errorf("a %d means every caller is rejected; the circuit must open", status)
 			}
 		})
 	}

@@ -31,6 +31,10 @@ const (
 	// cache and a single-flight rebuild, so per cache window exactly one
 	// caller pays this worst case rather than every request.
 	trendingTimeout = 3 * time.Second
+	// pingTimeout caps the health probe. It stays tight because the probe runs
+	// on a ticker with nothing waiting on it, and a probe that hangs longer than
+	// the interval would overlap itself.
+	pingTimeout = 2 * time.Second
 
 	// eventsStreamMaxLen bounds the behavior-events stream at the producer
 	// (XADD MAXLEN ~, approximate so it costs nothing per publish). The
@@ -145,7 +149,19 @@ func NewClient(baseURL, nsKey, namespace string, redisClient *pkgredis.Client) (
 	}, nil
 }
 
-// Ping checks whether the Codohue service is reachable via the official SDK.
+// Ping reports whether Codohue can actually serve this deployment.
+//
+// It reads the namespace rather than calling the SDK's Ping, because /ping needs
+// no credentials and answers 200 from a server that rejects every real call. A
+// namespace that has been deleted, a namespace key that no longer authenticates,
+// permissions narrowed on the token — none of it is reachability, and all of it
+// makes the integration useless. Probing the unauthenticated surface reported
+// "active" for six days while every recommendation, rank and ingest returned 401.
+// One namespace-scoped read costs the same round trip and cannot lie that way.
+//
+// Trending is the cheapest such read: namespace-scoped, needs no subject, and
+// sits behind Codohue's own cache. The page is discarded — only the verdict
+// matters.
 //
 // It deliberately bypasses the circuit breaker: this is the health probe, and a
 // probe answered from a cached "circuit is open" tells you nothing about whether
@@ -153,14 +169,14 @@ func NewClient(baseURL, nsKey, namespace string, redisClient *pkgredis.Client) (
 // that succeeds closes the circuit immediately instead of waiting for the next
 // cooldown to expire.
 func (c *Client) Ping(ctx context.Context) error {
-	if c == nil || c.http == nil {
+	if c == nil || c.http == nil || c.ns == nil {
 		return fmt.Errorf("codohue client is not configured")
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, pingTimeout)
 	defer cancel()
 
-	err := c.http.Ping(reqCtx)
+	_, err := c.ns.Trending(reqCtx, sdk.WithLimit(1))
 	c.breaker.observe(err)
 	return err
 }
