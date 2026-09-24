@@ -26,19 +26,13 @@ func (app *Application) ensureCodohueNamespaceConfig(ctx context.Context) error 
 
 	result, err := codohue.ProvisionNamespaceConfig(provisionCtx, codohue.NamespaceProvisionConfig{
 		AdminBaseURL: app.cfg.Codohue.AdminURL,
-		AdminKey:     app.cfg.Codohue.AdminKey,
+		AdminToken:   app.cfg.Codohue.AdminToken,
+		NamespaceKey: app.cfg.Codohue.NamespaceKey,
 		Namespace:    app.cfg.Codohue.Namespace,
 		EmbeddingDim: app.cfg.Codohue.EmbeddingDim,
 	})
 	if err != nil {
 		return fmt.Errorf("provision codohue namespace config: %w", err)
-	}
-
-	if result.APIKey != "" {
-		app.cfg.Codohue.NamespaceKey = result.APIKey
-	}
-	if app.cfg.Codohue.NamespaceKey == "" {
-		return fmt.Errorf("codohue namespace %q already exists but CODOHUE_NAMESPACE_KEY is not configured", app.cfg.Codohue.Namespace)
 	}
 
 	app.log.Info("codohue namespace config sent",

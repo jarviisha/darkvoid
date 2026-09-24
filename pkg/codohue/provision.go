@@ -33,25 +33,39 @@ var provisionHTTPClient = http.DefaultClient
 // match the catalog strategy's dim, which the server validates.
 type NamespaceProvisionConfig struct {
 	AdminBaseURL string
-	AdminKey     string
+	// AdminToken is an admin-plane service token, sent as a bearer. Codohue
+	// v0.12.0 stopped accepting the global admin key it replaced: that key now
+	// authenticates nothing unless the server is started with
+	// CODOHUE_LEGACY_ADMIN_AUTH, which its own release notes mark as migration
+	// only.
+	AdminToken string
+	// NamespaceKey is the key this deployment will use for runtime calls. We
+	// supply it rather than reading one back: provisioning used to mint a key
+	// and return it, so a retried call produced a second key and whichever
+	// response landed last won. Sending ours makes the call idempotent.
+	NamespaceKey string
 	Namespace    string
 	EmbeddingDim int
 }
 
 // NamespaceProvisionResult contains the relevant response fields from Codohue.
+// The response's api_key is deliberately not read: the caller supplied the key.
 type NamespaceProvisionResult struct {
 	Namespace string    `json:"namespace"`
 	UpdatedAt time.Time `json:"updated_at"`
-	APIKey    string    `json:"api_key,omitempty"`
 }
 
 type namespaceProvisionPayload struct {
-	ActionWeights map[string]float64 `json:"action_weights"`
-	Lambda        float64            `json:"lambda"`
-	Gamma         float64            `json:"gamma"`
-	MaxResults    int                `json:"max_results"`
-	SeenItemsDays int                `json:"seen_items_days"`
-	Alpha         float64            `json:"alpha"`
+	// ProvisionAPIKey is the namespace key we want this namespace to carry.
+	// Omitted on an update, where the key already exists and resending it would
+	// be a rotation nobody asked for.
+	ProvisionAPIKey string             `json:"provision_api_key,omitempty"`
+	ActionWeights   map[string]float64 `json:"action_weights"`
+	Lambda          float64            `json:"lambda"`
+	Gamma           float64            `json:"gamma"`
+	MaxResults      int                `json:"max_results"`
+	SeenItemsDays   int                `json:"seen_items_days"`
+	Alpha           float64            `json:"alpha"`
 	// dense_source is deliberately absent from this payload: "catalog" is
 	// rejected by the namespace upsert route — it is set by the catalog
 	// endpoint below — and an omitted field leaves the current value
@@ -72,28 +86,34 @@ type catalogConfigPayload struct {
 }
 
 // ProvisionNamespaceConfig upserts Darkvoid's Codohue namespace config through
-// Codohue's admin plane. The admin API is session-authenticated: the admin key
-// is exchanged for a session cookie (POST /api/v1/auth/sessions), which then
-// authorizes the namespace upsert (PUT /api/admin/v1/namespaces/{ns}).
+// Codohue's admin plane, authenticated with an admin-plane service token sent as
+// a bearer on each request (PUT /api/admin/v1/namespaces/{ns}).
+//
+// The login round trip it used to make is gone. Codohue v0.12.0 replaced the
+// global admin key with named operator accounts and scoped service tokens, so
+// POST /api/v1/auth/sessions with {"api_key": ...} answers 403 — measured against
+// v0.12.1, not inferred from the notes. Session cookies would also have been the
+// wrong thing to keep: the admin server sets them Secure, and darkvoid reaches it
+// over plain HTTP inside a compose network.
 //
 // It always provisions catalog auto-embedding: darkvoid ships raw post content
 // and Codohue embeds it. Two requests rather than one, because the namespace
 // upsert refuses dense_source "catalog" — only the catalog endpoint may set it.
 //
-// Codohue v0.8.0 added two alternatives and darkvoid takes neither yet. Bearer
-// auth on the admin plane would drop the login round trip, but session cookies
-// are still accepted, so switching is a cleanup with no behavior to gain. The
-// new sdk/go/admin package wraps provisioning in one request, but it sends
-// action_weights, alpha and dense_distance only — adopting it as-is would leave
-// lambda, gamma, max_results, seen_items_days and the three trending knobs below
-// at whatever the server defaults to, which is a config regression disguised as
-// a dependency upgrade. Revisit when the admin SDK covers the full payload.
+// Still hand-rolled rather than using sdk/go/admin, for the reason recorded when
+// that package first appeared and re-checked against v0.7.0: its
+// ProvisionCatalogRequest carries action_weights, alpha and dense_distance and
+// nothing else, so adopting it would silently leave lambda, gamma, max_results,
+// seen_items_days and the three trending knobs below at whatever the server
+// defaults to — a config regression disguised as a dependency upgrade. Only the
+// auth mechanism moved to the SDK's model; the payload stays ours until the admin
+// SDK covers all of it.
 func ProvisionNamespaceConfig(ctx context.Context, cfg NamespaceProvisionConfig) (*NamespaceProvisionResult, error) {
 	if cfg.AdminBaseURL == "" {
 		return nil, fmt.Errorf("codohue: admin base URL is required")
 	}
-	if cfg.AdminKey == "" {
-		return nil, fmt.Errorf("codohue: admin key is required")
+	if cfg.AdminToken == "" {
+		return nil, fmt.Errorf("codohue: admin service token is required")
 	}
 	if cfg.Namespace == "" {
 		return nil, fmt.Errorf("codohue: namespace is required")
@@ -103,12 +123,7 @@ func ProvisionNamespaceConfig(ctx context.Context, cfg NamespaceProvisionConfig)
 	}
 	base := strings.TrimRight(cfg.AdminBaseURL, "/")
 
-	session, err := createAdminSession(ctx, base, cfg.AdminKey)
-	if err != nil {
-		return nil, err
-	}
-
-	body, err := json.Marshal(defaultNamespaceProvisionPayload(cfg.EmbeddingDim))
+	body, err := json.Marshal(defaultNamespaceProvisionPayload(cfg.EmbeddingDim, cfg.NamespaceKey))
 	if err != nil {
 		return nil, fmt.Errorf("codohue: marshal namespace config: %w", err)
 	}
@@ -118,7 +133,7 @@ func ProvisionNamespaceConfig(ctx context.Context, cfg NamespaceProvisionConfig)
 	if err != nil {
 		return nil, fmt.Errorf("codohue: build namespace config request: %w", err)
 	}
-	req.AddCookie(session)
+	req.Header.Set("Authorization", "Bearer "+cfg.AdminToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
@@ -142,7 +157,7 @@ func ProvisionNamespaceConfig(ctx context.Context, cfg NamespaceProvisionConfig)
 		return nil, fmt.Errorf("codohue: namespace config response namespace %q does not match %q", result.Namespace, cfg.Namespace)
 	}
 
-	if err := enableCatalogAutoEmbedding(ctx, base, session, cfg.Namespace, cfg.EmbeddingDim); err != nil {
+	if err := enableCatalogAutoEmbedding(ctx, base, cfg.AdminToken, cfg.Namespace, cfg.EmbeddingDim); err != nil {
 		return nil, err
 	}
 
@@ -152,7 +167,7 @@ func ProvisionNamespaceConfig(ctx context.Context, cfg NamespaceProvisionConfig)
 // enableCatalogAutoEmbedding turns on Codohue's catalog auto-embedding for the
 // namespace. Server-side this flips dense_source to "catalog" and validates
 // that the strategy's dim matches the namespace embedding_dim.
-func enableCatalogAutoEmbedding(ctx context.Context, base string, session *http.Cookie, namespace string, embeddingDim int) error {
+func enableCatalogAutoEmbedding(ctx context.Context, base, adminToken, namespace string, embeddingDim int) error {
 	payload := catalogConfigPayload{
 		Enabled:         true,
 		StrategyID:      catalogStrategyID,
@@ -169,7 +184,7 @@ func enableCatalogAutoEmbedding(ctx context.Context, base string, session *http.
 	if err != nil {
 		return fmt.Errorf("codohue: build catalog config request: %w", err)
 	}
-	req.AddCookie(session)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
@@ -186,42 +201,9 @@ func enableCatalogAutoEmbedding(ctx context.Context, base string, session *http.
 	return nil
 }
 
-// createAdminSession exchanges the admin key for a session cookie via the
-// admin plane's login endpoint.
-func createAdminSession(ctx context.Context, base, adminKey string) (*http.Cookie, error) {
-	body, err := json.Marshal(map[string]string{"api_key": adminKey})
-	if err != nil {
-		return nil, fmt.Errorf("codohue: marshal session request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/v1/auth/sessions", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("codohue: build session request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := provisionHTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("codohue: send session request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxProvisionErrorBodyBytes))
-		return nil, fmt.Errorf("codohue: admin session login failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name == "codohue_admin_session" {
-			return cookie, nil
-		}
-	}
-	return nil, fmt.Errorf("codohue: admin session login response did not set a session cookie")
-}
-
-func defaultNamespaceProvisionPayload(embeddingDim int) namespaceProvisionPayload {
+func defaultNamespaceProvisionPayload(embeddingDim int, namespaceKey string) namespaceProvisionPayload {
 	return namespaceProvisionPayload{
+		ProvisionAPIKey: namespaceKey,
 		ActionWeights: map[string]float64{
 			string(ActionView):    1,
 			string(ActionLike):    5,
