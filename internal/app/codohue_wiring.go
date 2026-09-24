@@ -88,10 +88,12 @@ func (app *Application) wireCodohue(ctx context.Context, codohueClient *codohue.
 
 // probeCodohue pings Codohue and records the outcome as the reported state.
 func (app *Application) probeCodohue(ctx context.Context, client *codohue.Client) error {
-	pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	if err := client.Ping(pingCtx); err != nil {
+	// No deadline of our own. Ping bounds itself by what the call it makes is
+	// allowed, and a wrapper here was 3s against Ping's 3s — the outer context
+	// starts first, so it always expired first and Ping's bound was dead. Two
+	// deadlines racing over one call also means widening the real one silently
+	// achieves nothing, which is how this survived a review that changed it.
+	if err := client.Ping(ctx); err != nil {
 		app.codohue.set(CodohueDegraded, err.Error())
 		return err
 	}

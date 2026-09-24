@@ -123,6 +123,12 @@ func ProvisionNamespaceConfig(ctx context.Context, cfg NamespaceProvisionConfig)
 	if cfg.AdminToken == "" {
 		return nil, fmt.Errorf("codohue: admin service token is required")
 	}
+	if cfg.NamespaceKey == "" {
+		// The payload sends this unconditionally, so an empty one would ask the
+		// server to fix an immutable key to "". config.Validate catches it for the
+		// binaries; this catches anyone calling in directly.
+		return nil, fmt.Errorf("codohue: namespace key is required")
+	}
 	if cfg.Namespace == "" {
 		return nil, fmt.Errorf("codohue: namespace is required")
 	}
@@ -202,7 +208,12 @@ func enableCatalogAutoEmbedding(ctx context.Context, base, adminToken, namespace
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
+	// 200 and 201 both, as on the namespace upsert above: this route creates on
+	// the first run for a namespace and updates afterwards, and the create path is
+	// the one no deployment has exercised since the baseline. Accepting only 200
+	// would abort provisioning there and leave dense_source unset, which reads as
+	// a healthy boot where nothing ever gets embedded.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxProvisionErrorBodyBytes))
 		return fmt.Errorf("codohue: enable catalog auto-embedding failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}

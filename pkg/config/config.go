@@ -458,6 +458,11 @@ func (c *Config) validateCodohue() error {
 	if c.Codohue.NamespaceKey == "" {
 		return fmt.Errorf("CODOHUE_NAMESPACE_KEY is required when CODOHUE_ENABLED is true: it is sent at provisioning time, not returned by it")
 	}
+	// Gated on AdminURL because only the deployment that provisions needs the
+	// token. In practice that gate is always open: every shipped compose file
+	// defaults CODOHUE_ADMIN_URL with :-, so a container cannot present an empty
+	// one. The condition is kept for the bare-metal case and for honesty about
+	// which credential each plane needs, not as a way to opt out.
 	if c.Codohue.AdminURL != "" && c.Codohue.AdminToken == "" {
 		return fmt.Errorf("CODOHUE_ADMIN_TOKEN is required to provision through CODOHUE_ADMIN_URL: Codohue no longer accepts the global admin key")
 	}

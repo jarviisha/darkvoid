@@ -237,6 +237,47 @@ func TestProvisionNamespaceConfig_RejectedToken(t *testing.T) {
 	}
 }
 
+// The create path for the catalog route is the one no deployment has run since
+// the baseline, and a 201 there used to abort provisioning after the namespace
+// upsert had already succeeded — leaving dense_source unset, so nothing embeds.
+func TestProvisionNamespaceConfig_AcceptsCreatedOnTheCatalogRoute(t *testing.T) {
+	originalClient := provisionHTTPClient
+	t.Cleanup(func() { provisionHTTPClient = originalClient })
+	provisionHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, "/catalog") {
+			return jsonResponse(t, http.StatusCreated, map[string]any{"namespace": "darkvoid_feed"}), nil
+		}
+		return jsonResponse(t, http.StatusCreated, map[string]any{"namespace": "darkvoid_feed"}), nil
+	})}
+
+	if _, err := ProvisionNamespaceConfig(context.Background(), NamespaceProvisionConfig{
+		AdminBaseURL: "http://codohue-admin.test",
+		AdminToken:   "admin-service-token",
+		NamespaceKey: "our-namespace-key",
+		Namespace:    "darkvoid_feed",
+		EmbeddingDim: 64,
+	}); err != nil {
+		t.Fatalf("201 on the catalog route must be success, got error = %v", err)
+	}
+}
+
+// provision_api_key is sent unconditionally, so an empty key would ask the server
+// to fix an immutable credential to "".
+func TestProvisionNamespaceConfig_RequiresNamespaceKey(t *testing.T) {
+	_, err := ProvisionNamespaceConfig(context.Background(), NamespaceProvisionConfig{
+		AdminBaseURL: "http://codohue-admin.test",
+		AdminToken:   "admin-service-token",
+		Namespace:    "darkvoid_feed",
+		EmbeddingDim: 64,
+	})
+	if err == nil {
+		t.Fatal("expected error for missing namespace key")
+	}
+	if !strings.Contains(err.Error(), "namespace key is required") {
+		t.Fatalf("error = %v, want namespace key requirement", err)
+	}
+}
+
 func TestProvisionNamespaceConfig_RequiresAdminToken(t *testing.T) {
 	_, err := ProvisionNamespaceConfig(context.Background(), NamespaceProvisionConfig{
 		AdminBaseURL: "http://codohue-admin.test",
