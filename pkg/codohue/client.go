@@ -95,9 +95,12 @@ const (
 // exclude_authored) took it out. Treating those as score 0 would blend
 // "excluded" and "irrelevant" into the same number.
 //
-// Score is no longer per-request min-max normalized either: v0.8.0 maps it with
-// x/(x+k), which is batch-independent and comparable across calls, but not
-// comparable with values recorded before the upgrade.
+// Score is not per-request min-max normalized, and its scale has now changed
+// twice: v0.8.0 replaced min-max with a batch-independent x/(x+k) map, and
+// v0.12.0 replaced that curve with a clamp so the dot product is a cosine.
+// Values are comparable across calls but not across those upgrades — and mixed
+// feed multiplies this by a weight picked against the x/(x+k) range, which is
+// tracked separately.
 type RankedItem struct {
 	ObjectID string
 	Score    float64

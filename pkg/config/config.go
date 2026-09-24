@@ -37,7 +37,7 @@ type Config struct {
 // Auth model (two-tier):
 //   - NamespaceKey (CODOHUE_NAMESPACE_KEY): used for all runtime endpoints (events, recommendations, rank, trending, delete).
 //   - AdminToken   (CODOHUE_ADMIN_TOKEN):   used only for namespace provisioning via the admin plane
-//     (session login + PUT /api/admin/v1/namespaces/{ns} on AdminURL).
+//     (bearer on PUT /api/admin/v1/namespaces/{ns} and its /catalog sibling, on AdminURL).
 type CodohueConfig struct {
 	Enabled      bool   // enable Codohue integration
 	BaseURL      string // data-plane HTTP base URL (cmd/api), e.g. "http://codohue-host:2001"

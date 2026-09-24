@@ -53,8 +53,10 @@ func (app *Application) setupContexts(ctx context.Context) error {
 		}
 	}
 
-	// After provisioning, which is what fills in cfg.Codohue.NamespaceKey, and
-	// before Post, whose services ingest into the catalog with this same client.
+	// After provisioning, so the namespace exists before anything calls into it,
+	// and before Post, whose services ingest into the catalog with this same
+	// client. Provisioning no longer supplies the namespace key — we send it —
+	// so this order is about the namespace, not about a value being filled in.
 	codohueClient, clientErr := app.setupCodohueClient()
 	if clientErr != nil {
 		return clientErr
