@@ -39,7 +39,7 @@ if [ -L "$root/current" ]; then
 	old_commit="$(read_manifest RELEASE_COMMIT "$old_release/release.env")"
 	old_sequence="$(read_manifest RELEASE_SEQUENCE "$old_release/release.env")"
 	[[ "$old_sequence" =~ ^[1-9][0-9]*$ ]] || fail 'invalid current release sequence'
-	[ "$sequence" -ge "$old_sequence" ] || fail 'refusing an older CI release'
+	[ "$sequence" -ge "$old_sequence" ] || fail 'refusing an older release sequence'
 	grep -Fxq "$old_commit" "$incoming/ancestors" || fail 'current commit is not an ancestor of the candidate'
 fi
 release="$root/releases/$release_id"

@@ -1,10 +1,21 @@
 name: CD
 
+# Manual, and it deploys a tag rather than whatever landed on main.
+#
+# It used to fire on every CI success on main, which made "merged" and "deployed"
+# the same event: nobody chose when a deploy happened, and the only way to not
+# deploy something was to not merge it. A tag is the choice, and naming it here is
+# the second one.
+#
+# Deliberately not `push: tags: ['v*']` — that is automation again, with tag
+# creation as its trigger, and a mistyped or premature tag would deploy on its own.
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to deploy, e.g. v0.3.1. Must exist and its commit must have a green CI run.'
+        required: true
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -12,18 +23,43 @@ env:
 
 jobs:
   build_and_push:
-    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+      # gh run list queries the Actions API for the tag's CI result.
+      actions: read
     outputs:
       app_digest: ${{ steps.build.outputs.digest }}
       backup_digest: ${{ steps.build_backup.outputs.digest }}
+      sha: ${{ steps.resolve.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: refs/tags/${{ inputs.tag }}
+
+      # The old trigger could not run without a green CI, so that guarantee came
+      # for free. A dispatch can name any tag, so the check has to be made
+      # explicitly or this workflow would happily deploy a commit that never
+      # passed anything.
+      - name: Resolve the tag and require a green CI run for its commit
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Deploying ${{ inputs.tag }} -> $sha"
+          conclusions="$(gh run list --workflow CI --commit "$sha" --json conclusion --jq '.[].conclusion')"
+          if [ -z "$conclusions" ]; then
+            echo "No CI run recorded for $sha. Push the tag's commit through CI first." >&2
+            exit 1
+          fi
+          grep -Fxq success <<< "$conclusions" || {
+            echo "No successful CI run for $sha; saw: $conclusions" >&2
+            exit 1
+          }
 
       - uses: docker/setup-buildx-action@v3
 
@@ -64,8 +100,12 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}
-          labels: org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.resolve.outputs.sha }}
+            org.opencontainers.image.version=${{ inputs.tag }}
 
       - name: Publish backup by tested commit
         id: build_backup
@@ -74,8 +114,12 @@ jobs:
           context: .
           file: docker/backup/Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backup:${{ github.event.workflow_run.head_sha }}
-          labels: org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backup:${{ steps.resolve.outputs.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backup:${{ inputs.tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.resolve.outputs.sha }}
+            org.opencontainers.image.version=${{ inputs.tag }}
 
   deploy:
     runs-on: ubuntu-latest
@@ -89,17 +133,25 @@ jobs:
       packages: read
     env:
       DEPLOY_DIR: /opt/darkvoid-dev
-      RELEASE_ID: ${{ github.event.workflow_run.head_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+      RELEASE_ID: ${{ needs.build_and_push.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: refs/tags/${{ inputs.tag }}
           fetch-depth: 0
 
       - name: Package immutable release
         env:
-          RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
-          RELEASE_SEQUENCE: ${{ github.event.workflow_run.run_number }}
+          RELEASE_COMMIT: ${{ needs.build_and_push.outputs.sha }}
+          # This workflow's own run_number, not CI's. deploy-release.sh refuses a
+          # sequence lower than the deployed one, so the counter must not change
+          # again after this: CD is at 39 where CI was at 64, and had a release
+          # ever been recorded under CI's numbering the first tag deploy would
+          # have been rejected as "older". Nothing is recorded yet — there is no
+          # current symlink on the host — so this switch sets the baseline rather
+          # than colliding with one. Renaming this workflow would reset the
+          # counter and start refusing deploys; don't.
+          RELEASE_SEQUENCE: ${{ github.run_number }}
           APP_DIGEST: ${{ needs.build_and_push.outputs.app_digest }}
           BACKUP_DIGEST: ${{ needs.build_and_push.outputs.backup_digest }}
         run: bash scripts/create-release.sh release "$RELEASE_COMMIT" "$RELEASE_SEQUENCE" "$APP_DIGEST" "$BACKUP_DIGEST"

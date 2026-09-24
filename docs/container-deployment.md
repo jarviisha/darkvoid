@@ -90,6 +90,12 @@ The host needs Docker Compose 2.24 or newer, Bash, jq, curl, flock, and GNU core
 CD currently targets the GitHub `development` environment at `/opt/darkvoid-dev`.
 No production environment or infrastructure is provisioned by this refactor.
 
+**Deploys are manual and name a tag.** Run the CD workflow from Actions (or
+`gh workflow run CD -f tag=v0.3.1`) with a tag that already exists; CD resolves it
+to a commit and refuses to continue unless that commit has a successful CI run.
+Merging to `main` no longer deploys anything, and neither does pushing a tag — the
+dispatch is the decision. Tag first, then deploy the tag.
+
 ```text
 /opt/darkvoid-dev/
   .env, .env.app, .env.backup       operator-owned configuration
@@ -105,9 +111,11 @@ No production environment or infrastructure is provisioned by this refactor.
 CI builds and smoke-tests both images and boots an isolated development stack
 before publishing. CD exports the exact tested commit with image digests and
 checksums. It uploads into a unique incoming directory without overwriting the
-running release. The host takes a lock, verifies the bundle, rejects older CI
+running release. The host takes a lock, verifies the bundle, rejects older release
 sequences and commits that do not descend from the current release, then makes
-the candidate directory read-only.
+the candidate directory read-only. The sequence is the CD workflow's own
+`run_number`; it must only ever increase, so renaming that workflow — which resets
+the counter — would make every later deploy refuse itself.
 
 The resolved app/backup references must match the candidate manifest; server
 overrides cannot silently substitute another image or a local build. Deployed

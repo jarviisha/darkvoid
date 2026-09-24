@@ -27,10 +27,14 @@ done < <(sed -nE 's/^ARG ((GO|RUNTIME|POSTGRES)_IMAGE)=(.*)$/\1=\3/p' Dockerfile
 for required in \
 	'app_digest: ${{ steps.build.outputs.digest }}' \
 	'backup_digest: ${{ steps.build_backup.outputs.digest }}' \
-	'github.event.workflow_run.head_sha' \
+	'workflow_dispatch:' \
+	'ref: refs/tags/${{ inputs.tag }}' \
+	'gh run list --workflow CI --commit' \
 	'create-release.sh' \
 	'deploy-release.sh' \
 	'test-container-runtime'; do
 	grep -Fq "$required" .github/workflows/cd.yml || fail "CD is missing: $required"
 done
+grep -Fq 'workflow_run' .github/workflows/cd.yml \
+	&& fail 'CD still has a workflow_run trigger; deploys must be dispatched by tag'
 echo 'Production image pinning tests passed'
