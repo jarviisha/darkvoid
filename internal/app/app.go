@@ -43,6 +43,13 @@ type Application struct {
 	jwtService    *jwt.Service
 	runCtx        context.Context
 	runCancel     context.CancelFunc
+	// codohueGeneration is the namespace lifecycle generation that provisioning
+	// reported, read when the client is built a few steps later. Zero when
+	// provisioning did not run or failed, which publishes events unstamped — the
+	// behaviour before the generation existed, and the right fallback: a wrong
+	// generation is rejected where a missing one is still accepted while the
+	// legacy gate is open.
+	codohueGeneration int64
 	// codohue is the reported health of the recommender integration. Read by the
 	// health handler, written by startup and the degraded-state monitor.
 	codohue *codohueStatus

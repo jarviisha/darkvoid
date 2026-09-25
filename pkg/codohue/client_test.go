@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -85,7 +86,7 @@ func TestDeleteObject_CountsIndexErrors(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL, "key", "ns", nil)
+	client, err := NewClient(server.URL, "key", "ns", 0, nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -111,7 +112,7 @@ func TestGetRecommendations_SlowProviderFailsFast(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL, "key", "ns", nil)
+	client, err := NewClient(server.URL, "key", "ns", 0, nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -168,7 +169,7 @@ func TestRank_PropagatesScoredFlag(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL, "key", "ns", nil)
+	client, err := NewClient(server.URL, "key", "ns", 0, nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -218,7 +219,7 @@ func TestTrendingPageFromResponse_MapsPaginatedItems(t *testing.T) {
 // and the first feed request dereferences the breaker. A caller can only refuse
 // to boot on this if it is told about it.
 func TestNewClient_EmptyBaseURLIsAnError(t *testing.T) {
-	client, err := NewClient("", "key", "ns", nil)
+	client, err := NewClient("", "key", "ns", 0, nil)
 
 	if err == nil {
 		t.Fatal(`NewClient("") returned a nil error — want an error naming the missing base URL`)
@@ -247,7 +248,7 @@ func TestPing_FailsWhenTheNamespaceRejectsTheCredential(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL, "stale-key", "ns", nil)
+	client, err := NewClient(server.URL, "stale-key", "ns", 0, nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -270,7 +271,7 @@ func TestPing_RepeatedAuthFailuresOpenTheCircuit(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL, "stale-key", "ns", nil)
+	client, err := NewClient(server.URL, "stale-key", "ns", 0, nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -301,7 +302,7 @@ func TestPing_SuccessAfterAuthFailureClosesTheCircuit(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL, "key", "ns", nil)
+	client, err := NewClient(server.URL, "key", "ns", 0, nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -319,4 +320,62 @@ func TestPing_SuccessAfterAuthFailureClosesTheCircuit(t *testing.T) {
 	if client.CircuitOpen() {
 		t.Error("a successful probe must close the circuit immediately")
 	}
+}
+
+// Codohue accepts an unstamped envelope only for a generation-1 namespace with
+// the legacy gate still open. Once that gate closes, or once the namespace has
+// been deleted and recreated, an unstamped event is dropped on read — and
+// PublishBehaviorEvent logs and returns, so nothing would report it. The stamp is
+// therefore the difference between events arriving and events vanishing quietly.
+func TestPublishBehaviorEvent_StampsTheNamespaceGeneration(t *testing.T) {
+	recorder := &recordingXAdder{}
+	client := &Client{namespace: "ns", producer: newEventProducer(recorder, 7)}
+
+	if err := client.PublishBehaviorEvent(context.Background(), "user-1", "post-1", "LIKE", nil); err != nil {
+		t.Fatalf("PublishBehaviorEvent: %v", err)
+	}
+
+	event, _ := decodeEnvelope(t, recorder)
+	if event.NamespaceGeneration != 7 {
+		t.Errorf("namespace_generation = %d, want 7 — an unstamped event is dropped once the legacy gate closes", event.NamespaceGeneration)
+	}
+}
+
+// Generation 0 means "not reported": a caller that does not provision, or a
+// Codohue predating the lifecycle work. The field must then be absent rather than
+// sent as a literal 0, which is not a generation any namespace has.
+func TestPublishBehaviorEvent_OmitsAnUnknownGeneration(t *testing.T) {
+	recorder := &recordingXAdder{}
+	client := &Client{namespace: "ns", producer: newEventProducer(recorder, 0)}
+
+	if err := client.PublishBehaviorEvent(context.Background(), "user-1", "post-1", "LIKE", nil); err != nil {
+		t.Fatalf("PublishBehaviorEvent: %v", err)
+	}
+
+	_, payload := decodeEnvelope(t, recorder)
+	if strings.Contains(payload, "namespace_generation") {
+		t.Errorf("envelope carries namespace_generation with nothing to report: %s", payload)
+	}
+}
+
+// decodeEnvelope pulls the event back out of the recorded XAdd. XAddArgs.Values is
+// an interface{} in go-redis v9, and the producer puts a map there.
+func decodeEnvelope(t *testing.T, recorder *recordingXAdder) (codohuetypes.EventPayload, string) {
+	t.Helper()
+	if recorder.lastArgs == nil {
+		t.Fatal("no XAdd was recorded")
+	}
+	values, ok := recorder.lastArgs.Values.(map[string]any)
+	if !ok {
+		t.Fatalf("XAdd values are %T, want map[string]any", recorder.lastArgs.Values)
+	}
+	payload, ok := values[codohuetypes.PayloadField].(string)
+	if !ok {
+		t.Fatalf("stream entry carried no %q field: %#v", codohuetypes.PayloadField, values)
+	}
+	var event codohuetypes.EventPayload
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	return event, payload
 }

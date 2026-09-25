@@ -51,6 +51,16 @@ type NamespaceProvisionConfig struct {
 // The response's api_key is deliberately not read: the caller supplied the key.
 type NamespaceProvisionResult struct {
 	Namespace string `json:"namespace"`
+	// Generation is the namespace's lifecycle generation. Codohue mints a new one
+	// when a namespace is deleted and recreated, and a behavior event that does
+	// not carry the current value is accepted only while the legacy gate is open
+	// — so this is not decoration, it is what keeps events from being dropped
+	// after the namespace this deployment provisions is replaced.
+	//
+	// Zero means the server did not report one, which is how a Codohue older than
+	// the lifecycle work answers. The producer then publishes unstamped, exactly
+	// as it did before this field existed.
+	Generation int64 `json:"generation"`
 }
 
 type namespaceProvisionPayload struct {

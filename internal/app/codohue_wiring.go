@@ -36,8 +36,11 @@ func (app *Application) ensureCodohueNamespaceConfig(ctx context.Context) error 
 		return fmt.Errorf("provision codohue namespace config: %w", err)
 	}
 
+	app.codohueGeneration = result.Generation
+
 	app.log.Info("codohue namespace config sent",
 		"namespace", result.Namespace,
+		"generation", result.Generation,
 		"embedding_dim", app.cfg.Codohue.EmbeddingDim,
 	)
 	return nil
