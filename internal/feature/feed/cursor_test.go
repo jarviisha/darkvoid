@@ -274,3 +274,30 @@ func TestFeedCursor_TrendingSeenRoundTrip(t *testing.T) {
 		t.Fatalf("nil cursor TrendingSeenSet() = %v, want empty", got)
 	}
 }
+
+func TestFeedCursor_DiscoverSeenRoundTrip(t *testing.T) {
+	timestamp := time.Now().UnixNano()
+	served := uuid.New()
+	cursor := &FeedCursor{
+		DiscoverCreatedAt: &timestamp,
+		DiscoverPostID:    uuid.NewString(),
+		DiscoverSeen:      []string{served.String()},
+	}
+	decoded, err := DecodeFeedCursor(cursor.Encode())
+	if err != nil {
+		t.Fatalf("DecodeFeedCursor: %v", err)
+	}
+	if got := decoded.DiscoverSeenSet(); len(got) != 1 || !got[served] {
+		t.Fatalf("DiscoverSeenSet() = %v, want the served id", got)
+	}
+
+	bad := &FeedCursor{DiscoverCreatedAt: &timestamp, DiscoverPostID: uuid.NewString(), DiscoverSeen: []string{"not-a-uuid"}}
+	if _, err := DecodeFeedCursor(bad.Encode()); err == nil {
+		t.Fatal("expected decode error for an invalid seen discover post_id")
+	}
+
+	var absent *FeedCursor
+	if got := absent.DiscoverSeenIDs(); got != nil {
+		t.Fatalf("nil cursor DiscoverSeenIDs() = %v, want nil", got)
+	}
+}

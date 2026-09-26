@@ -95,7 +95,7 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 	}
 
 	if position := cursor.DiscoverPosition(); position != nil {
-		return s.discovery.fallback(ctx, userID, position)
+		return s.discovery.fallback(ctx, userID, position, cursor.DiscoverSeenIDs())
 	}
 
 	if s.timeline.readAllowed(userID) && (cursor == nil || cursor.TimelinePosition() != nil) {
@@ -139,7 +139,7 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 	if len(candidates) == 0 && sources.followingCount == 0 {
 		feed.CountFallback()
 		logger.Info(ctx, "feed fallback entered", "user_id", userID)
-		return s.discovery.fallback(ctx, userID, discoverHandoff(cursor))
+		return s.discovery.fallback(ctx, userID, discoverHandoff(cursor), cursor.DiscoverSeenIDs())
 	}
 
 	items := s.mixed.rank(ctx, candidates, followingSet, time.Now().UTC())

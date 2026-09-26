@@ -1751,3 +1751,65 @@ func TestGetFeed_BrokenSourceDoesNotEndTheScroll(t *testing.T) {
 		t.Fatal("cursor = nil; a failed trending fetch is not an exhausted feed")
 	}
 }
+
+// TestGetFeed_DiscoverHandoffSkipsPostsAlreadyServed pins the handoff against
+// re-serving. The following position bounds the following source only, so a
+// trending post served above it that is chronologically below it is returned
+// again the moment the feed falls back to discover.
+func TestGetFeed_DiscoverHandoffSkipsPostsAlreadyServed(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+
+	// A recent own post: the following source, and the handoff boundary.
+	own := testPost(now)
+	own.AuthorID = userID
+	reader.following = append(reader.following, own)
+	reader.discover = append(reader.discover, own)
+	reader.byID[own.ID] = own
+	scores[own.ID] = 100
+
+	// An old, heavily-liked trending post. It ranks onto page 1 from trending,
+	// and sits below the handoff boundary in the discover stream.
+	oldTrending := testPost(now.Add(-72 * time.Hour))
+	oldTrending.LikeCount = 500
+	reader.trending = append(reader.trending, oldTrending)
+	reader.discover = append(reader.discover, oldTrending)
+	reader.byID[oldTrending.ID] = oldTrending
+	scores[oldTrending.ID] = 50
+
+	// Something genuinely unseen further down, so the scroll reaches discover.
+	unseen := testPost(now.Add(-96 * time.Hour))
+	reader.discover = append(reader.discover, unseen)
+	reader.byID[unseen.ID] = unseen
+
+	svc := newTestService(reader, &mockRanker{scores: scores})
+	served := map[uuid.UUID]bool{}
+	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed page1: %v", err)
+	}
+	for _, item := range page {
+		served[item.Post.ID] = true
+	}
+	if !served[oldTrending.ID] {
+		t.Fatal("old trending post did not make page 1, so the handoff is not under test")
+	}
+
+	for pages := 0; pages < 6 && cursor != nil; pages++ {
+		page, cursor, err = svc.GetFeed(context.Background(), userID, cursor)
+		if err != nil {
+			t.Fatalf("GetFeed page%d: %v", pages+2, err)
+		}
+		for _, item := range page {
+			if served[item.Post.ID] {
+				t.Fatalf("post re-served after the discover handoff: %s", item.Post.ID)
+			}
+			served[item.Post.ID] = true
+		}
+	}
+	if !served[unseen.ID] {
+		t.Fatalf("unseen discover post was never served: %s", unseen.ID)
+	}
+}

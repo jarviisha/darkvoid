@@ -367,6 +367,7 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *fe
 		next.FollowingCreatedAt = incoming.FollowingCreatedAt
 		next.FollowingPostID = incoming.FollowingPostID
 	}
+	next.DiscoverSeen = carryDiscoverSeen(page, incoming, next)
 	if !next.HasContinuation() {
 		return mixedCursorTransition{}
 	}
@@ -374,6 +375,54 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *fe
 		cursor:     next,
 		sourcesDry: sourcesDry(page, sources, next, trendingConsumed, trendingSeen),
 	}
+}
+
+// carryDiscoverSeen accumulates the posts this page served that the discover
+// stream would hand back after the handoff. Only posts below the new following
+// position qualify: discover resumes there and walks down, so anything above it
+// is already out of reach. With no following position the handoff starts discover
+// at the top of the stream and every served post is reachable.
+func carryDiscoverSeen(page []*feedentity.FeedItem, incoming *feed.FeedCursor, next *feed.FeedCursor) []string {
+	carried := make([]string, 0, len(page)+len(incoming.DiscoverSeenIDs()))
+	carried = append(carried, incoming.DiscoverSeenIDs()...)
+	known := make(map[string]bool, len(carried))
+	for _, id := range carried {
+		known[id] = true
+	}
+
+	boundary := next.FollowingPosition()
+	for _, item := range page {
+		if item.Post == nil {
+			continue
+		}
+		if boundary != nil && !isBelowFollowingBoundary(item.Post, boundary) {
+			continue
+		}
+		id := item.Post.ID.String()
+		if known[id] {
+			continue
+		}
+		known[id] = true
+		carried = append(carried, id)
+	}
+
+	if len(carried) > feed.MaxDiscoverSeen {
+		carried = carried[len(carried)-feed.MaxDiscoverSeen:]
+	}
+	if len(carried) == 0 {
+		return nil
+	}
+	return carried
+}
+
+func isBelowFollowingBoundary(post *feedentity.Post, boundary *feed.FollowingCursor) bool {
+	if post.CreatedAt.Before(boundary.CreatedAt) {
+		return true
+	}
+	if !post.CreatedAt.Equal(boundary.CreatedAt) {
+		return false
+	}
+	return post.ID.String() < boundary.PostID
 }
 
 // sourcesDry reports that nothing is left behind this page in following,

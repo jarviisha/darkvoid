@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,18 @@ type discoveryReader struct {
 	postReader feed.PostReader
 	ranker     feed.Ranker
 	enricher   *feedEnricher
+}
+
+func feedCursorSeenSet(ids []string) map[uuid.UUID]bool {
+	seen := make(map[uuid.UUID]bool, len(ids))
+	for _, raw := range ids {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			continue
+		}
+		seen[id] = true
+	}
+	return seen
 }
 
 func discoverHandoff(cursor *feed.FeedCursor) *feed.DiscoverCursor {
@@ -42,12 +55,37 @@ func (r *discoveryReader) hasMore(ctx context.Context, userID uuid.UUID, cursor 
 	return len(posts) > 0
 }
 
-func (r *discoveryReader) fallback(ctx context.Context, userID uuid.UUID, cursor *feed.DiscoverCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
-	posts, err := r.postReader.GetDiscoverWithCursor(ctx, cursor, pageSize+1, nil)
+func (r *discoveryReader) fallback(ctx context.Context, userID uuid.UUID, cursor *feed.DiscoverCursor, seen []string) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
+	// Over-fetch by the number of rows the seen filter may remove, so a page
+	// thinned by already-served posts still fills.
+	limit := pageSize + 1 + len(seen)
+	posts, err := r.postReader.GetDiscoverWithCursor(ctx, cursor, int32(limit), nil)
 	if err != nil {
 		logger.LogError(ctx, err, "failed to get discover fallback", "user_id", userID)
 		return nil, nil, errors.NewInternalError(err)
 	}
+
+	// Encountering a seen post means the stream has reached it, so it drops out
+	// of the carried list as well as out of the page: nothing below can be it.
+	remaining := seen
+	if len(seen) > 0 {
+		skip := feedCursorSeenSet(seen)
+		kept := make([]*feedentity.Post, 0, len(posts))
+		for _, post := range posts {
+			if post != nil && skip[post.ID] {
+				delete(skip, post.ID)
+				continue
+			}
+			kept = append(kept, post)
+		}
+		posts = kept
+		remaining = make([]string, 0, len(skip))
+		for id := range skip {
+			remaining = append(remaining, id.String())
+		}
+		sort.Strings(remaining)
+	}
+
 	hasMore := len(posts) > pageSize
 	if hasMore {
 		posts = posts[:pageSize]
@@ -77,6 +115,7 @@ func (r *discoveryReader) fallback(ctx context.Context, userID uuid.UUID, cursor
 			TimelineUser:      userID.String(),
 			DiscoverCreatedAt: &timestamp,
 			DiscoverPostID:    last.ID.String(),
+			DiscoverSeen:      remaining,
 		}
 	}
 	return items, next, nil

@@ -54,6 +54,7 @@ type FeedCursor struct {
 	FollowingPostID      string   `json:"fl_post_id,omitempty"`
 	DiscoverCreatedAt    *int64   `json:"disc_ts,omitempty"`
 	DiscoverPostID       string   `json:"disc_post_id,omitempty"`
+	DiscoverSeen         []string `json:"disc_seen,omitempty"`
 }
 
 // Encode returns the base64 JSON representation of the feed cursor.
@@ -151,6 +152,11 @@ func (c *FeedCursor) Validate() error {
 	} else if c.DiscoverPostID != "" {
 		return fmt.Errorf("discover post_id without discover timestamp")
 	}
+	for _, id := range c.DiscoverSeen {
+		if _, err := uuid.Parse(id); err != nil {
+			return fmt.Errorf("invalid seen discover post_id")
+		}
+	}
 	if c.TimelineUser != "" {
 		if _, err := uuid.Parse(c.TimelineUser); err != nil {
 			return fmt.Errorf("invalid timeline cursor user")
@@ -212,6 +218,45 @@ func (c *FeedCursor) trendingSeen() []string {
 		return nil
 	}
 	return c.TrendingSeen
+}
+
+// DiscoverSeen is capped because it travels in a URL. Past the cap the oldest
+// entries are dropped and those posts can be served a second time, which is the
+// milder of the two failures available — the alternative, anchoring discover
+// below everything served, skips every unserved post between that anchor and the
+// following boundary, and the trending source reaches back 24h.
+//
+// ponytail: FIFO cap, switch to storing positions server-side if scrolls get
+// long enough for the drop to show.
+// MaxDiscoverSeen bounds that list.
+const MaxDiscoverSeen = 60
+
+// DiscoverSeenIDs is the nil-safe reader for the raw list: GetFeed reaches for
+// it on the first page, where the cursor itself is nil.
+func (c *FeedCursor) DiscoverSeenIDs() []string {
+	if c == nil {
+		return nil
+	}
+	return c.DiscoverSeen
+}
+
+// DiscoverSeenSet returns the posts already served that the discover stream
+// could otherwise hand back. The discover position cannot express them: it
+// bounds the stream chronologically, while these were served out of that order
+// by the trending and recommendation sources, which rank rather than paginate.
+func (c *FeedCursor) DiscoverSeenSet() map[uuid.UUID]bool {
+	if c == nil {
+		return map[uuid.UUID]bool{}
+	}
+	seen := make(map[uuid.UUID]bool, len(c.DiscoverSeen))
+	for _, raw := range c.DiscoverSeenIDs() {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			continue
+		}
+		seen[id] = true
+	}
+	return seen
 }
 
 // FollowingPosition returns the following source continuation point.
