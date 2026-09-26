@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"math"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
@@ -103,7 +104,14 @@ func filterPublicPosts(posts []*feedentity.Post) []*feedentity.Post {
 	return filtered
 }
 
-func applyTrendingCursor(posts []*feedentity.Post, cursor *feed.TrendPosition, limit int) []*feedentity.Post {
+// applyTrendingCursor returns the next window below cursor and whether the limit
+// cut it short. Sorting comes before the limit and is not optional: the cursor
+// compares by score, so keeping the first limit posts in list order would drop
+// higher-scoring posts out of the window and the boundary would then filter them
+// out for good. The list does not arrive in score order — GetTrendingPosts orders
+// by like_count, but a Codohue-supplied list is ordered by that provider's rank
+// while the score stays the local like count.
+func applyTrendingCursor(posts []*feedentity.Post, cursor *feed.TrendPosition, limit int) ([]*feedentity.Post, bool) {
 	filtered := make([]*feedentity.Post, 0, len(posts))
 	for _, post := range posts {
 		if post == nil || (cursor != nil && !isAfterTrendCursor(post, cursor)) {
@@ -111,10 +119,22 @@ func applyTrendingCursor(posts []*feedentity.Post, cursor *feed.TrendPosition, l
 		}
 		filtered = append(filtered, post)
 	}
+	sortTrendingOrder(filtered)
 	if len(filtered) > limit {
-		filtered = filtered[:limit]
+		return filtered[:limit], true
 	}
-	return filtered
+	return filtered, false
+}
+
+// sortTrendingOrder puts posts in the order isAfterTrendCursor compares in.
+func sortTrendingOrder(posts []*feedentity.Post) {
+	sort.Slice(posts, func(i, j int) bool {
+		left, right := trendScoreFromPost(posts[i]), trendScoreFromPost(posts[j])
+		if left != right {
+			return left > right
+		}
+		return posts[i].ID.String() > posts[j].ID.String()
+	})
 }
 
 func isAfterTrendCursor(post *feedentity.Post, cursor *feed.TrendPosition) bool {

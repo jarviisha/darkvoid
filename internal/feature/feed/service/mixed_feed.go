@@ -53,6 +53,7 @@ type collectedSources struct {
 	// Truncated means the fetch hit its limit, so the source has more behind
 	// this window and cannot be called exhausted no matter what the page served.
 	trendingTruncated  bool
+	trendingFailed     bool
 	followingCount     int
 	followingTruncated bool
 	// sourceFailed records that a supplemental source errored rather than came
@@ -131,15 +132,14 @@ func (b *mixedFeedBuilder) collect(ctx context.Context, userID uuid.UUID, author
 	}
 
 	var trendingWindow []*feedentity.Post
-	trendingCollected := false
+	trendingTruncated, trendingFailed := false, false
 	if cursor == nil || cursor.TrendingPosition() != nil {
-		trendingCollected = true
 		trendingPosts, trendingErr := b.trending.get(ctx)
 		if trendingErr != nil {
 			logger.LogError(ctx, trendingErr, "failed to get trending posts, skipping", "user_id", userID)
-			sourceFailed = true
+			sourceFailed, trendingFailed = true, true
 		}
-		trendingWindow = applyTrendingCursor(trendingPosts, cursor.TrendingPosition(), pageSize)
+		trendingWindow, trendingTruncated = applyTrendingCursor(trendingPosts, cursor.TrendingPosition(), pageSize)
 		seen := cursor.TrendingSeenSet()
 		rank := 0
 		for _, post := range trendingWindow {
@@ -155,7 +155,8 @@ func (b *mixedFeedBuilder) collect(ctx context.Context, userID uuid.UUID, author
 		candidates:         candidates,
 		recWindow:          recWindow,
 		trendingWindow:     trendingWindow,
-		trendingTruncated:  trendingCollected && len(trendingWindow) >= pageSize,
+		trendingTruncated:  trendingTruncated,
+		trendingFailed:     trendingFailed,
 		followingCount:     len(followingPosts),
 		followingTruncated: len(followingPosts) >= pageSize*fetchMultiplier,
 		sourceFailed:       sourceFailed,
@@ -337,6 +338,7 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *fe
 		delete(seen, recommendationOffset)
 		recommendationOffset++
 	}
+	recommendationsDry := recWindow.total == 0 || recommendationOffset >= recWindow.total
 	if recWindow.total > 0 && recommendationOffset < recWindow.total {
 		next.RecommendationOffset = recommendationOffset
 		for offset := range seen {
@@ -347,12 +349,15 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *fe
 		sort.Ints(next.RecommendationSeen)
 	}
 
-	position, trendingSeen, trendingConsumed := advanceTrending(page, incoming, sources.trendingWindow)
+	position, trendingSeen, trendingConsumed := advanceTrending(page, incoming, sources.trendingWindow, sources.trendingTruncated)
 	if position != nil {
 		next.TrendingScore = &position.Score
 		next.TrendingPostID = position.PostID
 		next.TrendingSeen = trendingSeen
-	} else if len(sources.trendingWindow) > 0 {
+	} else if len(sources.trendingWindow) > 0 || sources.trendingFailed {
+		// The sentinel also covers a failed fetch. Without it the cursor carries
+		// no trending position, collect's gate skips trending on every later
+		// page, and one bad response retires the source for the whole scroll.
 		score := math.MaxFloat64
 		next.TrendingScore = &score
 		next.TrendingPostID = uuid.Max.String()
@@ -373,7 +378,7 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *fe
 	}
 	return mixedCursorTransition{
 		cursor:     next,
-		sourcesDry: sourcesDry(page, sources, next, trendingConsumed, trendingSeen),
+		sourcesDry: sourcesDry(page, sources, trendingConsumed, trendingSeen, recommendationsDry),
 	}
 }
 
@@ -430,13 +435,15 @@ func isBelowFollowingBoundary(post *feedentity.Post, boundary *feed.FollowingCur
 // the data, ended it. Following also needs every row it fetched to have made the
 // page, since the position advances only to the oldest post served — rows that
 // were fetched and outranked off are still behind the cursor.
-func sourcesDry(page []*feedentity.FeedItem, sources collectedSources, next *feed.FeedCursor, trendingConsumed bool, trendingSeen []string) bool {
+func sourcesDry(page []*feedentity.FeedItem, sources collectedSources, trendingConsumed bool, trendingSeen []string, recommendationsDry bool) bool {
 	if sources.followingTruncated || sources.trendingTruncated || sources.sourceFailed {
 		return false
 	}
-	// Recommendations are treated as live whenever the provider reported a total:
-	// its paging is the provider's to decide, not something to infer from here.
-	if sources.recWindow.total > 0 && next.RecommendationOffset < sources.recWindow.total {
+	// Recommendation exhaustion is the computed frontier against the provider's
+	// total, not next.RecommendationOffset: that field is written only while the
+	// frontier is still below the total, so reading it back reports 0 for a spent
+	// provider and would keep every Codohue-enabled deployment paginating forever.
+	if !recommendationsDry {
 		return false
 	}
 	if !trendingConsumed || len(trendingSeen) > 0 {
@@ -465,7 +472,7 @@ func sourcesDry(page []*feedentity.FeedItem, sources collectedSources, next *fee
 //
 // Membership is matched on id rather than on FeedItem.Source for the same
 // reason: after collapsing, a trending post on the page may carry either label.
-func advanceTrending(page []*feedentity.FeedItem, incoming *feed.FeedCursor, window []*feedentity.Post) (*feed.TrendPosition, []string, bool) {
+func advanceTrending(page []*feedentity.FeedItem, incoming *feed.FeedCursor, window []*feedentity.Post, windowTruncated bool) (*feed.TrendPosition, []string, bool) {
 	// Sorted here rather than trusted from the caller: the frontier walks a
 	// contiguous prefix, so it needs the order isAfterTrendCursor compares in,
 	// and the window does not arrive in it. GetTrendingPosts orders by
@@ -507,11 +514,22 @@ func advanceTrending(page []*feedentity.FeedItem, incoming *feed.FeedCursor, win
 		consumed++
 	}
 
+	// An id the window does not contain is only still ahead if the limit cut the
+	// window short. Otherwise the window is everything below the position, so the
+	// id is not down there — it drifted above the position when the trending cache
+	// was rebuilt with new like counts — and carrying it forever would both
+	// re-emit it on every page and stop the scroll from ever ending.
 	ragged := make([]string, 0, len(served))
 	for id := range served {
+		if !windowTruncated && !collected[id] {
+			continue
+		}
 		ragged = append(ragged, id.String())
 	}
 	sort.Strings(ragged)
+	if len(ragged) > feed.MaxTrendingSeen {
+		ragged = ragged[:feed.MaxTrendingSeen]
+	}
 	if len(ragged) == 0 {
 		ragged = nil
 	}

@@ -65,30 +65,40 @@ func (r *discoveryReader) fallback(ctx context.Context, userID uuid.UUID, cursor
 		return nil, nil, errors.NewInternalError(err)
 	}
 
-	// Encountering a seen post means the stream has reached it, so it drops out
-	// of the carried list as well as out of the page: nothing below can be it.
-	remaining := seen
-	if len(seen) > 0 {
-		skip := feedCursorSeenSet(seen)
-		kept := make([]*feedentity.Post, 0, len(posts))
-		for _, post := range posts {
-			if post != nil && skip[post.ID] {
-				delete(skip, post.ID)
-				continue
-			}
-			kept = append(kept, post)
+	// A seen post drops out of the page, and out of the carried list once the
+	// cursor has actually passed it. Those are not the same moment: the fetch
+	// reaches past the end of the page, and an id found among the rows the page
+	// truncates away is still ahead of the cursor this page will emit. Pruning on
+	// sight would drop it here and serve it on the next page.
+	skip := feedCursorSeenSet(seen)
+	passedAfter := make(map[uuid.UUID]int, len(skip))
+	kept := make([]*feedentity.Post, 0, len(posts))
+	for _, post := range posts {
+		if post != nil && skip[post.ID] {
+			passedAfter[post.ID] = len(kept)
+			continue
 		}
-		posts = kept
-		remaining = make([]string, 0, len(skip))
-		for id := range skip {
-			remaining = append(remaining, id.String())
-		}
-		sort.Strings(remaining)
+		kept = append(kept, post)
 	}
+	posts = kept
 
 	hasMore := len(posts) > pageSize
 	if hasMore {
 		posts = posts[:pageSize]
+	}
+
+	remaining := make([]string, 0, len(skip))
+	for id := range skip {
+		// Fewer kept rows ahead of it than the page serves means the cursor, which
+		// anchors on the last row served, has moved past it.
+		if served, found := passedAfter[id]; found && served < len(posts) {
+			continue
+		}
+		remaining = append(remaining, id.String())
+	}
+	sort.Strings(remaining)
+	if len(remaining) == 0 {
+		remaining = nil
 	}
 
 	scores, rankErr := r.ranker.RankPosts(ctx, posts, map[string]bool{}, time.Now().UTC())

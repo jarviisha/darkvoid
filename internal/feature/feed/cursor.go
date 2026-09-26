@@ -228,8 +228,20 @@ func (c *FeedCursor) trendingSeen() []string {
 //
 // ponytail: FIFO cap, switch to storing positions server-side if scrolls get
 // long enough for the drop to show.
-// MaxDiscoverSeen bounds that list.
-const MaxDiscoverSeen = 60
+// MaxDiscoverSeen and MaxTrendingSeen bound those lists.
+//
+// The discover cap bites hardest on an account with no following posts: the
+// handoff boundary is then absent, every served post is reachable by discover, so
+// four pages of the 100-post trending list overflow the cap and roughly forty
+// posts can come back a second time.
+const (
+	MaxDiscoverSeen = 60
+	MaxTrendingSeen = pageWindow
+)
+
+// pageWindow is the trending window size, which bounds the ragged edge whenever
+// the window was not cut short.
+const pageWindow = 20
 
 // DiscoverSeenIDs is the nil-safe reader for the raw list: GetFeed reaches for
 // it on the first page, where the cursor itself is nil.
@@ -278,7 +290,7 @@ func (c *FeedCursor) DiscoverPosition() *DiscoverCursor {
 // HasContinuation reports whether any source has remaining cursor state.
 func (c *FeedCursor) HasContinuation() bool {
 	return c != nil && (c.TimelineScore != nil || c.RecommendationOffset > 0 || c.TrendingScore != nil ||
-		len(c.TrendingSeen) > 0 || c.FollowingCreatedAt != nil || c.DiscoverCreatedAt != nil)
+		c.FollowingCreatedAt != nil || c.DiscoverCreatedAt != nil)
 }
 
 // DiscoverCursor is a composite pagination cursor (created_at, post_id) for the discover feed.

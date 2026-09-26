@@ -1813,3 +1813,161 @@ func TestGetFeed_DiscoverHandoffSkipsPostsAlreadyServed(t *testing.T) {
 		t.Fatalf("unseen discover post was never served: %s", unseen.ID)
 	}
 }
+
+// TestGetFeed_TrendingWindowKeepsHighestScoresWhenCapped pins the window build
+// order. The window is capped at pageSize, so taking the cap in list order drops
+// higher-scoring posts out of it and the boundary then filters them away for
+// good. A Codohue-supplied trending list is ordered by that provider's rank, not
+// by the like count the boundary compares, which is where the orders diverge.
+func TestGetFeed_TrendingWindowKeepsHighestScoresWhenCapped(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+
+	// pageSize low-liked posts first, then the most-liked ones behind them.
+	for i := 0; i < pageSize; i++ {
+		p := testPost(now.Add(-time.Duration(i+1) * time.Minute))
+		p.LikeCount = 1
+		reader.trending = append(reader.trending, p)
+		reader.byID[p.ID] = p
+		scores[p.ID] = 10
+	}
+	popular := make([]*feedentity.Post, 3)
+	for i := range popular {
+		p := testPost(now.Add(-time.Duration(i+1) * time.Hour))
+		p.LikeCount = int64(500 + i)
+		popular[i] = p
+		reader.trending = append(reader.trending, p)
+		reader.byID[p.ID] = p
+		scores[p.ID] = 10
+	}
+
+	svc := newTestService(reader, &mockRanker{scores: scores})
+	served := map[uuid.UUID]bool{}
+	var cursor *feed.FeedCursor
+	for pages := 0; pages < 6; pages++ {
+		page, next, err := svc.GetFeed(context.Background(), userID, cursor)
+		if err != nil {
+			t.Fatalf("GetFeed page%d: %v", pages+1, err)
+		}
+		for _, item := range page {
+			if served[item.Post.ID] {
+				t.Fatalf("post re-served: %s", item.Post.ID)
+			}
+			served[item.Post.ID] = true
+		}
+		if next == nil {
+			break
+		}
+		cursor = next
+	}
+	for i, p := range popular {
+		if !served[p.ID] {
+			t.Fatalf("popular[%d] (%d likes) never served: it fell outside the first window", i, p.LikeCount)
+		}
+	}
+}
+
+// TestGetFeed_SpentRecommenderStillEndsTheScroll pins the exhaustion signal for
+// recommendations. next.RecommendationOffset is written only while the frontier
+// is below the provider's total, so reading it back reports zero for a spent
+// provider — which would keep every Codohue-enabled deployment paginating.
+func TestGetFeed_SpentRecommenderStillEndsTheScroll(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	own := testPost(now)
+	own.AuthorID = userID
+	recommended := testPost(now.Add(-time.Minute))
+	reader := &mockPostReader{
+		following: []*feedentity.Post{own},
+		byID: map[uuid.UUID]*feedentity.Post{
+			own.ID:         own,
+			recommended.ID: recommended,
+		},
+	}
+
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10, recommended.ID: 5}})
+	svc.WithRecommender(&mockRecommender{
+		items: []feed.RecommendedItem{{ObjectID: recommended.ID.String(), Score: 0.9, Rank: 1}},
+	})
+
+	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != 2 {
+		t.Fatalf("page len = %d, want 2", len(page))
+	}
+	if cursor != nil {
+		t.Fatalf("cursor = %+v, want nil once the recommender is spent too", cursor)
+	}
+}
+
+// TestGetFeed_DiscoverKeepsSeenIDsItHasNotPassedYet pins when a carried id may
+// be dropped. The fetch reaches past the end of the page, so an id found among
+// the rows the page truncates away is still ahead of the cursor the page emits —
+// pruning it on sight loses the filter exactly where it is next needed.
+func TestGetFeed_DiscoverKeepsSeenIDsItHasNotPassedYet(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	posts := make([]*feedentity.Post, pageSize+5)
+	for i := range posts {
+		p := testPost(now.Add(-time.Duration(i+1) * time.Minute))
+		posts[i] = p
+		reader.discover = append(reader.discover, p)
+		reader.byID[p.ID] = p
+	}
+	// Already served, and positioned past the end of the first discover page.
+	alreadyServed := posts[pageSize+1]
+
+	start := now.UnixNano()
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	cursor := &feed.FeedCursor{
+		TimelineUser:      userID.String(),
+		DiscoverCreatedAt: &start,
+		DiscoverPostID:    uuid.Max.String(),
+		DiscoverSeen:      []string{alreadyServed.ID.String()},
+	}
+
+	seen := map[uuid.UUID]bool{alreadyServed.ID: true}
+	for pages := 0; pages < 5 && cursor != nil; pages++ {
+		page, next, err := svc.GetFeed(context.Background(), userID, cursor)
+		if err != nil {
+			t.Fatalf("GetFeed page%d: %v", pages+1, err)
+		}
+		for _, item := range page {
+			if seen[item.Post.ID] {
+				t.Fatalf("discover re-served an already-served post: %s", item.Post.ID)
+			}
+			seen[item.Post.ID] = true
+		}
+		cursor = next
+	}
+}
+
+// TestGetFeed_FailedTrendingFetchIsRetriedOnTheNextPage pins that a broken
+// trending fetch does not retire the source. The cursor gates trending on
+// carrying a position, so emitting none after a failure drops trending for the
+// rest of the scroll rather than for the length of the outage.
+func TestGetFeed_FailedTrendingFetchIsRetriedOnTheNextPage(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	own := testPost(now)
+	own.AuthorID = userID
+	reader := &mockPostReader{
+		following:   []*feedentity.Post{own},
+		byID:        map[uuid.UUID]*feedentity.Post{own.ID: own},
+		trendingErr: errors.New("trending down"),
+	}
+
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10}})
+	_, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if cursor == nil || cursor.TrendingScore == nil {
+		t.Fatalf("cursor = %+v, want a trending position so the next page retries the source", cursor)
+	}
+}
