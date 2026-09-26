@@ -3495,6 +3495,10 @@ const docTemplate = `{
         },
         "dto.ChangePasswordRequest": {
             "type": "object",
+            "required": [
+                "new_password",
+                "old_password"
+            ],
             "properties": {
                 "new_password": {
                     "type": "string"
@@ -3735,6 +3739,9 @@ const docTemplate = `{
         },
         "dto.ForgotPasswordRequest": {
             "type": "object",
+            "required": [
+                "email"
+            ],
             "properties": {
                 "email": {
                     "type": "string",
@@ -3786,6 +3793,10 @@ const docTemplate = `{
         },
         "dto.LoginRequest": {
             "type": "object",
+            "required": [
+                "password",
+                "username"
+            ],
             "properties": {
                 "password": {
                     "type": "string"
@@ -3820,6 +3831,9 @@ const docTemplate = `{
         },
         "dto.LogoutRequest": {
             "type": "object",
+            "required": [
+                "refresh_token"
+            ],
             "properties": {
                 "refresh_token": {
                     "type": "string"
@@ -4045,6 +4059,9 @@ const docTemplate = `{
         },
         "dto.RefreshTokenRequest": {
             "type": "object",
+            "required": [
+                "refresh_token"
+            ],
             "properties": {
                 "refresh_token": {
                     "type": "string"
@@ -4073,6 +4090,12 @@ const docTemplate = `{
         },
         "dto.RegisterRequest": {
             "type": "object",
+            "required": [
+                "display_name",
+                "email",
+                "password",
+                "username"
+            ],
             "properties": {
                 "display_name": {
                     "type": "string",
@@ -4118,6 +4141,9 @@ const docTemplate = `{
         },
         "dto.ResendVerificationRequest": {
             "type": "object",
+            "required": [
+                "email"
+            ],
             "properties": {
                 "email": {
                     "type": "string",
@@ -4127,6 +4153,10 @@ const docTemplate = `{
         },
         "dto.ResetPasswordRequest": {
             "type": "object",
+            "required": [
+                "new_password",
+                "token"
+            ],
             "properties": {
                 "new_password": {
                     "type": "string",
@@ -4444,6 +4474,9 @@ const docTemplate = `{
         },
         "dto.VerifyEmailRequest": {
             "type": "object",
+            "required": [
+                "token"
+            ],
             "properties": {
                 "token": {
                     "type": "string",
