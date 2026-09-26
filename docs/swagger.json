@@ -3495,10 +3495,12 @@
             ],
             "properties": {
                 "new_password": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 },
                 "old_password": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -3739,6 +3741,7 @@
             "properties": {
                 "email": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "john@example.com"
                 }
             }
@@ -3793,10 +3796,12 @@
             ],
             "properties": {
                 "password": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 },
                 "username": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -3830,7 +3835,8 @@
             ],
             "properties": {
                 "refresh_token": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -4058,7 +4064,8 @@
             ],
             "properties": {
                 "refresh_token": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -4093,18 +4100,22 @@
             "properties": {
                 "display_name": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "John Doe"
                 },
                 "email": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "john@example.com"
                 },
                 "password": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "SecurePass123"
                 },
                 "username": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "johndoe"
                 }
             }
@@ -4141,6 +4152,7 @@
             "properties": {
                 "email": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "john@example.com"
                 }
             }
@@ -4154,10 +4166,12 @@
             "properties": {
                 "new_password": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "NewSecurePass123"
                 },
                 "token": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "abc123def456"
                 }
             }
@@ -4474,6 +4488,7 @@
             "properties": {
                 "token": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "abc123def456"
                 }
             }

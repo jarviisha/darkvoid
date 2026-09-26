@@ -3501,10 +3501,12 @@ const docTemplate = `{
             ],
             "properties": {
                 "new_password": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 },
                 "old_password": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -3745,6 +3747,7 @@ const docTemplate = `{
             "properties": {
                 "email": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "john@example.com"
                 }
             }
@@ -3799,10 +3802,12 @@ const docTemplate = `{
             ],
             "properties": {
                 "password": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 },
                 "username": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -3836,7 +3841,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "refresh_token": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -4064,7 +4070,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "refresh_token": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -4099,18 +4106,22 @@ const docTemplate = `{
             "properties": {
                 "display_name": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "John Doe"
                 },
                 "email": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "john@example.com"
                 },
                 "password": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "SecurePass123"
                 },
                 "username": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "johndoe"
                 }
             }
@@ -4147,6 +4158,7 @@ const docTemplate = `{
             "properties": {
                 "email": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "john@example.com"
                 }
             }
@@ -4160,10 +4172,12 @@ const docTemplate = `{
             "properties": {
                 "new_password": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "NewSecurePass123"
                 },
                 "token": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "abc123def456"
                 }
             }
@@ -4480,6 +4494,7 @@ const docTemplate = `{
             "properties": {
                 "token": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "abc123def456"
                 }
             }
