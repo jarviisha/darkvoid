@@ -136,7 +136,7 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 	}
 	candidates := filterEligibleCandidates(userID, followingSet, collapseCandidates(sources.candidates))
 	sources.recWindow.validOffsets = recommendationCandidateOffsets(candidates)
-	if len(candidates) == 0 && !sources.followingFetched {
+	if len(candidates) == 0 && sources.followingCount == 0 {
 		feed.CountFallback()
 		logger.Info(ctx, "feed fallback entered", "user_id", userID)
 		return s.discovery.fallback(ctx, userID, discoverHandoff(cursor))
@@ -154,7 +154,12 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 	if len(page) == 0 {
 		return nil, nil, nil
 	}
-	return page, nextMixedCursor(userID, page, cursor, sources), nil
+	transition := nextMixedCursor(userID, page, cursor, sources)
+	if transition.cursor != nil && transition.sourcesDry &&
+		!s.discovery.hasMore(ctx, userID, discoverHandoff(transition.cursor)) {
+		return page, nil, nil
+	}
+	return page, transition.cursor, nil
 }
 
 // GetDiscover returns the cursor-paginated public discovery feed.

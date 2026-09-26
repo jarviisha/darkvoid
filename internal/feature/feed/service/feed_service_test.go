@@ -967,17 +967,10 @@ func TestGetFeed_TrendingContinuationNoDuplicates(t *testing.T) {
 		seen[item.Post.ID] = true
 	}
 
-	// Page 2 still served trending, so its position survives; the next request
-	// finds nothing behind it and ends the scroll cleanly.
-	if next == nil || next.TrendingScore == nil {
-		t.Fatalf("next cursor = %+v, want carried trending continuation", next)
-	}
-	page3, tail, err := svc.GetFeed(context.Background(), userID, next)
-	if err != nil {
-		t.Fatalf("GetFeed page3: %v", err)
-	}
-	if len(page3) != 0 || tail != nil {
-		t.Fatalf("page3 len/cursor = %d/%+v, want exhausted scroll", len(page3), tail)
+	// Page 2 drained the trending list and no other source has anything behind
+	// it, so the scroll ends on this response rather than on an empty page 3.
+	if next != nil {
+		t.Fatalf("next cursor = %+v, want nil once every source is spent", next)
 	}
 }
 
@@ -1001,6 +994,13 @@ func TestGetFeed_CollapsedTrendingDoesNotRestartNextPage(t *testing.T) {
 		reader.byID[p.ID] = p
 		scores[p.ID] = float64(10 - i)
 	}
+
+	// An older public post keeps the scroll alive. Without something behind this
+	// page the feed now ends it, and this test is about where the cursor lands
+	// rather than about termination.
+	deeper := testPost(now.Add(-48 * time.Hour))
+	reader.discover = append(reader.discover, deeper)
+	reader.byID[deeper.ID] = deeper
 
 	svc := newTestService(reader, &mockRanker{scores: scores})
 	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
@@ -1052,6 +1052,13 @@ func TestGetFeed_TrendingCursorUsesLowestShownScore(t *testing.T) {
 		reader.byID[p.ID] = p
 		scores[p.ID] = blend[i]
 	}
+
+	// An older public post keeps the scroll alive. Without something behind this
+	// page the feed now ends it, and this test is about where the cursor lands
+	// rather than about termination.
+	deeper := testPost(now.Add(-48 * time.Hour))
+	reader.discover = append(reader.discover, deeper)
+	reader.byID[deeper.ID] = deeper
 
 	svc := newTestService(reader, &mockRanker{scores: scores})
 	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
@@ -1194,17 +1201,10 @@ func TestGetFeed_FollowingContinuationNoDuplicates(t *testing.T) {
 		t.Fatalf("total unique posts = %d, want %d", len(seen), total)
 	}
 
-	// Page 2 still served following posts, so the continuation survives; the
-	// next request finds nothing behind it and ends the scroll cleanly.
-	if next == nil || next.FollowingCreatedAt == nil {
-		t.Fatalf("next cursor = %+v, want carried following continuation", next)
-	}
-	page3, tail, err := svc.GetFeed(context.Background(), userID, next)
-	if err != nil {
-		t.Fatalf("GetFeed page3: %v", err)
-	}
-	if len(page3) != 0 || tail != nil {
-		t.Fatalf("page3 len/cursor = %d/%+v, want exhausted scroll", len(page3), tail)
+	// Page 2 drained the following source and nothing else has anything behind
+	// it, so the scroll ends on this response rather than on an empty page 3.
+	if next != nil {
+		t.Fatalf("next cursor = %+v, want nil once every source is spent", next)
 	}
 }
 
@@ -1664,5 +1664,90 @@ func TestGetFeed_TrendingBoundaryDoesNotSkipUnshownPosts(t *testing.T) {
 		if !served[p.ID] {
 			t.Fatalf("trending post hidden[%d] (%d likes) was never served: %s", i, p.LikeCount, p.ID)
 		}
+	}
+}
+
+// TestGetFeed_LastPageEndsTheScroll pins the terminal cursor. The reported
+// account follows nobody and has two posts: page 1 fits them both, so there is
+// nothing behind it in any source and the client should be told to stop rather
+// than spend a request discovering an empty page.
+func TestGetFeed_LastPageEndsTheScroll(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+	for i := 0; i < 2; i++ {
+		p := testPost(now.Add(-time.Duration(i) * time.Minute))
+		p.AuthorID = userID
+		reader.following = append(reader.following, p)
+		reader.trending = append(reader.trending, p)
+		reader.byID[p.ID] = p
+		scores[p.ID] = float64(10 - i)
+	}
+
+	svc := newTestService(reader, &mockRanker{scores: scores})
+	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != 2 {
+		t.Fatalf("page len = %d, want 2", len(page))
+	}
+	if cursor != nil {
+		t.Fatalf("cursor = %+v, want nil on the last page", cursor)
+	}
+}
+
+// TestGetFeed_FullPageStillPaginates guards the obvious over-correction: a page
+// that fills up must keep its cursor, since the rows fetched and outranked off
+// it are still behind the following position.
+func TestGetFeed_FullPageStillPaginates(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+	for i := 0; i < pageSize*2; i++ {
+		p := testPost(now.Add(-time.Duration(i+1) * time.Minute))
+		p.AuthorID = userID
+		reader.following = append(reader.following, p)
+		reader.byID[p.ID] = p
+		scores[p.ID] = float64(pageSize*2 - i)
+	}
+
+	svc := newTestService(reader, &mockRanker{scores: scores})
+	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != pageSize || cursor == nil {
+		t.Fatalf("page len/cursor = %d/%v, want a full page and a cursor", len(page), cursor)
+	}
+}
+
+// TestGetFeed_BrokenSourceDoesNotEndTheScroll separates an exhausted source from
+// a broken one. Trending erroring leaves the same empty candidate list an empty
+// trending list does, and treating that as the end of the feed would cut a
+// reader's scroll short over a transient provider failure.
+func TestGetFeed_BrokenSourceDoesNotEndTheScroll(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	own := testPost(now)
+	own.AuthorID = userID
+	reader := &mockPostReader{
+		following:   []*feedentity.Post{own},
+		byID:        map[uuid.UUID]*feedentity.Post{own.ID: own},
+		trendingErr: errors.New("trending down"),
+	}
+
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10}})
+	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != 1 {
+		t.Fatalf("page len = %d, want 1", len(page))
+	}
+	if cursor == nil {
+		t.Fatal("cursor = nil; a failed trending fetch is not an exhausted feed")
 	}
 }

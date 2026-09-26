@@ -27,6 +27,21 @@ func discoverHandoff(cursor *feed.FeedCursor) *feed.DiscoverCursor {
 	return &feed.DiscoverCursor{CreatedAt: position.CreatedAt, PostID: position.PostID}
 }
 
+// hasMore reports whether the discover stream still holds a post below cursor.
+// It is the only source the mixed path cannot answer for from what it already
+// fetched, and it is asked once per scroll — only on a page where every other
+// source came up dry — so the extra row costs nothing on the pages that page.
+func (r *discoveryReader) hasMore(ctx context.Context, userID uuid.UUID, cursor *feed.DiscoverCursor) bool {
+	posts, err := r.postReader.GetDiscoverWithCursor(ctx, cursor, 1, nil)
+	if err != nil {
+		// Fail towards paginating: a spurious empty page ends the scroll for the
+		// client, where a spurious cursor costs it one more request.
+		logger.LogError(ctx, err, "discover exhaustion probe failed, keeping the cursor", "user_id", userID)
+		return true
+	}
+	return len(posts) > 0
+}
+
 func (r *discoveryReader) fallback(ctx context.Context, userID uuid.UUID, cursor *feed.DiscoverCursor) ([]*feedentity.FeedItem, *feed.FeedCursor, error) {
 	posts, err := r.postReader.GetDiscoverWithCursor(ctx, cursor, pageSize+1, nil)
 	if err != nil {

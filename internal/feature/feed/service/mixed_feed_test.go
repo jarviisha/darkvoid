@@ -137,10 +137,11 @@ func TestNextMixedCursor_SourceTransitions(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			cursor := nextMixedCursor(userID, test.page, test.incoming, collectedSources{
+			transition := nextMixedCursor(userID, test.page, test.incoming, collectedSources{
 				recWindow:      test.window,
 				trendingWindow: test.trending,
 			})
+			cursor := transition.cursor
 			test.assert(t, cursor)
 		})
 	}
