@@ -130,7 +130,7 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 		followingSet[id] = true
 	}
 
-	candidates, recWindow, trendingScores, followingFetched, err := s.mixed.collect(ctx, userID, authorIDs, cursor)
+	candidates, recWindow, collectedTrending, followingFetched, err := s.mixed.collect(ctx, userID, authorIDs, cursor)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -154,7 +154,7 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 	if len(page) == 0 {
 		return nil, nil, nil
 	}
-	return page, nextMixedCursor(userID, page, cursor, recWindow, trendingScores), nil
+	return page, nextMixedCursor(userID, page, cursor, recWindow, collectedTrending), nil
 }
 
 // GetDiscover returns the cursor-paginated public discovery feed.

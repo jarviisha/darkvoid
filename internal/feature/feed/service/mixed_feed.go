@@ -73,7 +73,7 @@ func (b *mixedFeedBuilder) collect(ctx context.Context, userID uuid.UUID, author
 	offset := recommendationOffset(cursor)
 	recWindow := recommendationWindow{start: offset, end: offset}
 	candidates := make([]feedCandidate, 0, pageSize*fetchMultiplier)
-	trendingScores := map[uuid.UUID]float64{}
+	collectedTrending := map[uuid.UUID]float64{}
 
 	followingPosts, err := b.postReader.GetFollowingPostsWithCursor(ctx, authorIDs, userID, cursor.FollowingPosition(), pageSize*fetchMultiplier)
 	if err != nil {
@@ -111,11 +111,11 @@ func (b *mixedFeedBuilder) collect(ctx context.Context, userID uuid.UUID, author
 			// Score taken from the trending copy, not the page item: the two
 			// disagree while the trending cache is stale, and the boundary has
 			// to be comparable with what applyTrendingCursor filters next page.
-			trendingScores[post.ID] = trendScoreFromPost(post)
+			collectedTrending[post.ID] = trendScoreFromPost(post)
 		}
 	}
 
-	return candidates, recWindow, trendingScores, len(followingPosts) > 0, nil
+	return candidates, recWindow, collectedTrending, len(followingPosts) > 0, nil
 }
 
 func (b *mixedFeedBuilder) loadRecommendations(ctx context.Context, items []feed.RecommendedItem, baseOffset int, cursor *feed.FeedCursor) ([]feedCandidate, error) {
@@ -279,7 +279,7 @@ func (b *mixedFeedBuilder) sort(items []*feedentity.FeedItem) {
 	})
 }
 
-func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *feed.FeedCursor, recWindow recommendationWindow, trendingScores map[uuid.UUID]float64) *feed.FeedCursor {
+func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *feed.FeedCursor, recWindow recommendationWindow, collectedTrending map[uuid.UUID]float64) *feed.FeedCursor {
 	next := &feed.FeedCursor{TimelineUser: userID.String()}
 	seen := recommendationSeenSet(incoming)
 	for _, item := range page {
@@ -302,13 +302,13 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *fe
 		sort.Ints(next.RecommendationSeen)
 	}
 
-	if lowestID, lowestScore, ok := lowestTrendingShown(page, trendingScores); ok {
-		next.TrendingScore = &lowestScore
-		next.TrendingPostID = lowestID.String()
+	if lowest := lowestTrendingShown(page, collectedTrending); lowest != nil {
+		next.TrendingScore = &lowest.Score
+		next.TrendingPostID = lowest.PostID
 	} else if incoming.TrendingPosition() != nil {
 		next.TrendingScore = incoming.TrendingScore
 		next.TrendingPostID = incoming.TrendingPostID
-	} else if len(trendingScores) > 0 {
+	} else if len(collectedTrending) > 0 {
 		score := math.MaxFloat64
 		next.TrendingScore = &score
 		next.TrendingPostID = uuid.Max.String()
@@ -330,27 +330,27 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *fe
 
 // lowestTrendingShown returns the trending boundary the next page resumes
 // below: the lowest-scoring collected trending post that actually made this
-// page. Membership is matched on id rather than on FeedItem.Source, because
-// collapseCandidates relabels a trending post that is also a following or
-// recommendation candidate — matching on the label left those posts behind the
-// cursor and re-served them as trending on the following page.
-func lowestTrendingShown(page []*feedentity.FeedItem, trendingScores map[uuid.UUID]float64) (uuid.UUID, float64, bool) {
-	var lowestID uuid.UUID
-	var lowestScore float64
-	found := false
+// page, or nil if none did. Membership is matched on id rather than on
+// FeedItem.Source, because collapseCandidates relabels a trending post that is
+// also a following or recommendation candidate — matching on the label left
+// those posts behind the cursor and re-served them as trending on the
+// following page.
+func lowestTrendingShown(page []*feedentity.FeedItem, collectedTrending map[uuid.UUID]float64) *feed.TrendPosition {
+	var lowest *feed.TrendPosition
 	for _, item := range page {
 		if item.Post == nil {
 			continue
 		}
-		score, trending := trendingScores[item.Post.ID]
+		score, trending := collectedTrending[item.Post.ID]
 		if !trending {
 			continue
 		}
-		if !found || score < lowestScore || (score == lowestScore && item.Post.ID.String() < lowestID.String()) {
-			lowestID, lowestScore, found = item.Post.ID, score, true
+		id := item.Post.ID.String()
+		if lowest == nil || score < lowest.Score || (score == lowest.Score && id < lowest.PostID) {
+			lowest = &feed.TrendPosition{Score: score, PostID: id}
 		}
 	}
-	return lowestID, lowestScore, found
+	return lowest
 }
 
 func oldestFollowingShown(page []*feedentity.FeedItem) *feedentity.Post {

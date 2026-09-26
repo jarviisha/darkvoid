@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -977,6 +978,55 @@ func TestGetFeed_TrendingContinuationNoDuplicates(t *testing.T) {
 	}
 	if len(page3) != 0 || tail != nil {
 		t.Fatalf("page3 len/cursor = %d/%+v, want exhausted scroll", len(page3), tail)
+	}
+}
+
+// TestGetFeed_CollapsedTrendingDoesNotRestartNextPage reproduces the reported
+// scroll: an account that follows nobody, whose own public posts are also the
+// trending list. Every candidate arrives from both sources, collapseCandidates
+// labels them SourceFollowing, and the trending boundary used to see nothing on
+// the page — so it emitted the start-of-list sentinel and page 2 re-served the
+// whole trending list, including a post newer than the following position.
+func TestGetFeed_CollapsedTrendingDoesNotRestartNextPage(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+
+	for i := 0; i < 2; i++ {
+		p := testPost(now.Add(-time.Duration(i) * time.Minute))
+		p.AuthorID = userID
+		reader.following = append(reader.following, p)
+		reader.trending = append(reader.trending, p)
+		reader.byID[p.ID] = p
+		scores[p.ID] = float64(10 - i)
+	}
+
+	svc := newTestService(reader, &mockRanker{scores: scores})
+	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed page1: %v", err)
+	}
+	if len(page1) != 2 {
+		t.Fatalf("page1 len = %d, want 2", len(page1))
+	}
+	if cursor == nil || cursor.TrendingScore == nil {
+		t.Fatalf("cursor = %+v, want a trending position", cursor)
+	}
+	if *cursor.TrendingScore == math.MaxFloat64 {
+		t.Fatal("cursor carries the start-of-list sentinel after serving every trending post")
+	}
+
+	page2, _, err := svc.GetFeed(context.Background(), userID, cursor)
+	if err != nil {
+		t.Fatalf("GetFeed page2: %v", err)
+	}
+	for _, item := range page2 {
+		for _, served := range page1 {
+			if item.Post.ID == served.Post.ID {
+				t.Fatalf("post re-served on page 2: %s (source %s)", item.Post.ID, item.Source)
+			}
+		}
 	}
 }
 
