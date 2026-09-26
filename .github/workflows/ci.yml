@@ -64,25 +64,27 @@ jobs:
       - name: Run vet
         run: go vet ./...
 
-      # quay.io, not Docker Hub: `docker pull minio/minio` now answers "pull access
-      # denied ... repository does not exist", which fails this step before any test
-      # runs. The digest is unchanged — quay serves the identical manifest — so this
-      # is a registry swap, not a version bump.
+      # s3mock, not MinIO: MinIO withdrew the community distribution. Both
+      # `minio/minio` and `quay.io/minio/minio` now answer "unauthorized" for
+      # every tag including `latest`, and dl.min.io serves 410 for the server
+      # binary, so there is no registry swap left to make. s3mock is an S3 API
+      # mock built for tests — it ignores credentials, which is why the root
+      # user env vars are gone; the test still sends keys and s3mock accepts
+      # any. It listens on 9090, published as 9000 so S3_TEST_ENDPOINT below is
+      # unchanged. Unauthenticated `GET /` (ListBuckets) replaces the MinIO
+      # health path, which s3mock does not serve.
       - name: Start S3-compatible integration store
         run: |
-          docker run --detach --rm --name darkvoid-ci-minio \
-            --publish 9000:9000 \
-            --env MINIO_ROOT_USER=darkvoid-test \
-            --env MINIO_ROOT_PASSWORD=darkvoid-test-secret \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
-            server /data
+          docker run --detach --rm --name darkvoid-ci-s3 \
+            --publish 9000:9090 \
+            adobe/s3mock:5.2.3@sha256:ab01a6946750f451ca215a47e91030695b260e4003b8a5a6201d25029b8fca92
           for _attempt in {1..30}; do
-            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+            if curl --fail --silent http://127.0.0.1:9000/ >/dev/null; then
               exit 0
             fi
             sleep 1
           done
-          docker logs darkvoid-ci-minio
+          docker logs darkvoid-ci-s3
           exit 1
 
       - name: Run tests
@@ -95,7 +97,7 @@ jobs:
 
       - name: Stop S3-compatible integration store
         if: always()
-        run: docker stop darkvoid-ci-minio || true
+        run: docker stop darkvoid-ci-s3 || true
 
       - name: Test production operation contracts
         run: make test-ops

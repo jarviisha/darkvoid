@@ -1,6 +1,7 @@
 package service
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -22,13 +23,15 @@ func TestNextMixedCursor_SourceTransitions(t *testing.T) {
 	carriedFollowingID := uuid.New().String()
 	recommendationOffset := 0
 
+	trendingScores := map[uuid.UUID]float64{lowTrending.ID: 4, highTrending.ID: 9}
+
 	tests := []struct {
-		name              string
-		page              []*feedentity.FeedItem
-		incoming          *feed.FeedCursor
-		window            recommendationWindow
-		trendingCollected bool
-		assert            func(*testing.T, *feed.FeedCursor)
+		name     string
+		page     []*feedentity.FeedItem
+		incoming *feed.FeedCursor
+		window   recommendationWindow
+		trending map[uuid.UUID]float64
+		assert   func(*testing.T, *feed.FeedCursor)
 	}{
 		{
 			name: "no continuation",
@@ -58,10 +61,39 @@ func TestNextMixedCursor_SourceTransitions(t *testing.T) {
 				{Post: lowTrending, Source: feedentity.SourceTrending},
 				{Post: highTrending, Source: feedentity.SourceTrending},
 			},
+			trending: trendingScores,
 			assert: func(t *testing.T, cursor *feed.FeedCursor) {
 				t.Helper()
 				if cursor == nil || cursor.TrendingPostID != lowTrending.ID.String() || cursor.TrendingScore == nil || *cursor.TrendingScore != 4 {
 					t.Fatalf("trending cursor = %#v, want score 4 and post %s", cursor, lowTrending.ID)
+				}
+			},
+		},
+		{
+			// A trending post that is also a following candidate is collapsed to
+			// SourceFollowing. The trending position must still advance past it,
+			// or the next page re-serves it as trending.
+			name: "trending advances past collapsed trending posts",
+			page: []*feedentity.FeedItem{
+				{Post: lowTrending, Source: feedentity.SourceFollowing},
+				{Post: highTrending, Source: feedentity.SourceRecommendation},
+			},
+			trending: trendingScores,
+			assert: func(t *testing.T, cursor *feed.FeedCursor) {
+				t.Helper()
+				if cursor == nil || cursor.TrendingScore == nil || *cursor.TrendingScore != 4 || cursor.TrendingPostID != lowTrending.ID.String() {
+					t.Fatalf("trending cursor = %#v, want score 4 and post %s", cursor, lowTrending.ID)
+				}
+			},
+		},
+		{
+			name:     "collected but unshown trending starts from the top",
+			page:     []*feedentity.FeedItem{{Post: olderFollowing, Source: feedentity.SourceFollowing}},
+			trending: trendingScores,
+			assert: func(t *testing.T, cursor *feed.FeedCursor) {
+				t.Helper()
+				if cursor == nil || cursor.TrendingScore == nil || *cursor.TrendingScore != math.MaxFloat64 {
+					t.Fatalf("trending cursor = %#v, want the not-started sentinel", cursor)
 				}
 			},
 		},
@@ -104,7 +136,7 @@ func TestNextMixedCursor_SourceTransitions(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			cursor := nextMixedCursor(userID, test.page, test.incoming, test.window, test.trendingCollected)
+			cursor := nextMixedCursor(userID, test.page, test.incoming, test.window, test.trending)
 			test.assert(t, cursor)
 		})
 	}
