@@ -4,6 +4,13 @@
 // a transactional PostgreSQL outbox with retry/dead-letter delivery for post
 // and follow mutations.
 //
+// The cursor records what it has already served, not only where each source
+// stopped. A position is enough for a source paginated in the order it is read,
+// and not enough for trending or recommendations, which rank: a post served out
+// of that order has to be named by id, or the position either skips everything
+// above it or hands it back. Those id lists are pruned as the positions pass
+// them, and the discover list is capped because the cursor travels in a URL.
+//
 // Prepared timelines are ranked at write time: ZSET scores are packed rank
 // scores (see PackTimelineScore — rank bucket over createdAt seconds), written
 // by fan-out (NX, write-time constant) and by the background refresher

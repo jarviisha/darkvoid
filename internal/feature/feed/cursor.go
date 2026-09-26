@@ -49,10 +49,12 @@ type FeedCursor struct {
 	RecommendationSeen   []int    `json:"rec_seen,omitempty"`
 	TrendingScore        *float64 `json:"trend_score,omitempty"`
 	TrendingPostID       string   `json:"trend_post_id,omitempty"`
+	TrendingSeen         []string `json:"trend_seen,omitempty"`
 	FollowingCreatedAt   *int64   `json:"fl_ts,omitempty"`
 	FollowingPostID      string   `json:"fl_post_id,omitempty"`
 	DiscoverCreatedAt    *int64   `json:"disc_ts,omitempty"`
 	DiscoverPostID       string   `json:"disc_post_id,omitempty"`
+	DiscoverSeen         []string `json:"disc_seen,omitempty"`
 }
 
 // Encode returns the base64 JSON representation of the feed cursor.
@@ -128,6 +130,17 @@ func (c *FeedCursor) Validate() error {
 	} else if c.TrendingPostID != "" {
 		return fmt.Errorf("trending post_id without trending score")
 	}
+	if len(c.TrendingSeen) > 0 && c.TrendingScore == nil {
+		return fmt.Errorf("seen trending post_ids without trending score")
+	}
+	if len(c.TrendingSeen) > MaxTrendingSeen {
+		return fmt.Errorf("too many seen trending posts")
+	}
+	for _, id := range c.TrendingSeen {
+		if _, err := uuid.Parse(id); err != nil {
+			return fmt.Errorf("invalid seen trending post_id")
+		}
+	}
 	if c.FollowingCreatedAt != nil {
 		if _, err := uuid.Parse(c.FollowingPostID); err != nil {
 			return fmt.Errorf("invalid following cursor post_id")
@@ -141,6 +154,14 @@ func (c *FeedCursor) Validate() error {
 		}
 	} else if c.DiscoverPostID != "" {
 		return fmt.Errorf("discover post_id without discover timestamp")
+	}
+	if len(c.DiscoverSeen) > MaxDiscoverSeen {
+		return fmt.Errorf("too many seen discover posts")
+	}
+	for _, entry := range c.DiscoverSeen {
+		if _, err := DecodeSeenPost(entry); err != nil {
+			return fmt.Errorf("invalid seen discover post: %w", err)
+		}
 	}
 	if c.TimelineUser != "" {
 		if _, err := uuid.Parse(c.TimelineUser); err != nil {
@@ -178,6 +199,103 @@ func (c *FeedCursor) TrendingPosition() *TrendPosition {
 		return nil
 	}
 	return &TrendPosition{Score: *c.TrendingScore, PostID: c.TrendingPostID}
+}
+
+// TrendingSeenSet returns the trending posts already served below the trending
+// position. The position alone cannot express them: the trending list is ordered
+// by score, so a single boundary only ever names a suffix, and a post served out
+// of that order — because it also arrived from following or recommendations, and
+// collapsed to that source — has to be recorded by id or it is either re-served
+// or skipped along with everything above it.
+func (c *FeedCursor) TrendingSeenSet() map[uuid.UUID]bool {
+	seen := make(map[uuid.UUID]bool, len(c.trendingSeen()))
+	for _, raw := range c.trendingSeen() {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			continue
+		}
+		seen[id] = true
+	}
+	return seen
+}
+
+func (c *FeedCursor) trendingSeen() []string {
+	if c == nil {
+		return nil
+	}
+	return c.TrendingSeen
+}
+
+// SeenPost is a post already served that a chronological source could still hand
+// back. The timestamp travels with the id because reachability changes as the
+// scroll descends: an id below the handoff boundary on one page is above it a few
+// pages later, at which point discover can no longer reach it and carrying it
+// only occupies room the reachable ids need.
+type SeenPost struct {
+	CreatedAt time.Time
+	PostID    string
+}
+
+// Encode renders a seen post for the cursor, matching DiscoverCursor's shape.
+func (p SeenPost) Encode() string {
+	return fmt.Sprintf("%d,%s", p.CreatedAt.UnixNano(), p.PostID)
+}
+
+// DecodeSeenPost parses one entry written by SeenPost.Encode.
+func DecodeSeenPost(raw string) (SeenPost, error) {
+	parts := strings.SplitN(raw, ",", 2)
+	if len(parts) != 2 {
+		return SeenPost{}, fmt.Errorf("invalid seen post format")
+	}
+	ns, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return SeenPost{}, fmt.Errorf("invalid seen post timestamp: %w", err)
+	}
+	if _, err := uuid.Parse(parts[1]); err != nil {
+		return SeenPost{}, fmt.Errorf("invalid seen post id")
+	}
+	return SeenPost{CreatedAt: time.Unix(0, ns).UTC(), PostID: parts[1]}, nil
+}
+
+// The seen lists are capped because the cursor travels in a URL, and the caps are
+// enforced on the way in as well as on the way out: the limit of the discover
+// fetch is derived from the list's length, so an oversized client-supplied cursor
+// would otherwise choose how many rows one request reads.
+//
+// Past the cap the surplus is dropped and those posts can be served a second
+// time. That is the milder of the two failures available — anchoring discover
+// below everything served instead skips every unserved post between that anchor
+// and the handoff boundary, and trending reaches back 24h.
+//
+// ponytail: FIFO cap, move the served set server-side if deep scrolls show the
+// drop. The case to watch is an account with no following posts: the handoff
+// boundary is absent, so every served post is reachable and the cap fills.
+const (
+	MaxDiscoverSeen = 60
+	MaxTrendingSeen = 40
+)
+
+// DiscoverSeenPosts returns the carried seen posts, skipping unparseable entries.
+func (c *FeedCursor) DiscoverSeenPosts() []SeenPost {
+	raw := c.DiscoverSeenIDs()
+	posts := make([]SeenPost, 0, len(raw))
+	for _, entry := range raw {
+		post, err := DecodeSeenPost(entry)
+		if err != nil {
+			continue
+		}
+		posts = append(posts, post)
+	}
+	return posts
+}
+
+// DiscoverSeenIDs is the nil-safe reader for the raw list: GetFeed reaches for
+// it on the first page, where the cursor itself is nil.
+func (c *FeedCursor) DiscoverSeenIDs() []string {
+	if c == nil {
+		return nil
+	}
+	return c.DiscoverSeen
 }
 
 // FollowingPosition returns the following source continuation point.

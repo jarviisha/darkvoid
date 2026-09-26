@@ -95,7 +95,7 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 	}
 
 	if position := cursor.DiscoverPosition(); position != nil {
-		return s.discovery.fallback(ctx, userID, position)
+		return s.discovery.fallback(ctx, userID, position, cursor.DiscoverSeenPosts())
 	}
 
 	if s.timeline.readAllowed(userID) && (cursor == nil || cursor.TimelinePosition() != nil) {
@@ -130,16 +130,16 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 		followingSet[id] = true
 	}
 
-	candidates, recWindow, collectedTrending, followingFetched, err := s.mixed.collect(ctx, userID, authorIDs, cursor)
+	sources, err := s.mixed.collect(ctx, userID, authorIDs, cursor)
 	if err != nil {
 		return nil, nil, err
 	}
-	candidates = filterEligibleCandidates(userID, followingSet, collapseCandidates(candidates))
-	recWindow.validOffsets = recommendationCandidateOffsets(candidates)
-	if len(candidates) == 0 && !followingFetched {
+	candidates := filterEligibleCandidates(userID, followingSet, collapseCandidates(sources.candidates))
+	sources.recWindow.validOffsets = recommendationCandidateOffsets(candidates)
+	if len(candidates) == 0 && sources.followingCount == 0 {
 		feed.CountFallback()
 		logger.Info(ctx, "feed fallback entered", "user_id", userID)
-		return s.discovery.fallback(ctx, userID, discoverHandoff(cursor))
+		return s.discovery.fallback(ctx, userID, discoverHandoff(cursor), cursor.DiscoverSeenPosts())
 	}
 
 	items := s.mixed.rank(ctx, candidates, followingSet, time.Now().UTC())
@@ -154,7 +154,12 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, cursor *fee
 	if len(page) == 0 {
 		return nil, nil, nil
 	}
-	return page, nextMixedCursor(userID, page, cursor, recWindow, collectedTrending), nil
+	transition := nextMixedCursor(userID, page, cursor, sources)
+	if transition.cursor != nil && transition.sourcesDry &&
+		!s.discovery.hasMore(ctx, userID, discoverHandoff(transition.cursor), transition.cursor.DiscoverSeenPosts()) {
+		return page, nil, nil
+	}
+	return page, transition.cursor, nil
 }
 
 // GetDiscover returns the cursor-paginated public discovery feed.

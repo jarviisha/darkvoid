@@ -176,6 +176,8 @@ func TestFeedCursor_RejectsInvalidFields(t *testing.T) {
 		{name: "trending score missing post ID", cursor: &FeedCursor{TrendingScore: &validTrend}},
 		{name: "trending post ID without score", cursor: &FeedCursor{TrendingPostID: uuid.NewString()}},
 		{name: "invalid trending post ID", cursor: &FeedCursor{TrendingScore: &validTrend, TrendingPostID: "not-a-uuid"}},
+		{name: "seen trending post IDs without score", cursor: &FeedCursor{TrendingSeen: []string{uuid.NewString()}}},
+		{name: "invalid seen trending post ID", cursor: &FeedCursor{TrendingScore: &validTrend, TrendingPostID: uuid.NewString(), TrendingSeen: []string{"not-a-uuid"}}},
 		{name: "invalid timeline user", cursor: &FeedCursor{TimelineUser: "not-a-uuid"}},
 		{name: "following timestamp missing post ID", cursor: &FeedCursor{FollowingCreatedAt: &validTimeline}},
 		{name: "following post ID without timestamp", cursor: &FeedCursor{FollowingPostID: uuid.NewString()}},
@@ -245,4 +247,90 @@ func encodePayload(t *testing.T, payload map[string]any) string {
 		t.Fatalf("marshal payload: %v", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func TestFeedCursor_TrendingSeenRoundTrip(t *testing.T) {
+	score := 4.0
+	first, second := uuid.New(), uuid.New()
+	cursor := &FeedCursor{
+		TrendingScore:  &score,
+		TrendingPostID: uuid.NewString(),
+		TrendingSeen:   []string{first.String(), second.String()},
+	}
+	decoded, err := DecodeFeedCursor(cursor.Encode())
+	if err != nil {
+		t.Fatalf("DecodeFeedCursor: %v", err)
+	}
+	seen := decoded.TrendingSeenSet()
+	if len(seen) != 2 || !seen[first] || !seen[second] {
+		t.Fatalf("TrendingSeenSet() = %v, want both ids", seen)
+	}
+	if !decoded.HasContinuation() {
+		t.Fatal("HasContinuation() = false for a cursor carrying seen trending ids")
+	}
+	// A nil cursor must not panic: GetFeed calls these on the first page.
+	var absent *FeedCursor
+	if got := absent.TrendingSeenSet(); len(got) != 0 {
+		t.Fatalf("nil cursor TrendingSeenSet() = %v, want empty", got)
+	}
+}
+
+func TestFeedCursor_DiscoverSeenRoundTrip(t *testing.T) {
+	timestamp := time.Now().UnixNano()
+	served := SeenPost{CreatedAt: time.Unix(0, timestamp).UTC(), PostID: uuid.NewString()}
+	cursor := &FeedCursor{
+		DiscoverCreatedAt: &timestamp,
+		DiscoverPostID:    uuid.NewString(),
+		DiscoverSeen:      []string{served.Encode()},
+	}
+	decoded, err := DecodeFeedCursor(cursor.Encode())
+	if err != nil {
+		t.Fatalf("DecodeFeedCursor: %v", err)
+	}
+	got := decoded.DiscoverSeenPosts()
+	if len(got) != 1 || got[0].PostID != served.PostID || !got[0].CreatedAt.Equal(served.CreatedAt) {
+		t.Fatalf("DiscoverSeenPosts() = %+v, want %+v", got, served)
+	}
+
+	for name, entry := range map[string]string{
+		"no timestamp": uuid.NewString(),
+		"bad id":       "123,not-a-uuid",
+		"bad time":     "later," + uuid.NewString(),
+	} {
+		bad := &FeedCursor{DiscoverCreatedAt: &timestamp, DiscoverPostID: uuid.NewString(), DiscoverSeen: []string{entry}}
+		if _, err := DecodeFeedCursor(bad.Encode()); err == nil {
+			t.Fatalf("%s: expected decode error", name)
+		}
+	}
+
+	var absent *FeedCursor
+	if got := absent.DiscoverSeenPosts(); len(got) != 0 {
+		t.Fatalf("nil cursor DiscoverSeenPosts() = %v, want empty", got)
+	}
+}
+
+// TestFeedCursor_RejectsOversizedSeenLists pins the caps on the way in. The
+// discover fetch derives its row limit from the carried list, so a client-supplied
+// cursor would otherwise choose how many rows one request reads.
+func TestFeedCursor_RejectsOversizedSeenLists(t *testing.T) {
+	timestamp := time.Now().UnixNano()
+	score := 1.0
+
+	discover := make([]string, MaxDiscoverSeen+1)
+	for i := range discover {
+		discover[i] = SeenPost{CreatedAt: time.Unix(0, timestamp).UTC(), PostID: uuid.NewString()}.Encode()
+	}
+	oversizedDiscover := &FeedCursor{DiscoverCreatedAt: &timestamp, DiscoverPostID: uuid.NewString(), DiscoverSeen: discover}
+	if _, err := DecodeFeedCursor(oversizedDiscover.Encode()); err == nil {
+		t.Fatal("expected decode error for an oversized disc_seen")
+	}
+
+	trending := make([]string, MaxTrendingSeen+1)
+	for i := range trending {
+		trending[i] = uuid.NewString()
+	}
+	oversizedTrending := &FeedCursor{TrendingScore: &score, TrendingPostID: uuid.NewString(), TrendingSeen: trending}
+	if _, err := DecodeFeedCursor(oversizedTrending.Encode()); err == nil {
+		t.Fatal("expected decode error for an oversized trend_seen")
+	}
 }
