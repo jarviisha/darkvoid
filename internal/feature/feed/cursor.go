@@ -133,6 +133,9 @@ func (c *FeedCursor) Validate() error {
 	if len(c.TrendingSeen) > 0 && c.TrendingScore == nil {
 		return fmt.Errorf("seen trending post_ids without trending score")
 	}
+	if len(c.TrendingSeen) > MaxTrendingSeen {
+		return fmt.Errorf("too many seen trending posts")
+	}
 	for _, id := range c.TrendingSeen {
 		if _, err := uuid.Parse(id); err != nil {
 			return fmt.Errorf("invalid seen trending post_id")
@@ -152,9 +155,12 @@ func (c *FeedCursor) Validate() error {
 	} else if c.DiscoverPostID != "" {
 		return fmt.Errorf("discover post_id without discover timestamp")
 	}
-	for _, id := range c.DiscoverSeen {
-		if _, err := uuid.Parse(id); err != nil {
-			return fmt.Errorf("invalid seen discover post_id")
+	if len(c.DiscoverSeen) > MaxDiscoverSeen {
+		return fmt.Errorf("too many seen discover posts")
+	}
+	for _, entry := range c.DiscoverSeen {
+		if _, err := DecodeSeenPost(entry); err != nil {
+			return fmt.Errorf("invalid seen discover post: %w", err)
 		}
 	}
 	if c.TimelineUser != "" {
@@ -220,28 +226,68 @@ func (c *FeedCursor) trendingSeen() []string {
 	return c.TrendingSeen
 }
 
-// DiscoverSeen is capped because it travels in a URL. Past the cap the oldest
-// entries are dropped and those posts can be served a second time, which is the
-// milder of the two failures available — the alternative, anchoring discover
-// below everything served, skips every unserved post between that anchor and the
-// following boundary, and the trending source reaches back 24h.
+// SeenPost is a post already served that a chronological source could still hand
+// back. The timestamp travels with the id because reachability changes as the
+// scroll descends: an id below the handoff boundary on one page is above it a few
+// pages later, at which point discover can no longer reach it and carrying it
+// only occupies room the reachable ids need.
+type SeenPost struct {
+	CreatedAt time.Time
+	PostID    string
+}
+
+// Encode renders a seen post for the cursor, matching DiscoverCursor's shape.
+func (p SeenPost) Encode() string {
+	return fmt.Sprintf("%d,%s", p.CreatedAt.UnixNano(), p.PostID)
+}
+
+// DecodeSeenPost parses one entry written by SeenPost.Encode.
+func DecodeSeenPost(raw string) (SeenPost, error) {
+	parts := strings.SplitN(raw, ",", 2)
+	if len(parts) != 2 {
+		return SeenPost{}, fmt.Errorf("invalid seen post format")
+	}
+	ns, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return SeenPost{}, fmt.Errorf("invalid seen post timestamp: %w", err)
+	}
+	if _, err := uuid.Parse(parts[1]); err != nil {
+		return SeenPost{}, fmt.Errorf("invalid seen post id")
+	}
+	return SeenPost{CreatedAt: time.Unix(0, ns).UTC(), PostID: parts[1]}, nil
+}
+
+// The seen lists are capped because the cursor travels in a URL, and the caps are
+// enforced on the way in as well as on the way out: the limit of the discover
+// fetch is derived from the list's length, so an oversized client-supplied cursor
+// would otherwise choose how many rows one request reads.
 //
-// ponytail: FIFO cap, switch to storing positions server-side if scrolls get
-// long enough for the drop to show.
-// MaxDiscoverSeen and MaxTrendingSeen bound those lists.
+// Past the cap the surplus is dropped and those posts can be served a second
+// time. That is the milder of the two failures available — anchoring discover
+// below everything served instead skips every unserved post between that anchor
+// and the handoff boundary, and trending reaches back 24h.
 //
-// The discover cap bites hardest on an account with no following posts: the
-// handoff boundary is then absent, every served post is reachable by discover, so
-// four pages of the 100-post trending list overflow the cap and roughly forty
-// posts can come back a second time.
+// ponytail: FIFO cap, move the served set server-side if deep scrolls show the
+// drop. The case to watch is an account with no following posts: the handoff
+// boundary is absent, so every served post is reachable and the cap fills.
 const (
 	MaxDiscoverSeen = 60
-	MaxTrendingSeen = pageWindow
+	MaxTrendingSeen = 40
 )
 
-// pageWindow is the trending window size, which bounds the ragged edge whenever
-// the window was not cut short.
-const pageWindow = 20
+// DiscoverSeenPosts returns the carried seen posts, skipping unparseable entries.
+func (c *FeedCursor) DiscoverSeenPosts() []SeenPost {
+	raw := c.DiscoverSeenIDs()
+	posts := make([]SeenPost, 0, len(raw))
+	for _, entry := range raw {
+		post, err := DecodeSeenPost(entry)
+		if err != nil {
+			continue
+		}
+		posts = append(posts, post)
+	}
+	return posts
+}
 
 // DiscoverSeenIDs is the nil-safe reader for the raw list: GetFeed reaches for
 // it on the first page, where the cursor itself is nil.
@@ -250,25 +296,6 @@ func (c *FeedCursor) DiscoverSeenIDs() []string {
 		return nil
 	}
 	return c.DiscoverSeen
-}
-
-// DiscoverSeenSet returns the posts already served that the discover stream
-// could otherwise hand back. The discover position cannot express them: it
-// bounds the stream chronologically, while these were served out of that order
-// by the trending and recommendation sources, which rank rather than paginate.
-func (c *FeedCursor) DiscoverSeenSet() map[uuid.UUID]bool {
-	if c == nil {
-		return map[uuid.UUID]bool{}
-	}
-	seen := make(map[uuid.UUID]bool, len(c.DiscoverSeen))
-	for _, raw := range c.DiscoverSeenIDs() {
-		id, err := uuid.Parse(raw)
-		if err != nil {
-			continue
-		}
-		seen[id] = true
-	}
-	return seen
 }
 
 // FollowingPosition returns the following source continuation point.

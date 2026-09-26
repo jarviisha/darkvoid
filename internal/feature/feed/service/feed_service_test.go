@@ -1928,7 +1928,10 @@ func TestGetFeed_DiscoverKeepsSeenIDsItHasNotPassedYet(t *testing.T) {
 		TimelineUser:      userID.String(),
 		DiscoverCreatedAt: &start,
 		DiscoverPostID:    uuid.Max.String(),
-		DiscoverSeen:      []string{alreadyServed.ID.String()},
+		DiscoverSeen: []string{feed.SeenPost{
+			CreatedAt: alreadyServed.CreatedAt,
+			PostID:    alreadyServed.ID.String(),
+		}.Encode()},
 	}
 
 	seen := map[uuid.UUID]bool{alreadyServed.ID: true}
@@ -1969,5 +1972,79 @@ func TestGetFeed_FailedTrendingFetchIsRetriedOnTheNextPage(t *testing.T) {
 	}
 	if cursor == nil || cursor.TrendingScore == nil {
 		t.Fatalf("cursor = %+v, want a trending position so the next page retries the source", cursor)
+	}
+}
+
+// TestGetFeed_ExhaustionProbeAppliesTheSeenFilter pins the probe against the very
+// page it exists to remove. Asking discover for one row without the seen filter
+// finds an already-served post and answers "more", so the cursor survives and the
+// client spends a request on a page the filter then empties.
+func TestGetFeed_ExhaustionProbeAppliesTheSeenFilter(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+
+	own := testPost(now)
+	own.AuthorID = userID
+	reader.following = append(reader.following, own)
+	reader.discover = append(reader.discover, own)
+	reader.byID[own.ID] = own
+	scores[own.ID] = 100
+
+	// Served from trending on page 1, and the only discover row below the handoff.
+	oldTrending := testPost(now.Add(-72 * time.Hour))
+	oldTrending.LikeCount = 500
+	reader.trending = append(reader.trending, oldTrending)
+	reader.discover = append(reader.discover, oldTrending)
+	reader.byID[oldTrending.ID] = oldTrending
+	scores[oldTrending.ID] = 50
+
+	svc := newTestService(reader, &mockRanker{scores: scores})
+	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != 2 {
+		t.Fatalf("page len = %d, want 2", len(page))
+	}
+	if cursor != nil {
+		t.Fatalf("cursor = %+v, want nil: the only row left is one this page served", cursor)
+	}
+}
+
+// TestGetFeed_FailedTrendingFetchKeepsTheRaggedEdge pins the seen list through an
+// outage. An empty window proves nothing about what is below the position, so
+// discarding the carried ids there re-serves every one of them.
+func TestGetFeed_FailedTrendingFetchKeepsTheRaggedEdge(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	own := testPost(now)
+	own.AuthorID = userID
+	reader := &mockPostReader{
+		following:   []*feedentity.Post{own},
+		byID:        map[uuid.UUID]*feedentity.Post{own.ID: own},
+		trendingErr: errors.New("trending down"),
+	}
+
+	score := 10.0
+	carried := uuid.NewString()
+	incoming := &feed.FeedCursor{
+		TimelineUser:   userID.String(),
+		TrendingScore:  &score,
+		TrendingPostID: uuid.NewString(),
+		TrendingSeen:   []string{carried},
+	}
+
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10}})
+	_, cursor, err := svc.GetFeed(context.Background(), userID, incoming)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if cursor == nil {
+		t.Fatal("cursor = nil; a failed trending fetch is not an exhausted feed")
+	}
+	if len(cursor.TrendingSeen) != 1 || cursor.TrendingSeen[0] != carried {
+		t.Fatalf("cursor.TrendingSeen = %v, want the carried id %s kept", cursor.TrendingSeen, carried)
 	}
 }

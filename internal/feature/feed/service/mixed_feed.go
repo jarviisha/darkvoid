@@ -139,8 +139,11 @@ func (b *mixedFeedBuilder) collect(ctx context.Context, userID uuid.UUID, author
 			logger.LogError(ctx, trendingErr, "failed to get trending posts, skipping", "user_id", userID)
 			sourceFailed, trendingFailed = true, true
 		}
-		trendingWindow, trendingTruncated = applyTrendingCursor(trendingPosts, cursor.TrendingPosition(), pageSize)
+		// Over-fetch past the carried ragged edge: those posts are filtered out
+		// below, and without the extra room a page late in a scroll gets a
+		// handful of fresh trending candidates instead of a window's worth.
 		seen := cursor.TrendingSeenSet()
+		trendingWindow, trendingTruncated = applyTrendingCursor(trendingPosts, cursor.TrendingPosition(), pageSize+len(seen))
 		rank := 0
 		for _, post := range trendingWindow {
 			if seen[post.ID] {
@@ -338,7 +341,11 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *fe
 		delete(seen, recommendationOffset)
 		recommendationOffset++
 	}
-	recommendationsDry := recWindow.total == 0 || recommendationOffset >= recWindow.total
+	// An empty returned window is exhaustion whatever Total claims: a provider may
+	// report a candidate pool larger than the set it will actually serve, and
+	// trusting Total alone then keeps the scroll alive forever.
+	recommendationsDry := recWindow.total == 0 || recommendationOffset >= recWindow.total ||
+		recWindow.end == recWindow.start
 	if recWindow.total > 0 && recommendationOffset < recWindow.total {
 		next.RecommendationOffset = recommendationOffset
 		for offset := range seen {
@@ -349,7 +356,7 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *fe
 		sort.Ints(next.RecommendationSeen)
 	}
 
-	position, trendingSeen, trendingConsumed := advanceTrending(page, incoming, sources.trendingWindow, sources.trendingTruncated)
+	position, trendingSeen, trendingConsumed := advanceTrending(page, incoming, sources.trendingWindow, !sources.trendingTruncated && !sources.trendingFailed)
 	if position != nil {
 		next.TrendingScore = &position.Score
 		next.TrendingPostID = position.PostID
@@ -383,32 +390,33 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *fe
 }
 
 // carryDiscoverSeen accumulates the posts this page served that the discover
-// stream would hand back after the handoff. Only posts below the new following
-// position qualify: discover resumes there and walks down, so anything above it
-// is already out of reach. With no following position the handoff starts discover
-// at the top of the stream and every served post is reachable.
+// stream would hand back after the handoff, and drops the ones it no longer can.
+// Only posts below the new following position qualify: discover resumes there and
+// walks down, so anything above it is out of reach. That test is re-applied to the
+// ids carried in, not just to the new ones — the position descends as the scroll
+// goes, so an id that qualified on page 1 is above the boundary by page 5, and
+// keeping it would occupy a cap slot a reachable id needs. With no following
+// position the handoff starts discover at the top and everything is reachable.
 func carryDiscoverSeen(page []*feedentity.FeedItem, incoming *feed.FeedCursor, next *feed.FeedCursor) []string {
-	carried := make([]string, 0, len(page)+len(incoming.DiscoverSeenIDs()))
-	carried = append(carried, incoming.DiscoverSeenIDs()...)
-	known := make(map[string]bool, len(carried))
-	for _, id := range carried {
-		known[id] = true
-	}
-
 	boundary := next.FollowingPosition()
+	carried := make([]feed.SeenPost, 0, len(page)+len(incoming.DiscoverSeenIDs()))
+	known := make(map[string]bool, cap(carried))
+
+	add := func(post feed.SeenPost) {
+		if known[post.PostID] || !isReachableByDiscover(post, boundary) {
+			return
+		}
+		known[post.PostID] = true
+		carried = append(carried, post)
+	}
+	for _, post := range incoming.DiscoverSeenPosts() {
+		add(post)
+	}
 	for _, item := range page {
 		if item.Post == nil {
 			continue
 		}
-		if boundary != nil && !isBelowFollowingBoundary(item.Post, boundary) {
-			continue
-		}
-		id := item.Post.ID.String()
-		if known[id] {
-			continue
-		}
-		known[id] = true
-		carried = append(carried, id)
+		add(feed.SeenPost{CreatedAt: item.Post.CreatedAt, PostID: item.Post.ID.String()})
 	}
 
 	if len(carried) > feed.MaxDiscoverSeen {
@@ -417,17 +425,26 @@ func carryDiscoverSeen(page []*feedentity.FeedItem, incoming *feed.FeedCursor, n
 	if len(carried) == 0 {
 		return nil
 	}
-	return carried
+	encoded := make([]string, 0, len(carried))
+	for _, post := range carried {
+		encoded = append(encoded, post.Encode())
+	}
+	return encoded
 }
 
-func isBelowFollowingBoundary(post *feedentity.Post, boundary *feed.FollowingCursor) bool {
+// isReachableByDiscover reports whether discover, resuming at boundary and
+// walking down, can still return post. A nil boundary starts it at the top.
+func isReachableByDiscover(post feed.SeenPost, boundary *feed.FollowingCursor) bool {
+	if boundary == nil {
+		return true
+	}
 	if post.CreatedAt.Before(boundary.CreatedAt) {
 		return true
 	}
 	if !post.CreatedAt.Equal(boundary.CreatedAt) {
 		return false
 	}
-	return post.ID.String() < boundary.PostID
+	return post.PostID < boundary.PostID
 }
 
 // sourcesDry reports that nothing is left behind this page in following,
@@ -472,25 +489,17 @@ func sourcesDry(page []*feedentity.FeedItem, sources collectedSources, trendingC
 //
 // Membership is matched on id rather than on FeedItem.Source for the same
 // reason: after collapsing, a trending post on the page may carry either label.
-func advanceTrending(page []*feedentity.FeedItem, incoming *feed.FeedCursor, window []*feedentity.Post, windowTruncated bool) (*feed.TrendPosition, []string, bool) {
-	// Sorted here rather than trusted from the caller: the frontier walks a
-	// contiguous prefix, so it needs the order isAfterTrendCursor compares in,
-	// and the window does not arrive in it. GetTrendingPosts orders by
-	// like_count, but a Codohue-supplied trending list is ordered by that
-	// provider's own rank while the score stays the local like count.
+func advanceTrending(page []*feedentity.FeedItem, incoming *feed.FeedCursor, window []*feedentity.Post, windowComplete bool) (*feed.TrendPosition, []string, bool) {
+	// applyTrendingCursor already sorted; re-applying it here keeps the frontier
+	// walk correct for a window assembled by a caller that did not, which the
+	// unit tests do.
 	ordered := make([]*feedentity.Post, 0, len(window))
 	for _, post := range window {
 		if post != nil {
 			ordered = append(ordered, post)
 		}
 	}
-	sort.Slice(ordered, func(i, j int) bool {
-		left, right := trendScoreFromPost(ordered[i]), trendScoreFromPost(ordered[j])
-		if left != right {
-			return left > right
-		}
-		return ordered[i].ID.String() > ordered[j].ID.String()
-	})
+	sortTrendingOrder(ordered)
 
 	collected := make(map[uuid.UUID]bool, len(ordered))
 	for _, post := range ordered {
@@ -514,19 +523,33 @@ func advanceTrending(page []*feedentity.FeedItem, incoming *feed.FeedCursor, win
 		consumed++
 	}
 
-	// An id the window does not contain is only still ahead if the limit cut the
-	// window short. Otherwise the window is everything below the position, so the
-	// id is not down there — it drifted above the position when the trending cache
-	// was rebuilt with new like counts — and carrying it forever would both
-	// re-emit it on every page and stop the scroll from ever ending.
+	// Dropping an id the window does not contain is only safe when the window is
+	// known to be everything below the position: the id is then not down there —
+	// it drifted above the position when the trending cache was rebuilt with new
+	// like counts — and carrying it forever would re-emit it on every page and
+	// stop the scroll from ever ending. A window cut short by the limit, or empty
+	// because the fetch failed, proves nothing, and discarding the list there
+	// re-serves the whole ragged edge.
+	// Ordered by distance from the position, not alphabetically, because the cap
+	// truncates the tail: ids the frontier reaches soonest are the ones whose loss
+	// would re-serve soonest, so they are kept. Carried ids the window does not
+	// place go first, since nothing here knows how far off they are.
 	ragged := make([]string, 0, len(served))
 	for id := range served {
-		if !windowTruncated && !collected[id] {
+		if collected[id] {
+			continue
+		}
+		if windowComplete {
 			continue
 		}
 		ragged = append(ragged, id.String())
 	}
 	sort.Strings(ragged)
+	for _, post := range ordered {
+		if served[post.ID] {
+			ragged = append(ragged, post.ID.String())
+		}
+	}
 	if len(ragged) > feed.MaxTrendingSeen {
 		ragged = ragged[:feed.MaxTrendingSeen]
 	}

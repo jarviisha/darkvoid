@@ -277,27 +277,60 @@ func TestFeedCursor_TrendingSeenRoundTrip(t *testing.T) {
 
 func TestFeedCursor_DiscoverSeenRoundTrip(t *testing.T) {
 	timestamp := time.Now().UnixNano()
-	served := uuid.New()
+	served := SeenPost{CreatedAt: time.Unix(0, timestamp).UTC(), PostID: uuid.NewString()}
 	cursor := &FeedCursor{
 		DiscoverCreatedAt: &timestamp,
 		DiscoverPostID:    uuid.NewString(),
-		DiscoverSeen:      []string{served.String()},
+		DiscoverSeen:      []string{served.Encode()},
 	}
 	decoded, err := DecodeFeedCursor(cursor.Encode())
 	if err != nil {
 		t.Fatalf("DecodeFeedCursor: %v", err)
 	}
-	if got := decoded.DiscoverSeenSet(); len(got) != 1 || !got[served] {
-		t.Fatalf("DiscoverSeenSet() = %v, want the served id", got)
+	got := decoded.DiscoverSeenPosts()
+	if len(got) != 1 || got[0].PostID != served.PostID || !got[0].CreatedAt.Equal(served.CreatedAt) {
+		t.Fatalf("DiscoverSeenPosts() = %+v, want %+v", got, served)
 	}
 
-	bad := &FeedCursor{DiscoverCreatedAt: &timestamp, DiscoverPostID: uuid.NewString(), DiscoverSeen: []string{"not-a-uuid"}}
-	if _, err := DecodeFeedCursor(bad.Encode()); err == nil {
-		t.Fatal("expected decode error for an invalid seen discover post_id")
+	for name, entry := range map[string]string{
+		"no timestamp": uuid.NewString(),
+		"bad id":       "123,not-a-uuid",
+		"bad time":     "later," + uuid.NewString(),
+	} {
+		bad := &FeedCursor{DiscoverCreatedAt: &timestamp, DiscoverPostID: uuid.NewString(), DiscoverSeen: []string{entry}}
+		if _, err := DecodeFeedCursor(bad.Encode()); err == nil {
+			t.Fatalf("%s: expected decode error", name)
+		}
 	}
 
 	var absent *FeedCursor
-	if got := absent.DiscoverSeenIDs(); got != nil {
-		t.Fatalf("nil cursor DiscoverSeenIDs() = %v, want nil", got)
+	if got := absent.DiscoverSeenPosts(); len(got) != 0 {
+		t.Fatalf("nil cursor DiscoverSeenPosts() = %v, want empty", got)
+	}
+}
+
+// TestFeedCursor_RejectsOversizedSeenLists pins the caps on the way in. The
+// discover fetch derives its row limit from the carried list, so a client-supplied
+// cursor would otherwise choose how many rows one request reads.
+func TestFeedCursor_RejectsOversizedSeenLists(t *testing.T) {
+	timestamp := time.Now().UnixNano()
+	score := 1.0
+
+	discover := make([]string, MaxDiscoverSeen+1)
+	for i := range discover {
+		discover[i] = SeenPost{CreatedAt: time.Unix(0, timestamp).UTC(), PostID: uuid.NewString()}.Encode()
+	}
+	oversizedDiscover := &FeedCursor{DiscoverCreatedAt: &timestamp, DiscoverPostID: uuid.NewString(), DiscoverSeen: discover}
+	if _, err := DecodeFeedCursor(oversizedDiscover.Encode()); err == nil {
+		t.Fatal("expected decode error for an oversized disc_seen")
+	}
+
+	trending := make([]string, MaxTrendingSeen+1)
+	for i := range trending {
+		trending[i] = uuid.NewString()
+	}
+	oversizedTrending := &FeedCursor{TrendingScore: &score, TrendingPostID: uuid.NewString(), TrendingSeen: trending}
+	if _, err := DecodeFeedCursor(oversizedTrending.Encode()); err == nil {
+		t.Fatal("expected decode error for an oversized trend_seen")
 	}
 }
