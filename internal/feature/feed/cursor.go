@@ -49,6 +49,7 @@ type FeedCursor struct {
 	RecommendationSeen   []int    `json:"rec_seen,omitempty"`
 	TrendingScore        *float64 `json:"trend_score,omitempty"`
 	TrendingPostID       string   `json:"trend_post_id,omitempty"`
+	TrendingSeen         []string `json:"trend_seen,omitempty"`
 	FollowingCreatedAt   *int64   `json:"fl_ts,omitempty"`
 	FollowingPostID      string   `json:"fl_post_id,omitempty"`
 	DiscoverCreatedAt    *int64   `json:"disc_ts,omitempty"`
@@ -128,6 +129,14 @@ func (c *FeedCursor) Validate() error {
 	} else if c.TrendingPostID != "" {
 		return fmt.Errorf("trending post_id without trending score")
 	}
+	if len(c.TrendingSeen) > 0 && c.TrendingScore == nil {
+		return fmt.Errorf("seen trending post_ids without trending score")
+	}
+	for _, id := range c.TrendingSeen {
+		if _, err := uuid.Parse(id); err != nil {
+			return fmt.Errorf("invalid seen trending post_id")
+		}
+	}
 	if c.FollowingCreatedAt != nil {
 		if _, err := uuid.Parse(c.FollowingPostID); err != nil {
 			return fmt.Errorf("invalid following cursor post_id")
@@ -180,6 +189,31 @@ func (c *FeedCursor) TrendingPosition() *TrendPosition {
 	return &TrendPosition{Score: *c.TrendingScore, PostID: c.TrendingPostID}
 }
 
+// TrendingSeenSet returns the trending posts already served below the trending
+// position. The position alone cannot express them: the trending list is ordered
+// by score, so a single boundary only ever names a suffix, and a post served out
+// of that order — because it also arrived from following or recommendations, and
+// collapsed to that source — has to be recorded by id or it is either re-served
+// or skipped along with everything above it.
+func (c *FeedCursor) TrendingSeenSet() map[uuid.UUID]bool {
+	seen := make(map[uuid.UUID]bool, len(c.trendingSeen()))
+	for _, raw := range c.trendingSeen() {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			continue
+		}
+		seen[id] = true
+	}
+	return seen
+}
+
+func (c *FeedCursor) trendingSeen() []string {
+	if c == nil {
+		return nil
+	}
+	return c.TrendingSeen
+}
+
 // FollowingPosition returns the following source continuation point.
 func (c *FeedCursor) FollowingPosition() *FollowingCursor {
 	if c == nil || c.FollowingCreatedAt == nil {
@@ -199,7 +233,7 @@ func (c *FeedCursor) DiscoverPosition() *DiscoverCursor {
 // HasContinuation reports whether any source has remaining cursor state.
 func (c *FeedCursor) HasContinuation() bool {
 	return c != nil && (c.TimelineScore != nil || c.RecommendationOffset > 0 || c.TrendingScore != nil ||
-		c.FollowingCreatedAt != nil || c.DiscoverCreatedAt != nil)
+		len(c.TrendingSeen) > 0 || c.FollowingCreatedAt != nil || c.DiscoverCreatedAt != nil)
 }
 
 // DiscoverCursor is a composite pagination cursor (created_at, post_id) for the discover feed.

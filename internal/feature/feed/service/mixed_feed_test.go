@@ -23,14 +23,15 @@ func TestNextMixedCursor_SourceTransitions(t *testing.T) {
 	carriedFollowingID := uuid.New().String()
 	recommendationOffset := 0
 
-	trendingScores := map[uuid.UUID]float64{lowTrending.ID: 4, highTrending.ID: 9}
+	// Trending order is score-descending, which is what the frontier walks.
+	trendingWindow := []*feedentity.Post{highTrending, lowTrending}
 
 	tests := []struct {
 		name     string
 		page     []*feedentity.FeedItem
 		incoming *feed.FeedCursor
 		window   recommendationWindow
-		trending map[uuid.UUID]float64
+		trending []*feedentity.Post
 		assert   func(*testing.T, *feed.FeedCursor)
 	}{
 		{
@@ -61,7 +62,7 @@ func TestNextMixedCursor_SourceTransitions(t *testing.T) {
 				{Post: lowTrending, Source: feedentity.SourceTrending},
 				{Post: highTrending, Source: feedentity.SourceTrending},
 			},
-			trending: trendingScores,
+			trending: trendingWindow,
 			assert: func(t *testing.T, cursor *feed.FeedCursor) {
 				t.Helper()
 				if cursor == nil || cursor.TrendingPostID != lowTrending.ID.String() || cursor.TrendingScore == nil || *cursor.TrendingScore != 4 {
@@ -78,7 +79,7 @@ func TestNextMixedCursor_SourceTransitions(t *testing.T) {
 				{Post: lowTrending, Source: feedentity.SourceFollowing},
 				{Post: highTrending, Source: feedentity.SourceRecommendation},
 			},
-			trending: trendingScores,
+			trending: trendingWindow,
 			assert: func(t *testing.T, cursor *feed.FeedCursor) {
 				t.Helper()
 				if cursor == nil || cursor.TrendingScore == nil || *cursor.TrendingScore != 4 || cursor.TrendingPostID != lowTrending.ID.String() {
@@ -89,7 +90,7 @@ func TestNextMixedCursor_SourceTransitions(t *testing.T) {
 		{
 			name:     "collected but unshown trending starts from the top",
 			page:     []*feedentity.FeedItem{{Post: olderFollowing, Source: feedentity.SourceFollowing}},
-			trending: trendingScores,
+			trending: trendingWindow,
 			assert: func(t *testing.T, cursor *feed.FeedCursor) {
 				t.Helper()
 				if cursor == nil || cursor.TrendingScore == nil || *cursor.TrendingScore != math.MaxFloat64 {
@@ -136,7 +137,10 @@ func TestNextMixedCursor_SourceTransitions(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			cursor := nextMixedCursor(userID, test.page, test.incoming, test.window, test.trending)
+			cursor := nextMixedCursor(userID, test.page, test.incoming, collectedSources{
+				recWindow:      test.window,
+				trendingWindow: test.trending,
+			})
 			test.assert(t, cursor)
 		})
 	}

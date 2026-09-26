@@ -1030,10 +1030,11 @@ func TestGetFeed_CollapsedTrendingDoesNotRestartNextPage(t *testing.T) {
 	}
 }
 
-// TestGetFeed_TrendingCursorUsesLowestShownScore pins the trending boundary to
-// the lowest trend score served, not the last trending item in blend order.
-// With the old boundary, B (5 likes) sat above A and below C in blend order,
-// the cursor took C's 7 likes, and B reappeared on page 2.
+// TestGetFeed_TrendingCursorUsesLowestShownScore pins the boundary when a page
+// serves the whole trending window: the frontier lands on the lowest score in it,
+// regardless of blend order. With the pre-frontier boundary, B (5 likes) sat
+// above A and below C in blend order, the cursor took C's 7 likes, and B
+// reappeared on page 2.
 func TestGetFeed_TrendingCursorUsesLowestShownScore(t *testing.T) {
 	now := time.Now().UTC()
 	userID := uuid.New()
@@ -1581,4 +1582,87 @@ func applyDiscoverCursor(posts []*feedentity.Post, cursor *feed.DiscoverCursor, 
 
 func isAfterCursor(createdAt time.Time, id uuid.UUID, cursorCreatedAt time.Time, cursorPostID string) bool {
 	return createdAt.Before(cursorCreatedAt) || (createdAt.Equal(cursorCreatedAt) && id.String() < cursorPostID)
+}
+
+// TestGetFeed_TrendingBoundaryDoesNotSkipUnshownPosts pins the boundary against
+// silent loss. A followed post that is also in the trending list drags the
+// trending boundary down to its own score; every trending post collected on the
+// same page but outranked off it scores higher, so a score-only boundary skips
+// them for the rest of the scroll.
+func TestGetFeed_TrendingBoundaryDoesNotSkipUnshownPosts(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	scores := map[uuid.UUID]float64{}
+
+	// Enough following posts to fill page 1 on their own.
+	for i := 0; i < pageSize-1; i++ {
+		p := testPost(now.Add(-time.Duration(i+1) * time.Minute))
+		p.AuthorID = userID
+		reader.following = append(reader.following, p)
+		reader.byID[p.ID] = p
+		scores[p.ID] = 900
+	}
+
+	// One own post with no likes that is also in the trending list, ranked onto
+	// page 1. It is what drags a score-only boundary down to zero.
+	own := testPost(now)
+	own.AuthorID = userID
+	own.LikeCount = 0
+	reader.following = append([]*feedentity.Post{own}, reader.following...)
+	reader.trending = append(reader.trending, own)
+	reader.byID[own.ID] = own
+	scores[own.ID] = 1000
+
+	// Higher-liked trending posts the ranker keeps off page 1.
+	hidden := make([]*feedentity.Post, 3)
+	for i := range hidden {
+		p := testPost(now.Add(-time.Duration(i+1) * time.Hour))
+		p.LikeCount = int64(50 - i)
+		hidden[i] = p
+		reader.trending = append(reader.trending, p)
+		reader.byID[p.ID] = p
+		scores[p.ID] = 0
+	}
+
+	svc := newTestService(reader, &mockRanker{scores: scores})
+	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed page1: %v", err)
+	}
+	if len(page1) != pageSize || cursor == nil {
+		t.Fatalf("page1 len/cursor = %d/%v, want a full page and a cursor", len(page1), cursor)
+	}
+
+	served := map[uuid.UUID]bool{}
+	for _, item := range page1 {
+		served[item.Post.ID] = true
+	}
+	if !served[own.ID] {
+		t.Fatal("own post did not make page 1, so the boundary is not under test")
+	}
+	for i, p := range hidden {
+		if served[p.ID] {
+			t.Fatalf("hidden[%d] made page 1, so it is not under test", i)
+		}
+	}
+
+	for pages := 0; pages < 5 && cursor != nil; pages++ {
+		var next []*feedentity.FeedItem
+		next, cursor, err = svc.GetFeed(context.Background(), userID, cursor)
+		if err != nil {
+			t.Fatalf("GetFeed page%d: %v", pages+2, err)
+		}
+		for _, item := range next {
+			if served[item.Post.ID] {
+				t.Fatalf("post re-served: %s", item.Post.ID)
+			}
+			served[item.Post.ID] = true
+		}
+	}
+	for i, p := range hidden {
+		if !served[p.ID] {
+			t.Fatalf("trending post hidden[%d] (%d likes) was never served: %s", i, p.LikeCount, p.ID)
+		}
+	}
 }

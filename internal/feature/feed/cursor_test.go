@@ -176,6 +176,8 @@ func TestFeedCursor_RejectsInvalidFields(t *testing.T) {
 		{name: "trending score missing post ID", cursor: &FeedCursor{TrendingScore: &validTrend}},
 		{name: "trending post ID without score", cursor: &FeedCursor{TrendingPostID: uuid.NewString()}},
 		{name: "invalid trending post ID", cursor: &FeedCursor{TrendingScore: &validTrend, TrendingPostID: "not-a-uuid"}},
+		{name: "seen trending post IDs without score", cursor: &FeedCursor{TrendingSeen: []string{uuid.NewString()}}},
+		{name: "invalid seen trending post ID", cursor: &FeedCursor{TrendingScore: &validTrend, TrendingPostID: uuid.NewString(), TrendingSeen: []string{"not-a-uuid"}}},
 		{name: "invalid timeline user", cursor: &FeedCursor{TimelineUser: "not-a-uuid"}},
 		{name: "following timestamp missing post ID", cursor: &FeedCursor{FollowingCreatedAt: &validTimeline}},
 		{name: "following post ID without timestamp", cursor: &FeedCursor{FollowingPostID: uuid.NewString()}},
@@ -245,4 +247,30 @@ func encodePayload(t *testing.T, payload map[string]any) string {
 		t.Fatalf("marshal payload: %v", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func TestFeedCursor_TrendingSeenRoundTrip(t *testing.T) {
+	score := 4.0
+	first, second := uuid.New(), uuid.New()
+	cursor := &FeedCursor{
+		TrendingScore:  &score,
+		TrendingPostID: uuid.NewString(),
+		TrendingSeen:   []string{first.String(), second.String()},
+	}
+	decoded, err := DecodeFeedCursor(cursor.Encode())
+	if err != nil {
+		t.Fatalf("DecodeFeedCursor: %v", err)
+	}
+	seen := decoded.TrendingSeenSet()
+	if len(seen) != 2 || !seen[first] || !seen[second] {
+		t.Fatalf("TrendingSeenSet() = %v, want both ids", seen)
+	}
+	if !decoded.HasContinuation() {
+		t.Fatal("HasContinuation() = false for a cursor carrying seen trending ids")
+	}
+	// A nil cursor must not panic: GetFeed calls these on the first page.
+	var absent *FeedCursor
+	if got := absent.TrendingSeenSet(); len(got) != 0 {
+		t.Fatalf("nil cursor TrendingSeenSet() = %v, want empty", got)
+	}
 }
