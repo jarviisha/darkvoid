@@ -73,7 +73,21 @@ func TestChangePassword_EmptyNewPassword(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	assertServiceErrorCode(t, err, "BAD_REQUEST")
+	assertServiceErrorCode(t, err, "VALIDATION_ERROR")
+	assertErrorField(t, err, "new_password")
+}
+
+// The new password goes through the same strength rules registration applies.
+func TestChangePassword_WeakNewPassword(t *testing.T) {
+	svc := newAuthService(&mockUserRepo{}, &mockRefreshTokenRepo{}, newTestJWT(t))
+
+	for name, tc := range rejectedPasswords {
+		t.Run(name, func(t *testing.T) {
+			err := svc.ChangePassword(context.Background(), uuid.New(), "OldPass123", tc.password)
+			assertServiceErrorCode(t, err, tc.code)
+			assertErrorField(t, err, "new_password")
+		})
+	}
 }
 
 func TestChangePassword_UserNotFound(t *testing.T) {

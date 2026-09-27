@@ -271,8 +271,8 @@ func (s *AccountMailService) ResetPassword(ctx context.Context, tokenStr, newPas
 	if tokenStr == "" {
 		return errors.NewBadRequestError("token is required")
 	}
-	if newPassword == "" {
-		return errors.NewBadRequestError("new password is required")
+	if err := validatePassword("new_password", newPassword); err != nil {
+		return err
 	}
 
 	token, err := s.tokenRepo.GetByToken(ctx, tokenStr)

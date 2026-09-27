@@ -1227,7 +1227,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid or expired token",
+                        "description": "Invalid or expired token, or new password fails the strength rules",
                         "schema": {
                             "$ref": "#/definitions/errors.ErrorResponse"
                         }

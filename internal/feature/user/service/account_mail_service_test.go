@@ -462,7 +462,20 @@ func TestResetPassword_NewPasswordRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	assertServiceErrorCode(t, err, "BAD_REQUEST")
+	assertServiceErrorCode(t, err, "VALIDATION_ERROR")
+	assertErrorField(t, err, "new_password")
+}
+
+func TestResetPassword_WeakNewPassword(t *testing.T) {
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
+
+	for name, tc := range rejectedPasswords {
+		t.Run(name, func(t *testing.T) {
+			err := svc.ResetPassword(context.Background(), "reset-token", tc.password)
+			assertServiceErrorCode(t, err, tc.code)
+			assertErrorField(t, err, "new_password")
+		})
+	}
 }
 
 func TestResetPassword_InvalidToken(t *testing.T) {

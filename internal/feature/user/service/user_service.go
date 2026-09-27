@@ -222,7 +222,7 @@ func (s *UserService) DeactivateUser(ctx context.Context, id uuid.UUID, updatedB
 // which verifies the old password. The new password still goes through the
 // standard strength rules.
 func (s *UserService) AdminResetPassword(ctx context.Context, userID uuid.UUID, newPassword string) error {
-	if err := validatePassword(newPassword); err != nil {
+	if err := validatePassword("password", newPassword); err != nil {
 		return err
 	}
 

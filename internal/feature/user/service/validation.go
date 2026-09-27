@@ -34,7 +34,7 @@ func validateCreateRequest(req *dto.CreateUserRequest) error {
 	if err := validateDisplayName(req.DisplayName); err != nil {
 		return err
 	}
-	return validatePassword(req.Password)
+	return validatePassword("password", req.Password)
 }
 
 func validateUpdateRequest(req *dto.UpdateUserRequest) error {
@@ -74,18 +74,21 @@ func validateDisplayName(displayName string) error {
 	return requireLength("display_name", displayName, minDisplayNameLength, maxDisplayNameLength)
 }
 
-func validatePassword(password string) error {
-	if err := requireField("password", password); err != nil {
+// validatePassword applies the strength rules to any password being set;
+// field names it in the error, since the change and reset flows call it
+// new_password.
+func validatePassword(field, password string) error {
+	if err := requireField(field, password); err != nil {
 		return err
 	}
 	if len(password) < minPasswordLength {
-		return user.ErrWeakPassword.WithDetail("min_length", minPasswordLength)
+		return user.ErrWeakPassword.WithDetail("field", field).WithDetail("min_length", minPasswordLength)
 	}
 	if len(password) > maxPasswordLength {
-		return errors.NewValidationError("password", "too long").WithDetail("max_length", maxPasswordLength)
+		return errors.NewValidationError(field, "too long").WithDetail("max_length", maxPasswordLength)
 	}
 	if !letterRegex.MatchString(password) || !numberRegex.MatchString(password) {
-		return user.ErrWeakPassword.WithDetail("requirement", "must contain letters and numbers")
+		return user.ErrWeakPassword.WithDetail("field", field).WithDetail("requirement", "must contain letters and numbers")
 	}
 	return nil
 }

@@ -248,8 +248,8 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID uuid.UUID, oldP
 	if oldPassword == "" {
 		return errors.NewBadRequestError("old password is required")
 	}
-	if newPassword == "" {
-		return errors.NewBadRequestError("new password is required")
+	if err := validatePassword("new_password", newPassword); err != nil {
+		return err
 	}
 
 	u, err := s.userRepo.GetUserByID(ctx, userID)

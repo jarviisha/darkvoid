@@ -130,7 +130,7 @@ func (h *EmailHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Param			request	body		dto.ResetPasswordRequest	true	"Reset token and new password"
 //	@Success		200		{object}	httputil.MessageResponse	"Password reset successfully"
-//	@Failure		400		{object}	errors.ErrorResponse		"Invalid or expired token"
+//	@Failure		400		{object}	errors.ErrorResponse		"Invalid or expired token, or new password fails the strength rules"
 //	@Failure		500		{object}	errors.ErrorResponse
 //	@ID				resetPassword
 //	@Router			/auth/reset-password [post]
