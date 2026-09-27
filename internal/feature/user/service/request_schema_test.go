@@ -27,14 +27,19 @@ const schemaRequiredTag = "required,min=1"
 func TestRequestSchema_RequiredMatchesServiceValidation(t *testing.T) {
 	ctx := context.Background()
 	auth := newAuthService(&mockUserRepo{}, &mockRefreshTokenRepo{}, newTestJWT(t))
-	// An unknown token is itself a 400, so the token flows need one that
-	// redeems; its type is named by the token string.
-	tokens := &mockEmailTokenRepo{
-		getByToken: func(_ context.Context, token string) (*entity.EmailToken, error) {
-			return &entity.EmailToken{ID: uuid.New(), Type: entity.EmailTokenType(token), ExpiresAt: time.Now().Add(time.Hour)}, nil
-		},
+	// An unknown token is itself a 400, so each token flow gets a repo that
+	// redeems any lookup as a token of that flow's type. A blanked token then
+	// draws a 400 only from the service's own empty check.
+	mailRedeeming := func(typ entity.EmailTokenType) *AccountMailService {
+		tokens := &mockEmailTokenRepo{
+			getByToken: func(context.Context, string) (*entity.EmailToken, error) {
+				return &entity.EmailToken{ID: uuid.New(), Type: typ, ExpiresAt: time.Now().Add(time.Hour)}, nil
+			},
+		}
+		return newAccountMailServiceForTest(t, tokens, &mockUserRepo{}, &mockMailer{})
 	}
-	mail := newAccountMailServiceForTest(t, tokens, &mockUserRepo{}, &mockMailer{})
+	mail := mailRedeeming(entity.EmailTokenVerify)
+	reset := mailRedeeming(entity.EmailTokenResetPassword)
 
 	checkRequiredFields(t,
 		dto.RegisterRequest{Username: "johndoe", Email: "john@example.com", DisplayName: "John Doe", Password: "SecurePass123"},
@@ -54,7 +59,7 @@ func TestRequestSchema_RequiredMatchesServiceValidation(t *testing.T) {
 			return auth.ChangePassword(ctx, uuid.New(), r.OldPassword, r.NewPassword)
 		})
 	checkRequiredFields(t,
-		dto.VerifyEmailRequest{Token: string(entity.EmailTokenVerify)},
+		dto.VerifyEmailRequest{Token: "token"},
 		func(r dto.VerifyEmailRequest) error { return mail.VerifyEmail(ctx, r.Token) })
 	checkRequiredFields(t,
 		dto.ResendVerificationRequest{Email: "john@example.com"},
@@ -63,8 +68,8 @@ func TestRequestSchema_RequiredMatchesServiceValidation(t *testing.T) {
 		dto.ForgotPasswordRequest{Email: "john@example.com"},
 		func(r dto.ForgotPasswordRequest) error { return mail.SendPasswordReset(ctx, r.Email) })
 	checkRequiredFields(t,
-		dto.ResetPasswordRequest{Token: string(entity.EmailTokenResetPassword), NewPassword: "NewPass123"},
-		func(r dto.ResetPasswordRequest) error { return mail.ResetPassword(ctx, r.Token, r.NewPassword) })
+		dto.ResetPasswordRequest{Token: "token", NewPassword: "NewPass123"},
+		func(r dto.ResetPasswordRequest) error { return reset.ResetPassword(ctx, r.Token, r.NewPassword) })
 }
 
 func checkRequiredFields[T any](t *testing.T, valid T, call func(T) error) {
