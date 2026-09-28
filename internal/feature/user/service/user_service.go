@@ -275,6 +275,13 @@ func (s *UserService) BootstrapRootUser(ctx context.Context, email, password, us
 		return existing, false, nil
 	}
 
+	// The root account holds the admin role, so it gets the same rules as
+	// every other password. This runs only when creating it, so a weak value
+	// never fails the boot of an install that already has its root user.
+	if err := validatePassword("password", password); err != nil {
+		return nil, false, err
+	}
+
 	hashedPassword, err := hashPassword(password)
 	if err != nil {
 		return nil, false, errors.NewInternalError(err)

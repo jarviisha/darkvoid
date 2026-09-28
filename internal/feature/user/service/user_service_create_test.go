@@ -231,6 +231,25 @@ func TestBootstrapRootUser_CreatesWhenEmpty(t *testing.T) {
 	}
 }
 
+// The root account holds the admin role, so it gets the rules every other
+// password gets; a value bcrypt cannot hash fails with the rule, not a 500.
+func TestBootstrapRootUser_WeakPasswordRejected(t *testing.T) {
+	for name, tc := range rejectedPasswords {
+		t.Run(name, func(t *testing.T) {
+			repo := &mockUserRepo{
+				createUser: func(_ context.Context, _ *entity.User) (*entity.User, error) {
+					t.Error("CreateUser must not be called with a rejected password")
+					return nil, fmt.Errorf("unexpected call")
+				},
+			}
+
+			_, _, err := newUserService(repo).BootstrapRootUser(context.Background(), "root@example.com", tc.password, "root", "Root User")
+			assertServiceErrorCode(t, err, tc.code)
+			assertErrorField(t, err, "password")
+		})
+	}
+}
+
 func TestBootstrapRootUser_ReturnsExistingUser(t *testing.T) {
 	id := uuid.New()
 	repo := &mockUserRepo{
@@ -247,7 +266,9 @@ func TestBootstrapRootUser_ReturnsExistingUser(t *testing.T) {
 	}
 	svc := newUserService(repo)
 
-	root, ok, err := svc.BootstrapRootUser(context.Background(), "root@example.com", "RootPass123", "root", "Root User")
+	// ROOT_PASSWORD only sets the password of an account being created, so a
+	// weak one must not fail the boot of an install whose root user exists.
+	root, ok, err := svc.BootstrapRootUser(context.Background(), "root@example.com", "admin", "root", "Root User")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
