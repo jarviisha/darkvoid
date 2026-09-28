@@ -63,7 +63,8 @@ func TestChangePassword_EmptyOldPassword(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	assertServiceErrorCode(t, err, "BAD_REQUEST")
+	assertServiceErrorCode(t, err, "VALIDATION_ERROR")
+	assertErrorField(t, err, "old_password")
 }
 
 func TestChangePassword_EmptyNewPassword(t *testing.T) {

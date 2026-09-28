@@ -167,7 +167,7 @@ func (s *AccountMailService) SendVerification(ctx context.Context, userID uuid.U
 // VerifyEmail validates a verification token and marks the associated user's email as verified.
 func (s *AccountMailService) VerifyEmail(ctx context.Context, tokenStr string) error {
 	if tokenStr == "" {
-		return errors.NewBadRequestError("token is required")
+		return errors.NewValidationError("token", "required")
 	}
 
 	token, err := s.tokenRepo.GetByToken(ctx, tokenStr)
@@ -271,7 +271,7 @@ func (s *AccountMailService) SendPasswordReset(ctx context.Context, email string
 // ResetPassword validates a reset token and sets the new password.
 func (s *AccountMailService) ResetPassword(ctx context.Context, tokenStr, newPassword string) error {
 	if tokenStr == "" {
-		return errors.NewBadRequestError("token is required")
+		return errors.NewValidationError("token", "required")
 	}
 	if err := validatePassword("new_password", newPassword); err != nil {
 		return err

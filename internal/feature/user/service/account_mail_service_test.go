@@ -142,7 +142,8 @@ func TestVerifyEmail_TokenRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	assertServiceErrorCode(t, err, "BAD_REQUEST")
+	assertServiceErrorCode(t, err, "VALIDATION_ERROR")
+	assertErrorField(t, err, "token")
 }
 
 func TestVerifyEmail_InvalidOrExpiredToken(t *testing.T) {
@@ -466,7 +467,8 @@ func TestResetPassword_TokenRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	assertServiceErrorCode(t, err, "BAD_REQUEST")
+	assertServiceErrorCode(t, err, "VALIDATION_ERROR")
+	assertErrorField(t, err, "token")
 }
 
 func TestResetPassword_NewPasswordRequired(t *testing.T) {
