@@ -53,7 +53,7 @@ type mockQuerier struct {
 	isFollowing                         func(context.Context, db.IsFollowingParams) (bool, error)
 	listAllActiveUserIDs                func(context.Context) ([]uuid.UUID, error)
 	listEmailSuppressions               func(context.Context, int32) ([]db.UsrEmailSuppression, error)
-	markEmailTokenUsed                  func(context.Context, uuid.UUID) error
+	claimEmailToken                     func(context.Context, uuid.UUID) (int64, error)
 	removeRoleFromUser                  func(context.Context, db.RemoveRoleFromUserParams) error
 	revokeAllUserRefreshTokens          func(context.Context, uuid.UUID) error
 	revokeRefreshToken                  func(context.Context, string) (uuid.UUID, error)
@@ -367,11 +367,11 @@ func (m *mockQuerier) ListAllActiveUserIDs(ctx context.Context) ([]uuid.UUID, er
 	return nil, nil
 }
 
-func (m *mockQuerier) MarkEmailTokenUsed(ctx context.Context, id uuid.UUID) error {
-	if m.markEmailTokenUsed != nil {
-		return m.markEmailTokenUsed(ctx, id)
+func (m *mockQuerier) ClaimEmailToken(ctx context.Context, id uuid.UUID) (int64, error) {
+	if m.claimEmailToken != nil {
+		return m.claimEmailToken(ctx, id)
 	}
-	return nil
+	return 1, nil
 }
 
 func (m *mockQuerier) RemoveRoleFromUser(ctx context.Context, arg db.RemoveRoleFromUserParams) error {

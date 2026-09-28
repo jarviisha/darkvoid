@@ -146,7 +146,7 @@ func (m *mockStorage) URL(key string) string { return "https://cdn.test/" + key 
 // --------------------------------------------------------------------------
 
 func newUserService(repo userRepo) *UserService {
-	return &UserService{userRepo: repo, storage: nil}
+	return &UserService{userRepo: repo, sessions: &mockRefreshTokenRepo{}, storage: nil}
 }
 
 func validCreateReq() *dto.CreateUserRequest {

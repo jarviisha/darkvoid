@@ -26,6 +26,9 @@ type Querier interface {
 	// there is no roles lookup table to join against.
 	AssignRoleToUser(ctx context.Context, arg AssignRoleToUserParams) error
 	CheckUserHasAnyRole(ctx context.Context, arg CheckUserHasAnyRoleParams) (bool, error)
+	// Marks the token used only if nothing has yet. Zero rows means another
+	// request redeemed it first.
+	ClaimEmailToken(ctx context.Context, id uuid.UUID) (int64, error)
 	ConsumeRefreshToken(ctx context.Context, tokenHash string) (uuid.UUID, error)
 	CountFollowers(ctx context.Context, followeeID uuid.UUID) (int64, error)
 	CountFollowing(ctx context.Context, followerID uuid.UUID) (int64, error)
@@ -64,7 +67,6 @@ type Querier interface {
 	IsFollowing(ctx context.Context, arg IsFollowingParams) (bool, error)
 	ListAllActiveUserIDs(ctx context.Context) ([]uuid.UUID, error)
 	ListEmailSuppressions(ctx context.Context, limit int32) ([]UsrEmailSuppression, error)
-	MarkEmailTokenUsed(ctx context.Context, id uuid.UUID) error
 	RemoveRoleFromUser(ctx context.Context, arg RemoveRoleFromUserParams) error
 	RevokeAllUserRefreshTokens(ctx context.Context, userID uuid.UUID) error
 	RevokeRefreshToken(ctx context.Context, tokenHash string) (uuid.UUID, error)

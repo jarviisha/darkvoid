@@ -1010,7 +1010,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid request",
+                        "description": "Invalid request, or new password fails the strength rules",
                         "schema": {
                             "$ref": "#/definitions/errors.ErrorResponse"
                         }
@@ -1127,7 +1127,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid request body",
+                        "description": "Invalid request body, or password fails the strength rules",
                         "schema": {
                             "$ref": "#/definitions/errors.ErrorResponse"
                         }
@@ -1227,7 +1227,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid or expired token",
+                        "description": "Invalid or expired token, or new password fails the strength rules",
                         "schema": {
                             "$ref": "#/definitions/errors.ErrorResponse"
                         }
@@ -3495,12 +3495,19 @@ const docTemplate = `{
         },
         "dto.ChangePasswordRequest": {
             "type": "object",
+            "required": [
+                "new_password",
+                "old_password"
+            ],
             "properties": {
                 "new_password": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 72,
+                    "minLength": 8
                 },
                 "old_password": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -3735,9 +3742,13 @@ const docTemplate = `{
         },
         "dto.ForgotPasswordRequest": {
             "type": "object",
+            "required": [
+                "email"
+            ],
             "properties": {
                 "email": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "john@example.com"
                 }
             }
@@ -3786,12 +3797,18 @@ const docTemplate = `{
         },
         "dto.LoginRequest": {
             "type": "object",
+            "required": [
+                "password",
+                "username"
+            ],
             "properties": {
                 "password": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 },
                 "username": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -3820,9 +3837,13 @@ const docTemplate = `{
         },
         "dto.LogoutRequest": {
             "type": "object",
+            "required": [
+                "refresh_token"
+            ],
             "properties": {
                 "refresh_token": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -4045,9 +4066,13 @@ const docTemplate = `{
         },
         "dto.RefreshTokenRequest": {
             "type": "object",
+            "required": [
+                "refresh_token"
+            ],
             "properties": {
                 "refresh_token": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -4073,21 +4098,32 @@ const docTemplate = `{
         },
         "dto.RegisterRequest": {
             "type": "object",
+            "required": [
+                "display_name",
+                "email",
+                "password",
+                "username"
+            ],
             "properties": {
                 "display_name": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "John Doe"
                 },
                 "email": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "john@example.com"
                 },
                 "password": {
                     "type": "string",
+                    "maxLength": 72,
+                    "minLength": 8,
                     "example": "SecurePass123"
                 },
                 "username": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "johndoe"
                 }
             }
@@ -4118,22 +4154,33 @@ const docTemplate = `{
         },
         "dto.ResendVerificationRequest": {
             "type": "object",
+            "required": [
+                "email"
+            ],
             "properties": {
                 "email": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "john@example.com"
                 }
             }
         },
         "dto.ResetPasswordRequest": {
             "type": "object",
+            "required": [
+                "new_password",
+                "token"
+            ],
             "properties": {
                 "new_password": {
                     "type": "string",
+                    "maxLength": 72,
+                    "minLength": 8,
                     "example": "NewSecurePass123"
                 },
                 "token": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "abc123def456"
                 }
             }
@@ -4444,9 +4491,13 @@ const docTemplate = `{
         },
         "dto.VerifyEmailRequest": {
             "type": "object",
+            "required": [
+                "token"
+            ],
             "properties": {
                 "token": {
                     "type": "string",
+                    "minLength": 1,
                     "example": "abc123def456"
                 }
             }

@@ -7,10 +7,12 @@ RETURNING *;
 SELECT * FROM usr.email_tokens
 WHERE token = $1;
 
--- name: MarkEmailTokenUsed :exec
+-- name: ClaimEmailToken :execrows
+-- Marks the token used only if nothing has yet. Zero rows means another
+-- request redeemed it first.
 UPDATE usr.email_tokens
 SET used_at = NOW()
-WHERE id = $1;
+WHERE id = $1 AND used_at IS NULL;
 
 -- name: DeleteEmailTokensByUserAndType :exec
 DELETE FROM usr.email_tokens

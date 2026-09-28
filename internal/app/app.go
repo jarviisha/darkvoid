@@ -332,7 +332,7 @@ func (app *Application) bootstrapRootUser(ctx context.Context) error {
 		cfg.DisplayName,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("bootstrap root user from ROOT_*: %w", err)
 	}
 	if created {
 		app.log.Info("root user bootstrapped",

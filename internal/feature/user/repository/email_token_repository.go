@@ -49,9 +49,15 @@ func (r *EmailTokenRepository) GetByToken(ctx context.Context, token string) (*e
 	return dbEmailTokenToEntity(row), nil
 }
 
-// MarkUsed sets the used_at timestamp on a token, preventing reuse.
-func (r *EmailTokenRepository) MarkUsed(ctx context.Context, id uuid.UUID) error {
-	return database.MapDBError(r.queries.MarkEmailTokenUsed(ctx, id))
+// Claim marks a token used and reports whether this call did it. False means
+// another request redeemed the token first; the check and the write are one
+// statement, so two concurrent redemptions cannot both succeed.
+func (r *EmailTokenRepository) Claim(ctx context.Context, id uuid.UUID) (bool, error) {
+	rows, err := r.queries.ClaimEmailToken(ctx, id)
+	if err != nil {
+		return false, database.MapDBError(err)
+	}
+	return rows == 1, nil
 }
 
 // DeleteByUserAndType removes all tokens of a given type for a user.

@@ -83,7 +83,7 @@ func (h *AuthHandler) clearRefreshTokenCookie(w http.ResponseWriter) {
 //	@Param			X-Client-Type	header		string				false	"Set to 'mobile' to receive refresh_token in response body instead of HttpOnly cookie"
 //	@Param			request			body		dto.RegisterRequest	true	"Registration data"
 //	@Success		201				{object}	dto.RegisterResponse
-//	@Failure		400				{object}	errors.ErrorResponse	"Invalid request body"
+//	@Failure		400				{object}	errors.ErrorResponse	"Invalid request body, or password fails the strength rules"
 //	@Failure		409				{object}	errors.ErrorResponse	"Username or email already exists"
 //	@Failure		500				{object}	errors.ErrorResponse
 //	@ID				register
@@ -330,7 +330,7 @@ func (h *AuthHandler) LogoutAllSessions(w http.ResponseWriter, r *http.Request) 
 //	@Produce		json
 //	@Param			request	body		dto.ChangePasswordRequest	true	"Password change data"
 //	@Success		200		{object}	httputil.MessageResponse	"Password changed successfully"
-//	@Failure		400		{object}	errors.ErrorResponse		"Invalid request"
+//	@Failure		400		{object}	errors.ErrorResponse		"Invalid request, or new password fails the strength rules"
 //	@Failure		401		{object}	errors.ErrorResponse		"Invalid old password or not authenticated"
 //	@Failure		500		{object}	errors.ErrorResponse
 //	@ID				changePassword

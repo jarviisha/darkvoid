@@ -22,6 +22,11 @@ DOCKER_COMPOSE ?= bash scripts/dv
 # Must satisfy the `version: "2"` schema in .golangci.yml.
 GOLANGCI_LINT_VERSION ?= v2.11.4
 SQLC_VERSION ?= v1.30.0
+# Keep equal to github.com/swaggo/swag in go.mod: docs/docs.go imports that
+# module, and a generator from another major (v2) writes an import it lacks.
+# Run through `go run` rather than installed, so a swag on PATH cannot differ.
+SWAG_VERSION ?= v1.16.6
+SWAG := $(GO) run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION)
 MIGRATE_VERSION ?= v4.19.1
 
 BIN_DIR := bin
@@ -120,11 +125,11 @@ sqlc-clean: ## Clean generated SQLC code
 	rm -f $(addsuffix /*.go,$(SQLC_DB_DIRS))
 
 swagger-init: ## Initialize Swagger in the project (run once)
-	swag init -g cmd/api/main.go -o docs --parseInternal
+	$(SWAG) init -g cmd/api/main.go -o docs --parseInternal
 
 swagger-generate: ## Generate/update Swagger documentation
-	swag fmt
-	swag init -g cmd/api/main.go -o docs --parseInternal
+	$(SWAG) fmt
+	$(SWAG) init -g cmd/api/main.go -o docs --parseInternal
 
 swagger-serve: ## Print the local Swagger UI URL
 	@echo "Swagger docs generated at: docs/swagger.json"
@@ -329,7 +334,6 @@ db-reset: ## Reset dockerized database volumes after confirmation
 
 install-tools: install-lint install-sqlc ## Install development tools
 	@echo "Installing development tools..."
-	$(GO) install github.com/swaggo/swag/cmd/swag@latest
 	$(GO) install github.com/air-verse/air@latest
 	$(GO) install -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION)
 	@echo "Done."

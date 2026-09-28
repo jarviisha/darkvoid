@@ -27,7 +27,7 @@ func (m *mockMailer) Send(ctx context.Context, msg *mailer.Message) (string, err
 type mockEmailTokenRepo struct {
 	create              func(ctx context.Context, userID uuid.UUID, token string, tokenType entity.EmailTokenType, expiresAt time.Time) (*entity.EmailToken, error)
 	getByToken          func(ctx context.Context, token string) (*entity.EmailToken, error)
-	markUsed            func(ctx context.Context, id uuid.UUID) error
+	claim               func(ctx context.Context, id uuid.UUID) (bool, error)
 	deleteByUserAndType func(ctx context.Context, userID uuid.UUID, tokenType entity.EmailTokenType) error
 }
 
@@ -52,11 +52,11 @@ func (m *mockEmailTokenRepo) GetByToken(ctx context.Context, token string) (*ent
 	return nil, apperrors.ErrNotFound
 }
 
-func (m *mockEmailTokenRepo) MarkUsed(ctx context.Context, id uuid.UUID) error {
-	if m.markUsed != nil {
-		return m.markUsed(ctx, id)
+func (m *mockEmailTokenRepo) Claim(ctx context.Context, id uuid.UUID) (bool, error) {
+	if m.claim != nil {
+		return m.claim(ctx, id)
 	}
-	return nil
+	return true, nil
 }
 
 func (m *mockEmailTokenRepo) DeleteByUserAndType(ctx context.Context, userID uuid.UUID, tokenType entity.EmailTokenType) error {
@@ -110,7 +110,7 @@ func newAccountMailServiceWithRecorder(
 	if err != nil {
 		t.Fatalf("failed to load templates: %v", err)
 	}
-	return NewAccountMailService(m, templates, tokenRepo, userRepo, recorder, "https://darkvoid.test")
+	return NewAccountMailService(m, templates, tokenRepo, userRepo, &mockRefreshTokenRepo{}, recorder, "https://darkvoid.test")
 }
 
 func validVerifyToken(userID uuid.UUID) *entity.EmailToken {
@@ -142,7 +142,8 @@ func TestVerifyEmail_TokenRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	assertServiceErrorCode(t, err, "BAD_REQUEST")
+	assertServiceErrorCode(t, err, "VALIDATION_ERROR")
+	assertErrorField(t, err, "token")
 }
 
 func TestVerifyEmail_InvalidOrExpiredToken(t *testing.T) {
@@ -210,14 +211,14 @@ func TestVerifyEmail_ExpiredToken(t *testing.T) {
 	assertServiceErrorCode(t, err, "BAD_REQUEST")
 }
 
-func TestVerifyEmail_MarkUsedFailure(t *testing.T) {
+func TestVerifyEmail_ClaimFailure(t *testing.T) {
 	userID := uuid.New()
 	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			return validVerifyToken(userID), nil
 		},
-		markUsed: func(_ context.Context, _ uuid.UUID) error {
-			return stderrors.New("db down")
+		claim: func(_ context.Context, _ uuid.UUID) (bool, error) {
+			return false, stderrors.New("db down")
 		},
 	}, &mockUserRepo{}, &mockMailer{})
 
@@ -230,23 +231,37 @@ func TestVerifyEmail_MarkUsedFailure(t *testing.T) {
 
 func TestVerifyEmail_Success(t *testing.T) {
 	userID := uuid.New()
-	markUsedCalled := false
+	claimCalled := false
 	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			return validVerifyToken(userID), nil
 		},
-		markUsed: func(_ context.Context, _ uuid.UUID) error {
-			markUsedCalled = true
-			return nil
+		claim: func(_ context.Context, _ uuid.UUID) (bool, error) {
+			claimCalled = true
+			return true, nil
 		},
 	}, &mockUserRepo{}, &mockMailer{})
 
 	if err := svc.VerifyEmail(context.Background(), "verify-token"); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if !markUsedCalled {
-		t.Fatal("expected MarkUsed to be called")
+	if !claimCalled {
+		t.Fatal("expected the token to be claimed")
 	}
+}
+
+// A token read as unused can be claimed by a concurrent request in between;
+// the claim is what decides, not the earlier read.
+func TestVerifyEmail_TokenClaimedConcurrently(t *testing.T) {
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
+		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
+			return validVerifyToken(uuid.New()), nil
+		},
+		claim: func(_ context.Context, _ uuid.UUID) (bool, error) { return false, nil },
+	}, &mockUserRepo{}, &mockMailer{})
+
+	err := svc.VerifyEmail(context.Background(), "verify-token")
+	assertServiceErrorCode(t, err, "BAD_REQUEST")
 }
 
 func TestResendVerification_EmailRequired(t *testing.T) {
@@ -452,7 +467,8 @@ func TestResetPassword_TokenRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	assertServiceErrorCode(t, err, "BAD_REQUEST")
+	assertServiceErrorCode(t, err, "VALIDATION_ERROR")
+	assertErrorField(t, err, "token")
 }
 
 func TestResetPassword_NewPasswordRequired(t *testing.T) {
@@ -462,7 +478,20 @@ func TestResetPassword_NewPasswordRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	assertServiceErrorCode(t, err, "BAD_REQUEST")
+	assertServiceErrorCode(t, err, "VALIDATION_ERROR")
+	assertErrorField(t, err, "new_password")
+}
+
+func TestResetPassword_WeakNewPassword(t *testing.T) {
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
+
+	for name, tc := range rejectedPasswords {
+		t.Run(name, func(t *testing.T) {
+			err := svc.ResetPassword(context.Background(), "reset-token", tc.password)
+			assertServiceErrorCode(t, err, tc.code)
+			assertErrorField(t, err, "new_password")
+		})
+	}
 }
 
 func TestResetPassword_InvalidToken(t *testing.T) {
@@ -548,45 +577,88 @@ func TestResetPassword_UpdatePasswordFailure(t *testing.T) {
 	assertServiceErrorCode(t, err, "INTERNAL_ERROR")
 }
 
-func TestResetPassword_MarkUsedFailureDoesNotFail(t *testing.T) {
-	userID := uuid.New()
+// Claiming the token comes before the password changes, so a failed claim
+// leaves both untouched instead of leaving a spent token redeemable.
+func TestResetPassword_ClaimFailure(t *testing.T) {
 	updateCalled := false
 	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
-			return validResetToken(userID), nil
+			return validResetToken(uuid.New()), nil
 		},
-		markUsed: func(_ context.Context, _ uuid.UUID) error {
-			return stderrors.New("mark failed")
+		claim: func(_ context.Context, _ uuid.UUID) (bool, error) {
+			return false, stderrors.New("claim failed")
 		},
 	}, &mockUserRepo{
-		updateUserPassword: func(_ context.Context, _ uuid.UUID, passwordHash string, _ *uuid.UUID) error {
+		updateUserPassword: func(_ context.Context, _ uuid.UUID, _ string, _ *uuid.UUID) error {
 			updateCalled = true
-			if passwordHash == "" {
-				t.Fatal("expected hashed password")
-			}
 			return nil
 		},
 	}, &mockMailer{})
 
+	err := svc.ResetPassword(context.Background(), "reset-token", "NewPass123")
+	assertServiceErrorCode(t, err, "INTERNAL_ERROR")
+	if updateCalled {
+		t.Fatal("password must not change when the token could not be claimed")
+	}
+}
+
+func TestResetPassword_TokenClaimedConcurrently(t *testing.T) {
+	updateCalled := false
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
+		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
+			return validResetToken(uuid.New()), nil
+		},
+		claim: func(_ context.Context, _ uuid.UUID) (bool, error) { return false, nil },
+	}, &mockUserRepo{
+		updateUserPassword: func(_ context.Context, _ uuid.UUID, _ string, _ *uuid.UUID) error {
+			updateCalled = true
+			return nil
+		},
+	}, &mockMailer{})
+
+	err := svc.ResetPassword(context.Background(), "reset-token", "NewPass123")
+	assertServiceErrorCode(t, err, "BAD_REQUEST")
+	if updateCalled {
+		t.Fatal("a token another request claimed must not set the password")
+	}
+}
+
+// A reset is how a user locks out whoever holds their account, so it ends
+// every session, as ChangePassword does.
+func TestResetPassword_RevokesSessions(t *testing.T) {
+	userID := uuid.New()
+	var revoked uuid.UUID
+	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
+		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
+			return validResetToken(userID), nil
+		},
+	}, &mockUserRepo{}, &mockMailer{})
+	svc.sessions = &mockRefreshTokenRepo{
+		revokeAllUserTokens: func(_ context.Context, id uuid.UUID) error {
+			revoked = id
+			return nil
+		},
+	}
+
 	if err := svc.ResetPassword(context.Background(), "reset-token", "NewPass123"); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if !updateCalled {
-		t.Fatal("expected UpdateUserPassword to be called")
+	if revoked != userID {
+		t.Fatalf("expected sessions of %s revoked, got %s", userID, revoked)
 	}
 }
 
 func TestResetPassword_Success(t *testing.T) {
 	userID := uuid.New()
 	updateCalled := false
-	markUsedCalled := false
+	claimCalled := false
 	svc := newAccountMailServiceForTest(t, &mockEmailTokenRepo{
 		getByToken: func(_ context.Context, _ string) (*entity.EmailToken, error) {
 			return validResetToken(userID), nil
 		},
-		markUsed: func(_ context.Context, _ uuid.UUID) error {
-			markUsedCalled = true
-			return nil
+		claim: func(_ context.Context, _ uuid.UUID) (bool, error) {
+			claimCalled = true
+			return true, nil
 		},
 	}, &mockUserRepo{
 		updateUserPassword: func(_ context.Context, _ uuid.UUID, passwordHash string, _ *uuid.UUID) error {
@@ -601,8 +673,8 @@ func TestResetPassword_Success(t *testing.T) {
 	if err := svc.ResetPassword(context.Background(), "reset-token", "NewPass123"); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if !updateCalled || !markUsedCalled {
-		t.Fatalf("expected update and mark used, got update=%v markUsed=%v", updateCalled, markUsedCalled)
+	if !updateCalled || !claimCalled {
+		t.Fatalf("expected update and claim, got update=%v claim=%v", updateCalled, claimCalled)
 	}
 }
 

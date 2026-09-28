@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jarviisha/darkvoid/internal/feature/user"
 	"github.com/jarviisha/darkvoid/internal/feature/user/dto"
@@ -13,13 +14,13 @@ import (
 var (
 	emailRegex    = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 	usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,30}$`)
-	letterRegex   = regexp.MustCompile(`[a-zA-Z]`)
+	letterRegex   = regexp.MustCompile(`\pL`) // any script, not only Latin
 	numberRegex   = regexp.MustCompile(`[0-9]`)
 )
 
 const (
-	minPasswordLength    = 8
-	maxPasswordLength    = 72
+	minPasswordLength    = 8  // characters: a strength rule
+	maxPasswordLength    = 72 // bytes: bcrypt refuses to hash more
 	minDisplayNameLength = 1
 	maxDisplayNameLength = 100
 )
@@ -34,7 +35,7 @@ func validateCreateRequest(req *dto.CreateUserRequest) error {
 	if err := validateDisplayName(req.DisplayName); err != nil {
 		return err
 	}
-	return validatePassword(req.Password)
+	return validatePassword("password", req.Password)
 }
 
 func validateUpdateRequest(req *dto.UpdateUserRequest) error {
@@ -74,20 +75,27 @@ func validateDisplayName(displayName string) error {
 	return requireLength("display_name", displayName, minDisplayNameLength, maxDisplayNameLength)
 }
 
-func validatePassword(password string) error {
-	if err := requireField("password", password); err != nil {
+// validatePassword applies the strength rules to any password being set;
+// field names it in the error, since the change and reset flows call it
+// new_password.
+func validatePassword(field, password string) error {
+	if err := requireField(field, password); err != nil {
 		return err
 	}
-	if len(password) < minPasswordLength {
-		return user.ErrWeakPassword.WithDetail("min_length", minPasswordLength)
+	if utf8.RuneCountInString(password) < minPasswordLength {
+		return weakPassword(field).WithDetail("min_length", minPasswordLength)
 	}
 	if len(password) > maxPasswordLength {
-		return errors.NewValidationError("password", "too long").WithDetail("max_length", maxPasswordLength)
+		return errors.NewValidationError(field, "too long").WithDetail("max_length", maxPasswordLength)
 	}
 	if !letterRegex.MatchString(password) || !numberRegex.MatchString(password) {
-		return user.ErrWeakPassword.WithDetail("requirement", "must contain letters and numbers")
+		return weakPassword(field).WithDetail("requirement", "must contain letters and numbers")
 	}
 	return nil
+}
+
+func weakPassword(field string) *errors.AppError {
+	return user.ErrWeakPassword.WithDetail("field", field)
 }
 
 func requireField(field, value string) error {

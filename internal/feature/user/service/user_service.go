@@ -21,11 +21,12 @@ const bcryptCost = 12
 // UserService handles all user business logic: account management and social profile.
 type UserService struct {
 	userRepo userRepo
+	sessions sessionRevoker
 	storage  storage.Storage
 }
 
-func NewUserService(userRepo userRepo, storage storage.Storage) *UserService {
-	return &UserService{userRepo: userRepo, storage: storage}
+func NewUserService(userRepo userRepo, sessions sessionRevoker, storage storage.Storage) *UserService {
+	return &UserService{userRepo: userRepo, sessions: sessions, storage: storage}
 }
 
 // --- Account management ---
@@ -222,7 +223,7 @@ func (s *UserService) DeactivateUser(ctx context.Context, id uuid.UUID, updatedB
 // which verifies the old password. The new password still goes through the
 // standard strength rules.
 func (s *UserService) AdminResetPassword(ctx context.Context, userID uuid.UUID, newPassword string) error {
-	if err := validatePassword(newPassword); err != nil {
+	if err := validatePassword("password", newPassword); err != nil {
 		return err
 	}
 
@@ -240,6 +241,14 @@ func (s *UserService) AdminResetPassword(ctx context.Context, userID uuid.UUID, 
 
 	if err := s.userRepo.UpdateUserPassword(ctx, userID, hashedPassword, nil); err != nil {
 		logger.LogError(ctx, err, "failed to reset password", "user_id", userID)
+		return errors.NewInternalError(err)
+	}
+
+	// An operator reset usually answers a compromised account, so the sessions
+	// the old password opened end with it. The operator is told if they did
+	// not, and rerunning the reset is safe.
+	if err := s.sessions.RevokeAllUserTokens(ctx, userID); err != nil {
+		logger.LogError(ctx, err, "password reset but sessions not revoked", "user_id", userID)
 		return errors.NewInternalError(err)
 	}
 
@@ -264,6 +273,13 @@ func (s *UserService) BootstrapRootUser(ctx context.Context, email, password, us
 		}
 		logger.Info(ctx, "bootstrap: root user already exists", "user_id", existing.ID, "username", username)
 		return existing, false, nil
+	}
+
+	// The root account holds the admin role, so it gets the same rules as
+	// every other password. This runs only when creating it, so a weak value
+	// never fails the boot of an install that already has its root user.
+	if err = validatePassword("password", password); err != nil {
+		return nil, false, err
 	}
 
 	hashedPassword, err := hashPassword(password)

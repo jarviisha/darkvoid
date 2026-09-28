@@ -2,8 +2,8 @@ package dto
 
 // LoginRequest represents the data required for authentication.
 type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username string `json:"username" binding:"required,min=1"`
+	Password string `json:"password" binding:"required,min=1"`
 }
 
 // LoginResponse represents the response after successful authentication.
@@ -18,7 +18,7 @@ type LoginResponse struct {
 
 // RefreshTokenRequest represents the request to refresh an access token.
 type RefreshTokenRequest struct {
-	RefreshToken string `json:"refresh_token"`
+	RefreshToken string `json:"refresh_token" binding:"required,min=1"`
 }
 
 // RefreshTokenResponse represents the response after refreshing tokens.
@@ -32,15 +32,15 @@ type RefreshTokenResponse struct {
 
 // LogoutRequest represents the request to logout.
 type LogoutRequest struct {
-	RefreshToken string `json:"refresh_token"`
+	RefreshToken string `json:"refresh_token" binding:"required,min=1"`
 }
 
 // RegisterRequest represents the data required to register a new account.
 type RegisterRequest struct {
-	Username    string `json:"username" example:"johndoe"`
-	Email       string `json:"email" example:"john@example.com"`
-	DisplayName string `json:"display_name" example:"John Doe"`
-	Password    string `json:"password" example:"SecurePass123"`
+	Username    string `json:"username" binding:"required,min=1" example:"johndoe"`
+	Email       string `json:"email" binding:"required,min=1" example:"john@example.com"`
+	DisplayName string `json:"display_name" binding:"required,min=1" example:"John Doe"`
+	Password    string `json:"password" binding:"required,min=8,max=72" example:"SecurePass123"`
 }
 
 // RegisterResponse is returned after a successful registration.
@@ -56,6 +56,6 @@ type RegisterResponse struct {
 
 // ChangePasswordRequest represents the request to change password.
 type ChangePasswordRequest struct {
-	OldPassword string `json:"old_password"`
-	NewPassword string `json:"new_password"`
+	OldPassword string `json:"old_password" binding:"required,min=1"`
+	NewPassword string `json:"new_password" binding:"required,min=8,max=72"`
 }

@@ -245,11 +245,13 @@ func (s *AuthService) GetMe(ctx context.Context, userID uuid.UUID) (*entity.User
 }
 
 func (s *AuthService) ChangePassword(ctx context.Context, userID uuid.UUID, oldPassword, newPassword string) error {
+	// Same shape as new_password's, so a client can pin either to its input.
+	// Not trimmed: a password set before the rules may be all whitespace.
 	if oldPassword == "" {
-		return errors.NewBadRequestError("old password is required")
+		return errors.NewValidationError("old_password", "required")
 	}
-	if newPassword == "" {
-		return errors.NewBadRequestError("new password is required")
+	if err := validatePassword("new_password", newPassword); err != nil {
+		return err
 	}
 
 	u, err := s.userRepo.GetUserByID(ctx, userID)

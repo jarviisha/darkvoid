@@ -12,6 +12,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimEmailToken = `-- name: ClaimEmailToken :execrows
+UPDATE usr.email_tokens
+SET used_at = NOW()
+WHERE id = $1 AND used_at IS NULL
+`
+
+// Marks the token used only if nothing has yet. Zero rows means another
+// request redeemed it first.
+func (q *Queries) ClaimEmailToken(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, claimEmailToken, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createEmailToken = `-- name: CreateEmailToken :one
 INSERT INTO usr.email_tokens (user_id, token, type, expires_at)
 VALUES ($1, $2, $3, $4)
@@ -88,15 +104,4 @@ func (q *Queries) GetEmailTokenByToken(ctx context.Context, token string) (UsrEm
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const markEmailTokenUsed = `-- name: MarkEmailTokenUsed :exec
-UPDATE usr.email_tokens
-SET used_at = NOW()
-WHERE id = $1
-`
-
-func (q *Queries) MarkEmailTokenUsed(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markEmailTokenUsed, id)
-	return err
 }
