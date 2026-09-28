@@ -40,7 +40,7 @@ type RegisterRequest struct {
 	Username    string `json:"username" binding:"required,min=1" example:"johndoe"`
 	Email       string `json:"email" binding:"required,min=1" example:"john@example.com"`
 	DisplayName string `json:"display_name" binding:"required,min=1" example:"John Doe"`
-	Password    string `json:"password" binding:"required,min=1" example:"SecurePass123"`
+	Password    string `json:"password" binding:"required,min=8,max=72" example:"SecurePass123"`
 }
 
 // RegisterResponse is returned after a successful registration.
@@ -57,5 +57,5 @@ type RegisterResponse struct {
 // ChangePasswordRequest represents the request to change password.
 type ChangePasswordRequest struct {
 	OldPassword string `json:"old_password" binding:"required,min=1"`
-	NewPassword string `json:"new_password" binding:"required,min=1"`
+	NewPassword string `json:"new_password" binding:"required,min=8,max=72"`
 }

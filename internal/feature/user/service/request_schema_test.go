@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
@@ -94,6 +95,27 @@ func checkRequiredFields[T any](t *testing.T, valid T, call func(T) error) {
 			}
 		}
 	})
+}
+
+// Fields that set a password publish the rule's bounds, so a generated client
+// refuses "abc" before sending it; the schema counts characters, as the
+// minimum does. LoginRequest.password is left at min=1: an account whose
+// password predates the rules must still be able to sign in.
+func TestRequestSchema_PasswordBoundsMatchRules(t *testing.T) {
+	want := fmt.Sprintf("required,min=%d,max=%d", minPasswordLength, maxPasswordLength)
+	for _, f := range []struct {
+		typ   reflect.Type
+		field string
+	}{
+		{reflect.TypeFor[dto.RegisterRequest](), "Password"},
+		{reflect.TypeFor[dto.ChangePasswordRequest](), "NewPassword"},
+		{reflect.TypeFor[dto.ResetPasswordRequest](), "NewPassword"},
+	} {
+		sf, _ := f.typ.FieldByName(f.field)
+		if got := sf.Tag.Get("binding"); got != want {
+			t.Errorf("%s.%s: binding:%q, want %q", f.typ.Name(), f.field, got, want)
+		}
+	}
 }
 
 // schemaRequiresNonEmpty reports whether a binding tag makes swag mark the

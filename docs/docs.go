@@ -1127,7 +1127,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid request body",
+                        "description": "Invalid request body, or password fails the strength rules",
                         "schema": {
                             "$ref": "#/definitions/errors.ErrorResponse"
                         }
@@ -3502,7 +3502,8 @@ const docTemplate = `{
             "properties": {
                 "new_password": {
                     "type": "string",
-                    "minLength": 1
+                    "maxLength": 72,
+                    "minLength": 8
                 },
                 "old_password": {
                     "type": "string",
@@ -4116,7 +4117,8 @@ const docTemplate = `{
                 },
                 "password": {
                     "type": "string",
-                    "minLength": 1,
+                    "maxLength": 72,
+                    "minLength": 8,
                     "example": "SecurePass123"
                 },
                 "username": {
@@ -4172,7 +4174,8 @@ const docTemplate = `{
             "properties": {
                 "new_password": {
                     "type": "string",
-                    "minLength": 1,
+                    "maxLength": 72,
+                    "minLength": 8,
                     "example": "NewSecurePass123"
                 },
                 "token": {
