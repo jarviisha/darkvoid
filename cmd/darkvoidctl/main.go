@@ -147,7 +147,7 @@ func openDeps(ctx context.Context) (*deps, func(), error) {
 		userRepo: userRepo,
 		roleRepo: repository.NewRoleRepository(pool),
 		// Avatar/cover storage is nil: no CLI command touches it.
-		userSvc:    service.NewUserService(userRepo, nil),
+		userSvc:    service.NewUserService(userRepo, repository.NewRefreshTokenRepository(pool), nil),
 		mailEvents: service.NewEmailEventService(repository.NewEmailDeliveryRepository(pool)),
 	}
 	return d, func() { pool.Close() }, nil

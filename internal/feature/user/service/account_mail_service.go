@@ -22,7 +22,7 @@ const (
 type emailTokenRepo interface {
 	Create(ctx context.Context, userID uuid.UUID, token string, tokenType entity.EmailTokenType, expiresAt time.Time) (*entity.EmailToken, error)
 	GetByToken(ctx context.Context, token string) (*entity.EmailToken, error)
-	MarkUsed(ctx context.Context, id uuid.UUID) error
+	Claim(ctx context.Context, id uuid.UUID) (bool, error)
 	DeleteByUserAndType(ctx context.Context, userID uuid.UUID, tokenType entity.EmailTokenType) error
 }
 
@@ -40,6 +40,7 @@ type AccountMailService struct {
 	templates *mailer.Templates
 	tokenRepo emailTokenRepo
 	userRepo  userRepo
+	sessions  sessionRevoker
 	recorder  deliveryRecorder // may be nil in tests
 	baseURL   string
 }
@@ -50,6 +51,7 @@ func NewAccountMailService(
 	templates *mailer.Templates,
 	tokenRepo emailTokenRepo,
 	userRepo userRepo,
+	sessions sessionRevoker,
 	recorder deliveryRecorder,
 	baseURL string,
 ) *AccountMailService {
@@ -58,6 +60,7 @@ func NewAccountMailService(
 		templates: templates,
 		tokenRepo: tokenRepo,
 		userRepo:  userRepo,
+		sessions:  sessions,
 		recorder:  recorder,
 		baseURL:   baseURL,
 	}
@@ -184,9 +187,8 @@ func (s *AccountMailService) VerifyEmail(ctx context.Context, tokenStr string) e
 		return errors.NewBadRequestError("token has expired")
 	}
 
-	if err := s.tokenRepo.MarkUsed(ctx, token.ID); err != nil {
-		logger.LogError(ctx, err, "failed to mark verification token as used")
-		return errors.NewInternalError(err)
+	if err := s.claim(ctx, token); err != nil {
+		return err
 	}
 
 	logger.Info(ctx, "email verified successfully", "user_id", token.UserID)
@@ -297,14 +299,37 @@ func (s *AccountMailService) ResetPassword(ctx context.Context, tokenStr, newPas
 		return errors.NewInternalError(err)
 	}
 
+	// Claim before writing: a token that cannot be claimed must not set a
+	// password. If the write then fails the token is spent and the user asks
+	// for a new link — the price of never redeeming one twice.
+	if err := s.claim(ctx, token); err != nil {
+		return err
+	}
+
 	if err := s.userRepo.UpdateUserPassword(ctx, token.UserID, hashedPassword, nil); err != nil {
 		return errors.NewInternalError(err)
 	}
 
-	if err := s.tokenRepo.MarkUsed(ctx, token.ID); err != nil {
-		logger.LogError(ctx, err, "failed to mark reset token as used")
+	// The password has changed either way; a session that outlives the reset
+	// is logged rather than reported as a failed reset, as in ChangePassword.
+	if err := s.sessions.RevokeAllUserTokens(ctx, token.UserID); err != nil {
+		logger.LogError(ctx, err, "failed to revoke refresh tokens after password reset")
 	}
 
 	logger.Info(ctx, "password reset successfully", "user_id", token.UserID)
+	return nil
+}
+
+// claim redeems a one-shot token. The earlier IsUsed read gives the clear
+// error in the common case; the claim is what decides under concurrency.
+func (s *AccountMailService) claim(ctx context.Context, token *entity.EmailToken) error {
+	claimed, err := s.tokenRepo.Claim(ctx, token.ID)
+	if err != nil {
+		logger.LogError(ctx, err, "failed to claim email token", "type", token.Type)
+		return errors.NewInternalError(err)
+	}
+	if !claimed {
+		return errors.NewBadRequestError("token has already been used")
+	}
 	return nil
 }

@@ -21,11 +21,12 @@ const bcryptCost = 12
 // UserService handles all user business logic: account management and social profile.
 type UserService struct {
 	userRepo userRepo
+	sessions sessionRevoker
 	storage  storage.Storage
 }
 
-func NewUserService(userRepo userRepo, storage storage.Storage) *UserService {
-	return &UserService{userRepo: userRepo, storage: storage}
+func NewUserService(userRepo userRepo, sessions sessionRevoker, storage storage.Storage) *UserService {
+	return &UserService{userRepo: userRepo, sessions: sessions, storage: storage}
 }
 
 // --- Account management ---
@@ -240,6 +241,14 @@ func (s *UserService) AdminResetPassword(ctx context.Context, userID uuid.UUID, 
 
 	if err := s.userRepo.UpdateUserPassword(ctx, userID, hashedPassword, nil); err != nil {
 		logger.LogError(ctx, err, "failed to reset password", "user_id", userID)
+		return errors.NewInternalError(err)
+	}
+
+	// An operator reset usually answers a compromised account, so the sessions
+	// the old password opened end with it. The operator is told if they did
+	// not, and rerunning the reset is safe.
+	if err := s.sessions.RevokeAllUserTokens(ctx, userID); err != nil {
+		logger.LogError(ctx, err, "password reset but sessions not revoked", "user_id", userID)
 		return errors.NewInternalError(err)
 	}
 

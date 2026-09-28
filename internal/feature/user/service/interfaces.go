@@ -25,6 +25,12 @@ type userRepo interface {
 }
 
 // refreshTokenRepo defines the repository operations needed by RefreshTokenService.
+// sessionRevoker ends every refresh-token session a user holds. Both
+// RefreshTokenService and the refresh-token repository satisfy it.
+type sessionRevoker interface {
+	RevokeAllUserTokens(ctx context.Context, userID uuid.UUID) error
+}
+
 type refreshTokenRepo interface {
 	Create(ctx context.Context, token string, userID uuid.UUID, expiresAt time.Time) (*entity.RefreshToken, error)
 	GetByToken(ctx context.Context, token string) (*entity.RefreshToken, error)

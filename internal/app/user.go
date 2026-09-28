@@ -74,8 +74,8 @@ func SetupUserContext(
 	emailDeliveryRepo := repository.NewEmailDeliveryRepository(pool)
 
 	// Services
-	userService := service.NewUserService(userRepo, store)
 	refreshTokenService := service.NewRefreshTokenService(refreshTokenRepo, refreshTokenExpiry)
+	userService := service.NewUserService(userRepo, refreshTokenService, store)
 	authService := service.NewAuthService(userRepo, userService, jwtService, refreshTokenService, store)
 	followService, err := service.NewFollowService(service.FollowDeps{
 		Repo:            followRepo,
@@ -87,7 +87,7 @@ func SetupUserContext(
 		return nil, fmt.Errorf("user context: %w", err)
 	}
 	emailEventService := service.NewEmailEventService(emailDeliveryRepo)
-	accountMailService := service.NewAccountMailService(mail.mailer, mail.templates, emailTokenRepo, userRepo, emailEventService, mail.baseURL)
+	accountMailService := service.NewAccountMailService(mail.mailer, mail.templates, emailTokenRepo, userRepo, refreshTokenService, emailEventService, mail.baseURL)
 
 	// Wire email sender into auth service for fire-and-forget after register
 	authService.WithEmailSender(accountMailService)
