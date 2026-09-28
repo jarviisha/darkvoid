@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,11 +14,6 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/user/entity"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 )
-
-// schemaRequiredTag marks a field required in the OpenAPI schema: swag reads
-// "required" into the schema's required list and "min=1" into minLength.
-// Nothing reads it at runtime.
-const schemaRequiredTag = "required,min=1"
 
 // The schema's required fields and the services' empty-field checks live in
 // different places. When they drifted, generated clients typed display_name
@@ -38,8 +34,9 @@ func TestRequestSchema_RequiredMatchesServiceValidation(t *testing.T) {
 		}
 		return newAccountMailServiceForTest(t, tokens, &mockUserRepo{}, &mockMailer{})
 	}
-	mail := mailRedeeming(entity.EmailTokenVerify)
+	verify := mailRedeeming(entity.EmailTokenVerify)
 	reset := mailRedeeming(entity.EmailTokenResetPassword)
+	mail := newAccountMailServiceForTest(t, &mockEmailTokenRepo{}, &mockUserRepo{}, &mockMailer{})
 
 	checkRequiredFields(t,
 		dto.RegisterRequest{Username: "johndoe", Email: "john@example.com", DisplayName: "John Doe", Password: "SecurePass123"},
@@ -60,7 +57,7 @@ func TestRequestSchema_RequiredMatchesServiceValidation(t *testing.T) {
 		})
 	checkRequiredFields(t,
 		dto.VerifyEmailRequest{Token: "token"},
-		func(r dto.VerifyEmailRequest) error { return mail.VerifyEmail(ctx, r.Token) })
+		func(r dto.VerifyEmailRequest) error { return verify.VerifyEmail(ctx, r.Token) })
 	checkRequiredFields(t,
 		dto.ResendVerificationRequest{Email: "john@example.com"},
 		func(r dto.ResendVerificationRequest) error { return mail.ResendVerification(ctx, r.Email) })
@@ -87,14 +84,24 @@ func checkRequiredFields[T any](t *testing.T, valid T, call func(T) error) {
 			reflect.ValueOf(&blanked).Elem().Field(i).SetZero()
 
 			rejected := isBadRequest(call(blanked))
-			tagged := field.Tag.Get("binding") == schemaRequiredTag
+			tagged := schemaRequiresNonEmpty(field.Tag.Get("binding"))
 			switch {
 			case rejected && !tagged:
-				t.Errorf("%s: service rejects it empty, schema lacks binding:%q", name, schemaRequiredTag)
+				t.Errorf(`%s: service rejects it empty, schema lacks binding:"required,min=1"`, name)
 			case tagged && !rejected:
 				t.Errorf("%s: schema marks it required, service accepts it empty", name)
 			}
 		}
+	})
+}
+
+// schemaRequiresNonEmpty reports whether a binding tag makes swag mark the
+// field required with a positive minLength. Nothing reads the tag at runtime.
+func schemaRequiresNonEmpty(binding string) bool {
+	opts := strings.Split(binding, ",")
+	return slices.Contains(opts, "required") && slices.ContainsFunc(opts, func(opt string) bool {
+		n, ok := strings.CutPrefix(opt, "min=")
+		return ok && n != "0"
 	})
 }
 

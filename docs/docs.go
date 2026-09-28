@@ -1010,7 +1010,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid request",
+                        "description": "Invalid request, or new password fails the strength rules",
                         "schema": {
                             "$ref": "#/definitions/errors.ErrorResponse"
                         }

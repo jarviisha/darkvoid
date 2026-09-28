@@ -81,14 +81,15 @@ func validatePassword(field, password string) error {
 	if err := requireField(field, password); err != nil {
 		return err
 	}
+	weak := user.ErrWeakPassword.WithDetail("field", field)
 	if len(password) < minPasswordLength {
-		return user.ErrWeakPassword.WithDetail("field", field).WithDetail("min_length", minPasswordLength)
+		return weak.WithDetail("min_length", minPasswordLength)
 	}
 	if len(password) > maxPasswordLength {
 		return errors.NewValidationError(field, "too long").WithDetail("max_length", maxPasswordLength)
 	}
 	if !letterRegex.MatchString(password) || !numberRegex.MatchString(password) {
-		return user.ErrWeakPassword.WithDetail("field", field).WithDetail("requirement", "must contain letters and numbers")
+		return weak.WithDetail("requirement", "must contain letters and numbers")
 	}
 	return nil
 }
