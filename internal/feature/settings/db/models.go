@@ -22,4 +22,5 @@ type SettingsFeed struct {
 	DecayExponent          float64            `json:"decay_exponent"`
 	UpdatedBy              pgtype.UUID        `json:"updated_by"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	RecommendationWeight   float64            `json:"recommendation_weight"`
 }

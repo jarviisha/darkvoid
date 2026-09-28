@@ -29,6 +29,7 @@ func (s *feedSettingsSink) ApplyFeedSettings(fs settingsentity.FeedSettings) {
 		TimelineRefreshOnMiss:  fs.TimelineRefreshOnMiss,
 		FanoutEnabled:          fs.FanoutEnabled,
 		FanoutMaxFollowers:     fs.FanoutMaxFollowers,
+		RecommendationWeight:   fs.RecommendationWeight,
 		Scorer: feed.ScorerConfig{
 			RelationshipBonus: fs.RelationshipBonus,
 			RecencyScale:      fs.RecencyScale,

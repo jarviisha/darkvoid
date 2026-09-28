@@ -19,6 +19,8 @@ type FeedSettingsResponse struct {
 	RecencyScale      float64 `json:"recency_scale"      example:"20"`
 	DecayExponent     float64 `json:"decay_exponent"     example:"1.5"`
 
+	RecommendationWeight float64 `json:"recommendation_weight" example:"20"`
+
 	UpdatedBy *string `json:"updated_by,omitempty" example:"550e8400-e29b-41d4-a716-446655440000"`
 	UpdatedAt string  `json:"updated_at"           example:"2026-07-27T10:30:00Z"`
 }
@@ -66,6 +68,11 @@ type UpdateFeedSettingsRequest struct {
 	// constant for every post, which removes recency from the formula rather than
 	// flattening it — a small exponent is how to ask for a slow decay.
 	DecayExponent *float64 `json:"decay_exponent,omitempty" example:"1.5"`
+
+	// RecommendationWeight scales Codohue's relevance score in the mixed feed,
+	// 0-1000: score = local score + recommendation_score * recommendation_weight.
+	// 0 takes the relevance score out of ranking.
+	RecommendationWeight *float64 `json:"recommendation_weight,omitempty" example:"20"`
 
 	// UpdatedBy and UpdatedAt are server-owned: FeedSettingsResponse emits them,
 	// the update ignores them, and the stored values come from the authenticated

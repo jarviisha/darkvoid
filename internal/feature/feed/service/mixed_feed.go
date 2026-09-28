@@ -21,6 +21,7 @@ type mixedFeedBuilder struct {
 	ranker      feed.Ranker
 	recommender feed.Recommender
 	trending    *trendingSource
+	settings    *feed.Settings
 }
 
 type feedCandidate struct {
@@ -294,11 +295,14 @@ func (b *mixedFeedBuilder) rank(ctx context.Context, candidates []feedCandidate,
 		logger.LogError(ctx, err, "ranker failed, falling back to chronological order")
 		scores = make(map[string]float64)
 	}
+	// Read once per page, for the same reason LocalRanker reads its weights once
+	// per batch: an edit landing mid-page must not rank half of it on each value.
+	weight := b.settings.Get().RecommendationWeight
 	items := make([]*feedentity.FeedItem, 0, len(candidates))
 	for _, candidate := range candidates {
 		score := scores[candidate.post.ID.String()]
 		if candidate.providerScore != nil {
-			score += *candidate.providerScore * 20
+			score += *candidate.providerScore * weight
 		}
 		if candidate.providerRank != nil && *candidate.providerRank > 0 {
 			score += 5 / float64(*candidate.providerRank)

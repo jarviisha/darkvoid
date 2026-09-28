@@ -107,8 +107,9 @@ type CodohueEventsRedisConfig struct {
 // deal than a variable that is honest about needing one.
 //
 // Everything else the feed does — whether timelines are served, to whom, how many
-// entries they hold, whether fanout runs at all, and the three ranking weights —
-// is in settings.feed and editable through PATCH /admin/settings/feed.
+// entries they hold, whether fanout runs at all, the three ranking weights and
+// the recommendation weight — is in settings.feed and editable through
+// PATCH /admin/settings/feed.
 type FeedFanoutConfig struct {
 	Workers   int
 	QueueSize int

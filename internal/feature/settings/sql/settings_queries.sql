@@ -11,7 +11,7 @@ SELECT * FROM settings.feed WHERE id = 1;
 -- Partial update: every settable column is COALESCE'd against its own value, so a
 -- NULL parameter means "unchanged" rather than "clear". That is what lets the
 -- admin API accept a body naming one knob without the caller having to read the
--- other nine and send them back — a read-modify-write that would lose a
+-- others and send them back — a read-modify-write that would lose a
 -- concurrent edit made between the two calls.
 --
 -- updated_by is deliberately not COALESCE'd, for the same reason as
@@ -30,6 +30,7 @@ SET timeline_enabled         = COALESCE(sqlc.narg(timeline_enabled), timeline_en
     relationship_bonus       = COALESCE(sqlc.narg(relationship_bonus), relationship_bonus),
     recency_scale            = COALESCE(sqlc.narg(recency_scale), recency_scale),
     decay_exponent           = COALESCE(sqlc.narg(decay_exponent), decay_exponent),
+    recommendation_weight    = COALESCE(sqlc.narg(recommendation_weight), recommendation_weight),
     updated_by               = sqlc.narg(updated_by),
     updated_at               = NOW()
 WHERE id = 1

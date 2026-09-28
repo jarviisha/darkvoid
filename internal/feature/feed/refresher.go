@@ -39,14 +39,11 @@ func NewPreparedTimelineRefresher(postReader PostReader, followReader FollowRead
 	}
 }
 
-// maxItems is the current per-timeline entry count. A non-positive stored value
-// falls back to the default rather than to zero, which would refresh every
-// timeline into an empty one and report success.
+// maxItems is the current per-timeline entry count. It is never zero: the
+// column's CHECK keeps it at 1 or more, and an unloaded holder reads as the
+// defaults.
 func (r *PreparedTimelineRefresher) maxItems() int {
-	if n := r.settings.Get().TimelineMaxItems; n > 0 {
-		return n
-	}
-	return DefaultRuntimeSettings().TimelineMaxItems
+	return r.settings.Get().TimelineMaxItems
 }
 
 func (r *PreparedTimelineRefresher) RefreshTimeline(ctx context.Context, userID uuid.UUID) error {

@@ -9,18 +9,9 @@ import (
 
 // ScorerConfig controls feed ranking behaviour.
 type ScorerConfig struct {
-	RelationshipBonus float64 // bonus added when post author is followed (default 10)
-	RecencyScale      float64 // multiplier for recency signal (default 20); max recency = RecencyScale at t=0
-	DecayExponent     float64 // power applied to recency decay (default 1.5)
-}
-
-// DefaultScorerConfig returns the default configuration.
-func DefaultScorerConfig() ScorerConfig {
-	return ScorerConfig{
-		RelationshipBonus: 10,
-		RecencyScale:      20,
-		DecayExponent:     1.5,
-	}
+	RelationshipBonus float64 // bonus added when post author is followed
+	RecencyScale      float64 // multiplier for recency signal; max recency = RecencyScale at t=0
+	DecayExponent     float64 // power applied to recency decay
 }
 
 // Scorer computes a ranking score for a post.

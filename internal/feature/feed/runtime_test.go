@@ -65,20 +65,6 @@ func TestSettings_ConcurrentReadWrite(t *testing.T) {
 	wg.Wait()
 }
 
-func TestSettings_TimelineWriteLimitsFallBackToDefaults(t *testing.T) {
-	rs := DefaultRuntimeSettings()
-	rs.TimelineMaxItems = 0
-	rs.TimelineTTL = 0
-	maxItems, ttl := NewSettings(rs).TimelineWriteLimits()
-
-	if maxItems != DefaultRuntimeSettings().TimelineMaxItems {
-		t.Fatalf("maxItems = %d, want the default rather than 0 — trimming to 0 empties every timeline", maxItems)
-	}
-	if ttl != DefaultRuntimeSettings().TimelineTTL {
-		t.Fatalf("ttl = %v, want the default rather than 0 — Redis treats a 0 TTL as an immediate expiry", ttl)
-	}
-}
-
 // The whole point of moving the weights into settings: a change reaches the read
 // path without a restart.
 func TestLocalRanker_FollowsSettingsChange(t *testing.T) {
@@ -200,20 +186,12 @@ func TestFanoutWorker_MaxFollowersFollowsSettingsChange(t *testing.T) {
 	}
 }
 
-// A non-positive stored cap must read as the default, not as zero: fanning out to
-// nobody returns no error and looks exactly like a successful run.
-func TestFanoutWorker_NonPositiveCapReadsAsDefault(t *testing.T) {
-	for name, settings := range map[string]*Settings{
-		"zero":     settingsWithFanoutCap(0),
-		"negative": settingsWithFanoutCap(-1),
-		"nil":      nil,
-	} {
-		t.Run(name, func(t *testing.T) {
-			w := NewFanoutWorker(&mockFollowerReader{}, &recordingTimelineStore{}, nil, settings)
-			if got := w.maxFollowers(); got != DefaultRuntimeSettings().FanoutMaxFollowers {
-				t.Fatalf("maxFollowers() = %d, want the default", got)
-			}
-		})
+// An unloaded holder reads as the defaults, not as zero: fanning out to nobody
+// returns no error and looks exactly like a successful run.
+func TestFanoutWorker_NilSettingsUseDefaultCap(t *testing.T) {
+	w := NewFanoutWorker(&mockFollowerReader{}, &recordingTimelineStore{}, nil, nil)
+	if got := w.maxFollowers(); got != DefaultRuntimeSettings().FanoutMaxFollowers {
+		t.Fatalf("maxFollowers() = %d, want the default", got)
 	}
 }
 

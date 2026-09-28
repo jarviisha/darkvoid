@@ -118,6 +118,7 @@ func toFeedSettingsUpdate(req *dto.UpdateFeedSettingsRequest) entity.FeedSetting
 		RelationshipBonus:     req.RelationshipBonus,
 		RecencyScale:          req.RecencyScale,
 		DecayExponent:         req.DecayExponent,
+		RecommendationWeight:  req.RecommendationWeight,
 	}
 	if req.TimelineRolloutPercent != nil {
 		percent := int(*req.TimelineRolloutPercent)
@@ -150,6 +151,7 @@ func toFeedSettingsResponse(s *entity.FeedSettings) *dto.FeedSettingsResponse {
 		RelationshipBonus:      s.RelationshipBonus,
 		RecencyScale:           s.RecencyScale,
 		DecayExponent:          s.DecayExponent,
+		RecommendationWeight:   s.RecommendationWeight,
 		UpdatedAt:              s.UpdatedAt.UTC().Format(timeFormat),
 	}
 	if s.UpdatedBy != nil {

@@ -244,6 +244,9 @@ definitions:
       recency_scale:
         example: 20
         type: number
+      recommendation_weight:
+        example: 20
+        type: number
       relationship_bonus:
         example: 10
         type: number
@@ -652,6 +655,13 @@ definitions:
         example: 10000
         type: integer
       recency_scale:
+        example: 20
+        type: number
+      recommendation_weight:
+        description: |-
+          RecommendationWeight scales Codohue's relevance score in the mixed feed,
+          0-1000: score = local score + recommendation_score * recommendation_weight.
+          0 takes the relevance score out of ranking.
         example: 20
         type: number
       relationship_bonus:

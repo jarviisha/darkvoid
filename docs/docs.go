@@ -3681,6 +3681,10 @@ const docTemplate = `{
                     "type": "number",
                     "example": 20
                 },
+                "recommendation_weight": {
+                    "type": "number",
+                    "example": 20
+                },
                 "relationship_bonus": {
                     "type": "number",
                     "example": 10
@@ -4276,6 +4280,11 @@ const docTemplate = `{
                     "example": 10000
                 },
                 "recency_scale": {
+                    "type": "number",
+                    "example": 20
+                },
+                "recommendation_weight": {
+                    "description": "RecommendationWeight scales Codohue's relevance score in the mixed feed,\n0-1000: score = local score + recommendation_score * recommendation_weight.\n0 takes the relevance score out of ranking.",
                     "type": "number",
                     "example": 20
                 },

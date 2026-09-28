@@ -20,9 +20,10 @@
 // min-max to a batch-independent x/(x+k) map — ordering is unchanged and
 // values are now comparable across calls, but not against anything recorded
 // under v0.4.0. The value is not display-only, despite what this said before:
-// mixed feed adds it to the local score with a weight of 20, so its scale is
-// load-bearing for ordering. v0.12.0 replaced the serve-time x/(x+k) curve with
-// a clamped cosine, which moves that scale — the weight has not been
+// mixed feed adds it to the local score scaled by recommendation_weight in
+// settings.feed, so its scale is load-bearing for ordering. v0.12.0 replaced the
+// serve-time x/(x+k) curve with a clamped cosine, which moves that scale — the
+// weight's default of 20 was picked against the old curve and has not been
 // re-baselined against it.
 //
 // Offered by the SDK and not adopted: catalog batch ingest (100 items per request),

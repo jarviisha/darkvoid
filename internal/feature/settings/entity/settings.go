@@ -1,6 +1,7 @@
 package entity
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,13 +31,14 @@ const (
 	MaxRelationshipBonus = 1000
 	MaxRecencyScale      = 1000
 	MaxDecayExponent     = 10
+
+	MaxRecommendationWeight = 1000
 )
 
 // FeedSettings are the feed knobs an operator can change while the API is
 // running. Everything here was either a FEED_* environment variable or, for the
-// three ranking weights, a literal in the feed package — see
-// migrations/settings/000001_init.up.sql for why each one moved and why the two fanout
-// sizing knobs did not.
+// ranking weights, a literal in the feed package — see the settings migrations
+// for why each one moved and why the two fanout sizing knobs did not.
 //
 // This is a value type, copied on read. The feed components hold a snapshot
 // rather than a reference so that one request cannot see the pre-update value of
@@ -67,27 +69,12 @@ type FeedSettings struct {
 	RecencyScale      float64
 	DecayExponent     float64
 
+	// RecommendationWeight scales Codohue's relevance score where the mixed feed
+	// adds it to the local score above.
+	RecommendationWeight float64
+
 	UpdatedBy *uuid.UUID
 	UpdatedAt time.Time
-}
-
-// DefaultFeedSettings returns the same values as the column defaults in
-// settings.feed. It is what the feed runs on before the first successful read and
-// in tests, so the two must agree — TestDefaultFeedSettings_MatchesMigration
-// pins that against the migration file.
-func DefaultFeedSettings() FeedSettings {
-	return FeedSettings{
-		TimelineEnabled:        false,
-		TimelineRolloutPercent: 0,
-		TimelineMaxItems:       1000,
-		TimelineTTL:            7 * 24 * time.Hour,
-		TimelineRefreshOnMiss:  true,
-		FanoutEnabled:          true,
-		FanoutMaxFollowers:     10000,
-		RelationshipBonus:      10,
-		RecencyScale:           20,
-		DecayExponent:          1.5,
-	}
 }
 
 // FeedSettingsUpdate is a partial update: a nil field keeps its stored value.
@@ -109,6 +96,8 @@ type FeedSettingsUpdate struct {
 	RecencyScale      *float64
 	DecayExponent     *float64
 
+	RecommendationWeight *float64
+
 	UpdatedBy *uuid.UUID
 }
 
@@ -125,7 +114,8 @@ func (u FeedSettingsUpdate) IsEmpty() bool {
 		u.FanoutMaxFollowers == nil &&
 		u.RelationshipBonus == nil &&
 		u.RecencyScale == nil &&
-		u.DecayExponent == nil
+		u.DecayExponent == nil &&
+		u.RecommendationWeight == nil
 }
 
 // Validate checks every named field against the bounds above, returning a
@@ -141,32 +131,32 @@ func (u FeedSettingsUpdate) Validate() error {
 	}
 	if u.TimelineRolloutPercent != nil {
 		if p := *u.TimelineRolloutPercent; p < 0 || p > MaxRolloutPercent {
-			return errors.NewBadRequestError("timeline_rollout_percent must be between 0 and 100")
+			return errors.NewBadRequestError(fmt.Sprintf("timeline_rollout_percent must be between 0 and %d", MaxRolloutPercent))
 		}
 	}
 	if u.TimelineMaxItems != nil {
 		if n := *u.TimelineMaxItems; n < MinTimelineMaxItems || n > MaxTimelineMaxItems {
-			return errors.NewBadRequestError("timeline_max_items must be between 1 and 10000")
+			return errors.NewBadRequestError(fmt.Sprintf("timeline_max_items must be between %d and %d", MinTimelineMaxItems, MaxTimelineMaxItems))
 		}
 	}
 	if u.TimelineTTL != nil {
 		if d := *u.TimelineTTL; d < MinTimelineTTL || d > MaxTimelineTTL {
-			return errors.NewBadRequestError("timeline_ttl_seconds must be between 1 and 7776000 (90 days)")
+			return errors.NewBadRequestError(fmt.Sprintf("timeline_ttl_seconds must be between %d and %d", DurationToSeconds(MinTimelineTTL), DurationToSeconds(MaxTimelineTTL)))
 		}
 	}
 	if u.FanoutMaxFollowers != nil {
 		if n := *u.FanoutMaxFollowers; n < MinFanoutMaxFollowers {
-			return errors.NewBadRequestError("fanout_max_followers must be at least 1")
+			return errors.NewBadRequestError(fmt.Sprintf("fanout_max_followers must be at least %d", MinFanoutMaxFollowers))
 		}
 	}
 	if u.RelationshipBonus != nil {
 		if v := *u.RelationshipBonus; v < 0 || v > MaxRelationshipBonus {
-			return errors.NewBadRequestError("relationship_bonus must be between 0 and 1000")
+			return errors.NewBadRequestError(fmt.Sprintf("relationship_bonus must be between 0 and %d", MaxRelationshipBonus))
 		}
 	}
 	if u.RecencyScale != nil {
 		if v := *u.RecencyScale; v < 0 || v > MaxRecencyScale {
-			return errors.NewBadRequestError("recency_scale must be between 0 and 1000")
+			return errors.NewBadRequestError(fmt.Sprintf("recency_scale must be between 0 and %d", MaxRecencyScale))
 		}
 	}
 	if u.DecayExponent != nil {
@@ -175,7 +165,12 @@ func (u FeedSettingsUpdate) Validate() error {
 		// from the formula instead of flattening it. A small exponent is how an
 		// operator asks for a slow decay.
 		if v := *u.DecayExponent; v <= 0 || v > MaxDecayExponent {
-			return errors.NewBadRequestError("decay_exponent must be greater than 0 and at most 10")
+			return errors.NewBadRequestError(fmt.Sprintf("decay_exponent must be greater than 0 and at most %d", MaxDecayExponent))
+		}
+	}
+	if u.RecommendationWeight != nil {
+		if v := *u.RecommendationWeight; v < 0 || v > MaxRecommendationWeight {
+			return errors.NewBadRequestError(fmt.Sprintf("recommendation_weight must be between 0 and %d", MaxRecommendationWeight))
 		}
 	}
 	return nil

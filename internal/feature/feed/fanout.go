@@ -33,15 +33,10 @@ func NewFanoutWorker(followerReader FollowerReader, timeline TimelineStore, refr
 	}
 }
 
-// maxFollowers is the current cap. A non-positive stored value falls back to the
-// default rather than to "no followers": the column's CHECK keeps it at 1 or more,
-// so reaching zero here would mean the settings were never loaded, and silently
-// fanning out to nobody is the one outcome that looks like success.
+// maxFollowers is the current cap. It is never zero: the column's CHECK keeps it
+// at 1 or more, and an unloaded holder reads as the defaults.
 func (w *FanoutWorker) maxFollowers() int {
-	if n := w.settings.Get().FanoutMaxFollowers; n > 0 {
-		return n
-	}
-	return DefaultRuntimeSettings().FanoutMaxFollowers
+	return w.settings.Get().FanoutMaxFollowers
 }
 
 func (w *FanoutWorker) HandleFeedEvent(ctx context.Context, event Event) error {

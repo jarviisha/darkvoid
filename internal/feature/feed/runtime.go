@@ -23,13 +23,18 @@ type RuntimeSettings struct {
 	FanoutMaxFollowers int
 
 	Scorer ScorerConfig
+
+	// RecommendationWeight scales a Codohue relevance score where the mixed feed
+	// adds it to the local score. It lives beside ScorerConfig rather than in it:
+	// the local formula never sees a provider score, so the timeline writers that
+	// share ScorerConfig have no use for it.
+	RecommendationWeight float64
 }
 
 // DefaultRuntimeSettings returns the values the feed runs on before the first
-// settings read succeeds, and the ones the feed package's own tests use. They
-// match the column defaults in settings.feed — entity.DefaultFeedSettings is the
-// other copy, and TestDefaultRuntimeSettings_MatchesEntityDefaults pins them
-// together.
+// settings read succeeds, and the ones the feed package's own tests use. This is
+// the only copy in Go; the other is the column defaults in settings.feed, and
+// TestFeedDefaults_MatchMigrationDefaults in internal/app pins the two together.
 func DefaultRuntimeSettings() RuntimeSettings {
 	return RuntimeSettings{
 		TimelineEnabled:        false,
@@ -39,7 +44,12 @@ func DefaultRuntimeSettings() RuntimeSettings {
 		TimelineRefreshOnMiss:  true,
 		FanoutEnabled:          true,
 		FanoutMaxFollowers:     10000,
-		Scorer:                 DefaultScorerConfig(),
+		Scorer: ScorerConfig{
+			RelationshipBonus: 10,
+			RecencyScale:      20,
+			DecayExponent:     1.5,
+		},
+		RecommendationWeight: 20,
 	}
 }
 
@@ -97,13 +107,11 @@ func (s *Settings) Set(rs RuntimeSettings) {
 // entries to keep and how long to keep them. Grouped into one accessor because
 // every writer needs both, and reading them from two separate Get calls would let
 // an edit land between them and trim to the new count under the old TTL.
+//
+// Neither value is checked for zero: Get never returns an unseeded snapshot, and
+// every seeded one comes from DefaultRuntimeSettings or from a settings.feed row,
+// whose CHECKs keep both positive.
 func (s *Settings) TimelineWriteLimits() (maxItems int, ttl time.Duration) {
 	rs := s.Get()
-	if rs.TimelineMaxItems <= 0 {
-		rs.TimelineMaxItems = DefaultRuntimeSettings().TimelineMaxItems
-	}
-	if rs.TimelineTTL <= 0 {
-		rs.TimelineTTL = DefaultRuntimeSettings().TimelineTTL
-	}
 	return rs.TimelineMaxItems, rs.TimelineTTL
 }

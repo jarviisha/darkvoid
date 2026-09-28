@@ -19,7 +19,7 @@ type Querier interface {
 	// Partial update: every settable column is COALESCE'd against its own value, so a
 	// NULL parameter means "unchanged" rather than "clear". That is what lets the
 	// admin API accept a body naming one knob without the caller having to read the
-	// other nine and send them back — a read-modify-write that would lose a
+	// others and send them back — a read-modify-write that would lose a
 	// concurrent edit made between the two calls.
 	//
 	// updated_by is deliberately not COALESCE'd, for the same reason as

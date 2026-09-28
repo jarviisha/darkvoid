@@ -13,7 +13,7 @@ import (
 
 const getFeedSettings = `-- name: GetFeedSettings :one
 
-SELECT id, timeline_enabled, timeline_rollout_percent, timeline_max_items, timeline_ttl_seconds, timeline_refresh_on_miss, fanout_enabled, fanout_max_followers, relationship_bonus, recency_scale, decay_exponent, updated_by, updated_at FROM settings.feed WHERE id = 1
+SELECT id, timeline_enabled, timeline_rollout_percent, timeline_max_items, timeline_ttl_seconds, timeline_refresh_on_miss, fanout_enabled, fanout_max_followers, relationship_bonus, recency_scale, decay_exponent, updated_by, updated_at, recommendation_weight FROM settings.feed WHERE id = 1
 `
 
 // ─── Feed settings ───────────────────────────────────────────────────────────
@@ -39,6 +39,7 @@ func (q *Queries) GetFeedSettings(ctx context.Context) (SettingsFeed, error) {
 		&i.DecayExponent,
 		&i.UpdatedBy,
 		&i.UpdatedAt,
+		&i.RecommendationWeight,
 	)
 	return i, err
 }
@@ -55,10 +56,11 @@ SET timeline_enabled         = COALESCE($1, timeline_enabled),
     relationship_bonus       = COALESCE($8, relationship_bonus),
     recency_scale            = COALESCE($9, recency_scale),
     decay_exponent           = COALESCE($10, decay_exponent),
-    updated_by               = $11,
+    recommendation_weight    = COALESCE($11, recommendation_weight),
+    updated_by               = $12,
     updated_at               = NOW()
 WHERE id = 1
-RETURNING id, timeline_enabled, timeline_rollout_percent, timeline_max_items, timeline_ttl_seconds, timeline_refresh_on_miss, fanout_enabled, fanout_max_followers, relationship_bonus, recency_scale, decay_exponent, updated_by, updated_at
+RETURNING id, timeline_enabled, timeline_rollout_percent, timeline_max_items, timeline_ttl_seconds, timeline_refresh_on_miss, fanout_enabled, fanout_max_followers, relationship_bonus, recency_scale, decay_exponent, updated_by, updated_at, recommendation_weight
 `
 
 type UpdateFeedSettingsParams struct {
@@ -72,13 +74,14 @@ type UpdateFeedSettingsParams struct {
 	RelationshipBonus      *float64    `json:"relationship_bonus"`
 	RecencyScale           *float64    `json:"recency_scale"`
 	DecayExponent          *float64    `json:"decay_exponent"`
+	RecommendationWeight   *float64    `json:"recommendation_weight"`
 	UpdatedBy              pgtype.UUID `json:"updated_by"`
 }
 
 // Partial update: every settable column is COALESCE'd against its own value, so a
 // NULL parameter means "unchanged" rather than "clear". That is what lets the
 // admin API accept a body naming one knob without the caller having to read the
-// other nine and send them back — a read-modify-write that would lose a
+// others and send them back — a read-modify-write that would lose a
 // concurrent edit made between the two calls.
 //
 // updated_by is deliberately not COALESCE'd, for the same reason as
@@ -97,6 +100,7 @@ func (q *Queries) UpdateFeedSettings(ctx context.Context, arg UpdateFeedSettings
 		arg.RelationshipBonus,
 		arg.RecencyScale,
 		arg.DecayExponent,
+		arg.RecommendationWeight,
 		arg.UpdatedBy,
 	)
 	var i SettingsFeed
@@ -114,6 +118,7 @@ func (q *Queries) UpdateFeedSettings(ctx context.Context, arg UpdateFeedSettings
 		&i.DecayExponent,
 		&i.UpdatedBy,
 		&i.UpdatedAt,
+		&i.RecommendationWeight,
 	)
 	return i, err
 }

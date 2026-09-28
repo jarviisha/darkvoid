@@ -188,22 +188,14 @@ func TestPreparedTimelineRefresher_WarmTimelinesStopsOnFirstError(t *testing.T) 
 	}
 }
 
-// A non-positive stored item count must read as the default, not as zero.
-// Refreshing every timeline into an empty one is the failure that looks like
-// success — SetPostsBatch is called, no error is returned, and the feed simply
-// starts missing.
-func TestPreparedTimelineRefresher_DefaultMaxItems(t *testing.T) {
-	for name, settings := range map[string]*Settings{
-		"zero":     settingsWithMaxItems(0),
-		"negative": settingsWithMaxItems(-5),
-		"nil":      nil,
-	} {
-		t.Run(name, func(t *testing.T) {
-			r := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, &recordingTimelineStore{}, &stubRefreshRanker{}, settings)
-			if got := r.maxItems(); got != 1000 {
-				t.Fatalf("maxItems() = %d, want default 1000", got)
-			}
-		})
+// An unloaded holder reads as the defaults, not as zero. Refreshing every
+// timeline into an empty one is the failure that looks like success —
+// SetPostsBatch is called, no error is returned, and the feed simply starts
+// missing.
+func TestPreparedTimelineRefresher_NilSettingsUseDefaultMaxItems(t *testing.T) {
+	r := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, &recordingTimelineStore{}, &stubRefreshRanker{}, nil)
+	if got := r.maxItems(); got != DefaultRuntimeSettings().TimelineMaxItems {
+		t.Fatalf("maxItems() = %d, want the default", got)
 	}
 }
 

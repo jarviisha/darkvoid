@@ -44,6 +44,7 @@ func (r *SettingsRepository) UpdateFeedSettings(ctx context.Context, update enti
 		RelationshipBonus:     update.RelationshipBonus,
 		RecencyScale:          update.RecencyScale,
 		DecayExponent:         update.DecayExponent,
+		RecommendationWeight:  update.RecommendationWeight,
 		UpdatedBy:             uuidToNullable(update.UpdatedBy),
 	}
 	// The narrowing conversions below are all guarded by entity.Validate, which the
@@ -86,6 +87,7 @@ func rowToFeedSettings(row db.SettingsFeed) *entity.FeedSettings {
 		RelationshipBonus:      row.RelationshipBonus,
 		RecencyScale:           row.RecencyScale,
 		DecayExponent:          row.DecayExponent,
+		RecommendationWeight:   row.RecommendationWeight,
 		UpdatedBy:              nullableToUUID(row.UpdatedBy),
 		UpdatedAt:              row.UpdatedAt.Time,
 	}

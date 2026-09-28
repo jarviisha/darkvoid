@@ -19,7 +19,8 @@
 //
 // The knobs that shape all of the above — whether timelines are served and to
 // whom, how many entries they hold and for how long, whether fanout runs, its
-// follower cap, and the three ranking weights — are not captured at construction.
+// follower cap, the three ranking weights and the recommendation weight — are not
+// captured at construction.
 // They live in one *Settings holder that the read path, the ranker, the timeline
 // store, the refresher and the dispatcher all read, and the settings context
 // swaps in a new snapshot when an operator edits them. That is what makes a

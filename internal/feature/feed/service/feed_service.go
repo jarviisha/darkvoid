@@ -81,9 +81,11 @@ func (s *FeedService) WithTimelineRefresher(refresher feed.TimelineRefresher) {
 	s.timeline.refresher = refresher
 }
 
-// WithSettings attaches live rollout settings consulted on every timeline read.
+// WithSettings attaches the live settings: the rollout consulted on every
+// timeline read, and the recommendation weight the mixed feed ranks with.
 func (s *FeedService) WithSettings(settings *feed.Settings) {
 	s.timeline.settings = settings
+	s.mixed.settings = settings
 }
 
 // GetFeed returns the cursor-paginated mixed feed for userID.

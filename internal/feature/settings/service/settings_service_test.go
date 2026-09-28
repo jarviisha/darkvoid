@@ -55,11 +55,20 @@ func newTestService(repo *stubRepo) (*SettingsService, *recordingSink) {
 }
 
 func storedSettings() entity.FeedSettings {
-	s := entity.DefaultFeedSettings()
-	s.TimelineEnabled = true
-	s.TimelineRolloutPercent = 25
-	s.UpdatedAt = time.Date(2026, 7, 27, 10, 30, 0, 0, time.UTC)
-	return s
+	return entity.FeedSettings{
+		TimelineEnabled:        true,
+		TimelineRolloutPercent: 25,
+		TimelineMaxItems:       1000,
+		TimelineTTL:            7 * 24 * time.Hour,
+		TimelineRefreshOnMiss:  true,
+		FanoutEnabled:          true,
+		FanoutMaxFollowers:     10000,
+		RelationshipBonus:      10,
+		RecencyScale:           20,
+		DecayExponent:          1.5,
+		RecommendationWeight:   20,
+		UpdatedAt:              time.Date(2026, 7, 27, 10, 30, 0, 0, time.UTC),
+	}
 }
 
 func TestGetFeedSettings_Success(t *testing.T) {
@@ -156,6 +165,28 @@ func TestUpdateFeedSettings_PublishesTheStoredRowNotTheRequest(t *testing.T) {
 	}
 	if got := sink.applied[0].DecayExponent; got != 2.5 {
 		t.Fatalf("published decay_exponent = %v, want the stored 2.5 — the request never named it", got)
+	}
+}
+
+// recommendation_weight crosses two hand-written mappings in this package —
+// request to update, stored row to response — and a field dropped from either
+// reads back as a setting that saves and never changes anything.
+func TestUpdateFeedSettings_RecommendationWeightRoundTrips(t *testing.T) {
+	stored := storedSettings()
+	stored.RecommendationWeight = 3
+	repo := &stubRepo{settings: stored}
+	svc, _ := newTestService(repo)
+	weight := 7.5
+
+	resp, err := svc.UpdateFeedSettings(context.Background(), &dto.UpdateFeedSettingsRequest{RecommendationWeight: &weight}, uuid.New())
+	if err != nil {
+		t.Fatalf("UpdateFeedSettings: %v", err)
+	}
+	if repo.lastUpdate.RecommendationWeight == nil || *repo.lastUpdate.RecommendationWeight != 7.5 {
+		t.Fatalf("update recommendation_weight = %v, want 7.5", repo.lastUpdate.RecommendationWeight)
+	}
+	if resp.RecommendationWeight != 3 {
+		t.Fatalf("response recommendation_weight = %v, want the stored 3", resp.RecommendationWeight)
 	}
 }
 

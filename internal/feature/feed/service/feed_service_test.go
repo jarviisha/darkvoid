@@ -658,6 +658,59 @@ func TestGetFeed_RecommendationScoreAndRankAffectOrdering(t *testing.T) {
 	}
 }
 
+// The recommendation weight is read from the live settings on every page, so an
+// operator's edit reorders the next page rather than the next deploy. At the
+// default the recommended post outranks the followed one; at 0 its relevance
+// score stops counting and only the rank bonus is left.
+func TestGetFeed_RecommendationWeightFollowsSettings(t *testing.T) {
+	now := time.Now().UTC()
+	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
+	followed := testPost(now)
+	recommended := testPost(now.Add(-time.Minute))
+	reader.following = []*feedentity.Post{followed}
+	reader.byID[followed.ID] = followed
+	reader.byID[recommended.ID] = recommended
+
+	svc := NewFeedService(
+		reader,
+		&mockFollowReader{ids: []uuid.UUID{followed.AuthorID}},
+		&mockLikeReader{},
+		&mockRanker{scores: map[uuid.UUID]float64{followed.ID: 10}},
+		feedcache.NewNopFeedCache(),
+	)
+	svc.WithRecommender(&mockRecommender{items: []feed.RecommendedItem{
+		{ObjectID: recommended.ID.String(), Score: 0.9, Rank: 2},
+	}})
+	settings := feed.NewSettings(feed.DefaultRuntimeSettings())
+	svc.WithSettings(settings)
+
+	first := func() uuid.UUID {
+		t.Helper()
+		page, _, err := svc.GetFeed(context.Background(), uuid.New(), nil)
+		if err != nil {
+			t.Fatalf("GetFeed: %v", err)
+		}
+		if len(page) != 2 {
+			t.Fatalf("page = %d items, want 2", len(page))
+		}
+		return page[0].Post.ID
+	}
+
+	// 0.9*20 + 5/2 = 20.5 against the followed post's 10.
+	if got := first(); got != recommended.ID {
+		t.Fatalf("at the default weight, first = %s, want the recommendation", got)
+	}
+
+	rs := feed.DefaultRuntimeSettings()
+	rs.RecommendationWeight = 0
+	settings.Set(rs)
+
+	// 0.9*0 + 5/2 = 2.5 against 10.
+	if got := first(); got != followed.ID {
+		t.Fatalf("at weight 0, first = %s, want the followed post", got)
+	}
+}
+
 func TestGetFeed_SupplementalMergeCollapsesDuplicatesFiltersVisibilityAndBounds(t *testing.T) {
 	now := time.Now().UTC()
 	userID := uuid.New()

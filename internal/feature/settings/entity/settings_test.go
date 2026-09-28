@@ -1,9 +1,9 @@
 package entity
 
 import (
+	"fmt"
 	"os"
-	"regexp"
-	"strconv"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +63,10 @@ func TestFeedSettingsUpdate_Validate(t *testing.T) {
 		"decay 10.1":           {FeedSettingsUpdate{DecayExponent: fptr(10.1)}, true},
 		"decay negative":       {FeedSettingsUpdate{DecayExponent: fptr(-1)}, true},
 		"decay zero rejected":  {FeedSettingsUpdate{DecayExponent: fptr(0)}, true},
+		"rec weight 0":         {FeedSettingsUpdate{RecommendationWeight: fptr(0)}, false},
+		"rec weight 1000":      {FeedSettingsUpdate{RecommendationWeight: fptr(1000)}, false},
+		"rec weight 1000.5":    {FeedSettingsUpdate{RecommendationWeight: fptr(1000.5)}, true},
+		"rec weight negative":  {FeedSettingsUpdate{RecommendationWeight: fptr(-0.1)}, true},
 		"empty update":         {FeedSettingsUpdate{}, true},
 		"booleans are enough":  {FeedSettingsUpdate{FanoutEnabled: boolPtr(false)}, false},
 		"several fields at on": {FeedSettingsUpdate{TimelineRolloutPercent: ptr(50), DecayExponent: fptr(1.2)}, false},
@@ -104,65 +108,48 @@ func TestDurationSecondsRoundTrip(t *testing.T) {
 	}
 }
 
-// DefaultFeedSettings is the configuration the feed runs on before the first
-// successful read, so it has to be the same configuration the database hands back
-// on that read. The migration is the source; this parses it rather than restating
-// it, so a changed DEFAULT fails here instead of quietly giving every restart a
-// brief window on different numbers.
-func TestDefaultFeedSettings_MatchesMigrationDefaults(t *testing.T) {
-	raw, err := os.ReadFile("../../../../migrations/settings/000001_init.up.sql")
-	if err != nil {
-		t.Fatalf("read migration: %v", err)
+// The bound constants are Validate's copy of the column CHECKs, kept so a bad
+// value is a 400 naming the field instead of a 500 naming a constraint. If the
+// two disagree, a value is either refused that the database would take or taken
+// by Validate and then rejected as a 500 — so each CHECK is rebuilt from the
+// constants and looked for in the migrations. timeline_ttl_seconds is absent on
+// purpose: its CHECK is only "> 0" and MaxTimelineTTL has no column behind it.
+func TestBounds_MatchMigrationChecks(t *testing.T) {
+	files, err := filepath.Glob("../../../../migrations/settings/*.up.sql")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("glob settings migrations: %v (found %d)", err, len(files))
 	}
-	sql := stripSQLComments(string(raw))
-	defaults := DefaultFeedSettings()
+	var sql strings.Builder
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		for line := range strings.SplitSeq(string(raw), "\n") {
+			if i := strings.Index(line, "--"); i >= 0 {
+				line = line[:i]
+			}
+			sql.WriteString(line + " ")
+		}
+	}
+	normalized := strings.Join(strings.Fields(sql.String()), " ")
+	// ponytail: substring match over every migration, so a CHECK later dropped
+	// and re-added with new bounds still finds the old text in 000001. Resolve
+	// constraints by name, last one wins, if a CHECK ever changes.
 
-	for column, want := range map[string]string{
-		"timeline_enabled":         strconv.FormatBool(defaults.TimelineEnabled),
-		"timeline_rollout_percent": strconv.Itoa(defaults.TimelineRolloutPercent),
-		"timeline_max_items":       strconv.Itoa(defaults.TimelineMaxItems),
-		"timeline_ttl_seconds":     strconv.Itoa(int(DurationToSeconds(defaults.TimelineTTL))),
-		"timeline_refresh_on_miss": strconv.FormatBool(defaults.TimelineRefreshOnMiss),
-		"fanout_enabled":           strconv.FormatBool(defaults.FanoutEnabled),
-		"fanout_max_followers":     strconv.Itoa(defaults.FanoutMaxFollowers),
-		"relationship_bonus":       strconv.FormatFloat(defaults.RelationshipBonus, 'g', -1, 64),
-		"recency_scale":            strconv.FormatFloat(defaults.RecencyScale, 'g', -1, 64),
-		"decay_exponent":           strconv.FormatFloat(defaults.DecayExponent, 'g', -1, 64),
+	for _, check := range []string{
+		fmt.Sprintf("timeline_rollout_percent >= 0 AND timeline_rollout_percent <= %d", MaxRolloutPercent),
+		fmt.Sprintf("timeline_max_items >= %d AND timeline_max_items <= %d", MinTimelineMaxItems, MaxTimelineMaxItems),
+		fmt.Sprintf("fanout_max_followers >= %d", MinFanoutMaxFollowers),
+		fmt.Sprintf("relationship_bonus >= 0 AND relationship_bonus <= %d", MaxRelationshipBonus),
+		fmt.Sprintf("recency_scale >= 0 AND recency_scale <= %d", MaxRecencyScale),
+		fmt.Sprintf("decay_exponent > 0 AND decay_exponent <= %d", MaxDecayExponent),
+		fmt.Sprintf("recommendation_weight >= 0 AND recommendation_weight <= %d", MaxRecommendationWeight),
 	} {
-		got, ok := migrationDefault(sql, column)
-		if !ok {
-			t.Errorf("no DEFAULT found for %s in the migration", column)
-			continue
-		}
-		if !strings.EqualFold(got, want) {
-			t.Errorf("%s: migration DEFAULT %s, DefaultFeedSettings %s", column, got, want)
+		if !strings.Contains(normalized, "CHECK ("+check+")") {
+			t.Errorf("no CHECK (%s) in the settings migrations — the constant and the column disagree", check)
 		}
 	}
-}
-
-// migrationDefault pulls the DEFAULT literal for one column out of the CREATE
-// TABLE body.
-func migrationDefault(sql, column string) (string, bool) {
-	re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(column) + `\s+[A-Z ]+\s+NOT NULL DEFAULT\s+(\S+?)[\s,]`)
-	m := re.FindStringSubmatch(sql)
-	if m == nil {
-		return "", false
-	}
-	return m[1], true
-}
-
-// stripSQLComments removes -- comments so a number mentioned in prose cannot be
-// mistaken for a DEFAULT.
-func stripSQLComments(sql string) string {
-	var b strings.Builder
-	for line := range strings.SplitSeq(sql, "\n") {
-		if i := strings.Index(line, "--"); i >= 0 {
-			line = line[:i]
-		}
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	return b.String()
 }
 
 func boolPtr(v bool) *bool { return &v }
