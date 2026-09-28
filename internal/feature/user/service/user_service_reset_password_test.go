@@ -32,24 +32,26 @@ func TestAdminResetPassword_Success(t *testing.T) {
 }
 
 func TestAdminResetPassword_WeakPasswordRejected(t *testing.T) {
-	called := false
-	repo := &mockUserRepo{
-		getUserByID: func(_ context.Context, _ uuid.UUID) (*entity.User, error) {
-			return &entity.User{ID: uuid.New(), IsActive: true}, nil
-		},
-		updateUserPassword: func(_ context.Context, _ uuid.UUID, _ string, _ *uuid.UUID) error {
-			called = true
-			return nil
-		},
-	}
+	for name, tc := range rejectedPasswords {
+		t.Run(name, func(t *testing.T) {
+			called := false
+			repo := &mockUserRepo{
+				getUserByID: func(_ context.Context, _ uuid.UUID) (*entity.User, error) {
+					return &entity.User{ID: uuid.New(), IsActive: true}, nil
+				},
+				updateUserPassword: func(_ context.Context, _ uuid.UUID, _ string, _ *uuid.UUID) error {
+					called = true
+					return nil
+				},
+			}
 
-	// "short" fails the min-length + letters-and-numbers rule.
-	err := newUserService(repo).AdminResetPassword(context.Background(), uuid.New(), "short")
-	if err == nil {
-		t.Fatal("expected error for weak password")
-	}
-	if called {
-		t.Fatal("must not persist a rejected password")
+			err := newUserService(repo).AdminResetPassword(context.Background(), uuid.New(), tc.password)
+			assertServiceErrorCode(t, err, tc.code)
+			assertErrorField(t, err, "password")
+			if called {
+				t.Fatal("must not persist a rejected password")
+			}
+		})
 	}
 }
 

@@ -69,40 +69,19 @@ func TestCreateUser_InvalidEmail(t *testing.T) {
 	assertServiceErrorCode(t, err, "VALIDATION_ERROR")
 }
 
-func TestCreateUser_WeakPassword_TooShort(t *testing.T) {
+func TestCreateUser_WeakPassword(t *testing.T) {
 	svc := newUserService(&mockUserRepo{})
-	req := validCreateReq()
-	req.Password = "abc123" // 6 chars, below minimum 8
 
-	_, err := svc.CreateUser(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected weak password error, got nil")
+	for name, tc := range rejectedPasswords {
+		t.Run(name, func(t *testing.T) {
+			req := validCreateReq()
+			req.Password = tc.password
+
+			_, err := svc.CreateUser(context.Background(), req)
+			assertServiceErrorCode(t, err, tc.code)
+			assertErrorField(t, err, "password")
+		})
 	}
-	assertServiceErrorCode(t, err, "WEAK_PASSWORD")
-}
-
-func TestCreateUser_WeakPassword_NoNumber(t *testing.T) {
-	svc := newUserService(&mockUserRepo{})
-	req := validCreateReq()
-	req.Password = "OnlyLetters"
-
-	_, err := svc.CreateUser(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected weak password error, got nil")
-	}
-	assertServiceErrorCode(t, err, "WEAK_PASSWORD")
-}
-
-func TestCreateUser_WeakPassword_NoLetter(t *testing.T) {
-	svc := newUserService(&mockUserRepo{})
-	req := validCreateReq()
-	req.Password = "12345678"
-
-	_, err := svc.CreateUser(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected weak password error, got nil")
-	}
-	assertServiceErrorCode(t, err, "WEAK_PASSWORD")
 }
 
 func TestCreateUser_DuplicateUsername(t *testing.T) {

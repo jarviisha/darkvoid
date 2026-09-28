@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -101,7 +102,11 @@ func schemaRequiresNonEmpty(binding string) bool {
 	opts := strings.Split(binding, ",")
 	return slices.Contains(opts, "required") && slices.ContainsFunc(opts, func(opt string) bool {
 		n, ok := strings.CutPrefix(opt, "min=")
-		return ok && n != "0"
+		if !ok {
+			return false
+		}
+		minLength, err := strconv.Atoi(n)
+		return err == nil && minLength > 0
 	})
 }
 
