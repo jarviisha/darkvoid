@@ -19,12 +19,26 @@ import (
 
 // The schema's required fields and the services' empty-field checks live in
 // different places. When they drifted, generated clients typed display_name
-// optional and signup broke on every request. Each request below is one that
-// passes validation; blanking a field must draw a 400 exactly where the tag is.
+// optional and signup broke on every request. Each request below succeeds;
+// blanking a field must draw a 400 exactly where the tag is. Starting from a
+// success rather than from "not a 400" means a check that runs after a lookup
+// is still reached, instead of the lookup's own error standing in for it.
 // A request type missing from this list is not checked.
 func TestRequestSchema_RequiredMatchesServiceValidation(t *testing.T) {
 	ctx := context.Background()
-	auth := newAuthService(&mockUserRepo{}, &mockRefreshTokenRepo{}, newTestJWT(t))
+	const password = "SecurePass123"
+	hash, err := hashPassword(password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := activeUser(uuid.New())
+	user.PasswordHash = hash
+	users := &mockUserRepo{
+		getUserByUsername: func(context.Context, string) (*entity.User, error) { return user, nil },
+		getUserByID:       func(context.Context, uuid.UUID) (*entity.User, error) { return user, nil },
+	}
+	_, refreshTokens := newValidToken(t, user.ID)
+	auth := newAuthService(users, refreshTokens, newTestJWT(t))
 	// An unknown token is itself a 400, so each token flow gets a repo that
 	// redeems any lookup as a token of that flow's type. A blanked token then
 	// draws a 400 only from the service's own empty check.
@@ -44,7 +58,7 @@ func TestRequestSchema_RequiredMatchesServiceValidation(t *testing.T) {
 		dto.RegisterRequest{Username: "johndoe", Email: "john@example.com", DisplayName: "John Doe", Password: "SecurePass123"},
 		func(r dto.RegisterRequest) error { _, err := auth.Register(ctx, &r); return err })
 	checkRequiredFields(t,
-		dto.LoginRequest{Username: "johndoe", Password: "SecurePass123"},
+		dto.LoginRequest{Username: "johndoe", Password: password},
 		func(r dto.LoginRequest) error { _, err := auth.Login(ctx, &r); return err })
 	checkRequiredFields(t,
 		dto.RefreshTokenRequest{RefreshToken: "token"},
@@ -53,9 +67,9 @@ func TestRequestSchema_RequiredMatchesServiceValidation(t *testing.T) {
 		dto.LogoutRequest{RefreshToken: "token"},
 		func(r dto.LogoutRequest) error { return auth.Logout(ctx, &r) })
 	checkRequiredFields(t,
-		dto.ChangePasswordRequest{OldPassword: "OldPass123", NewPassword: "NewPass123"},
+		dto.ChangePasswordRequest{OldPassword: password, NewPassword: "NewPass123"},
 		func(r dto.ChangePasswordRequest) error {
-			return auth.ChangePassword(ctx, uuid.New(), r.OldPassword, r.NewPassword)
+			return auth.ChangePassword(ctx, user.ID, r.OldPassword, r.NewPassword)
 		})
 	checkRequiredFields(t,
 		dto.VerifyEmailRequest{Token: "token"},
@@ -75,8 +89,8 @@ func checkRequiredFields[T any](t *testing.T, valid T, call func(T) error) {
 	t.Helper()
 	typ := reflect.TypeFor[T]()
 	t.Run(typ.Name(), func(t *testing.T) {
-		if err := call(valid); isBadRequest(err) {
-			t.Fatalf("valid request fails validation, so no field can be judged: %v", err)
+		if err := call(valid); err != nil {
+			t.Fatalf("valid request fails, so no field can be judged: %v", err)
 		}
 		for i := range typ.NumField() {
 			field := typ.Field(i)
