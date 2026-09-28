@@ -1957,6 +1957,143 @@ func TestGetFeed_SpentRecommenderStillEndsTheScroll(t *testing.T) {
 	}
 }
 
+// scrollFeed pages through GetFeed until the cursor runs out or maxPages is hit,
+// returning every served post id in order and whether the scroll ended.
+func scrollFeed(t *testing.T, svc *FeedService, userID uuid.UUID, maxPages int) ([]uuid.UUID, bool) {
+	t.Helper()
+	var served []uuid.UUID
+	var cursor *feed.FeedCursor
+	for range maxPages {
+		page, next, err := svc.GetFeed(context.Background(), userID, cursor)
+		if err != nil {
+			t.Fatalf("GetFeed: %v", err)
+		}
+		for _, item := range page {
+			served = append(served, item.Post.ID)
+		}
+		if next == nil {
+			return served, true
+		}
+		cursor = next
+	}
+	return served, false
+}
+
+// A spent recommender must stay spent. The cursor used to drop the offset once
+// the frontier reached the provider's total, and an absent offset reads as 0, so
+// the next page asked for the same recommendations again — the page then had
+// candidates, discover was never reached, and the scroll repeated one post
+// forever. TestGetFeed_SpentRecommenderStillEndsTheScroll could not see it: its
+// discover stream is empty, so the scroll ends on page 1.
+func TestGetFeed_SpentRecommenderHandsOffToDiscover(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	own := testPost(now)
+	own.AuthorID = userID
+	recommended := testPost(now.Add(-time.Minute))
+	discovered := testPost(now.Add(-time.Hour))
+	reader := &mockPostReader{
+		following: []*feedentity.Post{own},
+		discover:  []*feedentity.Post{discovered},
+		byID: map[uuid.UUID]*feedentity.Post{
+			own.ID:         own,
+			recommended.ID: recommended,
+			discovered.ID:  discovered,
+		},
+	}
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10, recommended.ID: 5}})
+	svc.WithRecommender(&mockRecommender{
+		items: []feed.RecommendedItem{{ObjectID: recommended.ID.String(), Score: 0.9, Rank: 1}},
+	})
+
+	served, ended := scrollFeed(t, svc, userID, 6)
+	if !ended {
+		t.Fatalf("scroll did not end within 6 pages, served %v", served)
+	}
+	count := make(map[uuid.UUID]int)
+	for _, id := range served {
+		count[id]++
+	}
+	for name, id := range map[string]uuid.UUID{"own": own.ID, "recommended": recommended.ID, "discovered": discovered.ID} {
+		if count[id] != 1 {
+			t.Errorf("%s post served %d times, want once (served %v)", name, count[id], served)
+		}
+	}
+}
+
+// A failed load of the recommended posts is a broken source, not a spent one.
+// It used to go unrecorded, and the frontier then walked over the whole window
+// as if every post in it had been filtered out — so with nothing else left the
+// scroll ended on the error, and the recommendations were skipped for good.
+func TestGetFeed_RecommendationLoadErrorKeepsTheScrollAndTheWindow(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	own := testPost(now)
+	own.AuthorID = userID
+	recommended := testPost(now.Add(-time.Minute))
+	reader := &mockPostReader{
+		following: []*feedentity.Post{own},
+		byID: map[uuid.UUID]*feedentity.Post{
+			own.ID:         own,
+			recommended.ID: recommended,
+		},
+		byIDErr: errors.New("db blip"),
+	}
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10, recommended.ID: 5}})
+	svc.WithRecommender(&mockRecommender{
+		items: []feed.RecommendedItem{{ObjectID: recommended.ID.String(), Score: 0.9, Rank: 1}},
+	})
+
+	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if len(page) != 1 || page[0].Post.ID != own.ID {
+		t.Fatalf("page 1 = %d items, want only the own post", len(page))
+	}
+	if cursor == nil {
+		t.Fatal("cursor = nil after a failed recommendation load, want the scroll to continue")
+	}
+
+	reader.byIDErr = nil
+	page, _, err = svc.GetFeed(context.Background(), userID, cursor)
+	if err != nil {
+		t.Fatalf("GetFeed page 2: %v", err)
+	}
+	if len(page) != 1 || page[0].Post.ID != recommended.ID {
+		t.Fatalf("page 2 = %d items, want the recommendation the failed load skipped", len(page))
+	}
+}
+
+// A recommender outage mid-scroll must not rewind the recommendation offset.
+// The failed call leaves an empty window at the incoming offset, and that
+// position has to survive into the next cursor — dropping it reads as 0 and
+// replays every recommendation already served once the provider recovers.
+func TestGetFeed_RecommenderErrorKeepsTheOffset(t *testing.T) {
+	now := time.Now().UTC()
+	userID := uuid.New()
+	own := testPost(now)
+	own.AuthorID = userID
+	reader := &mockPostReader{
+		following: []*feedentity.Post{own},
+		byID:      map[uuid.UUID]*feedentity.Post{own.ID: own},
+	}
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10}})
+	svc.WithRecommender(&mockRecommender{err: errors.New("codohue down")})
+
+	incoming := &feed.FeedCursor{TimelineUser: userID.String(), RecommendationOffset: 7}
+	_, cursor, err := svc.GetFeed(context.Background(), userID, incoming)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if cursor == nil {
+		t.Fatal("cursor = nil during a recommender outage, want the scroll to continue")
+	}
+	if cursor.RecommendationOffset != 7 {
+		t.Fatalf("rec offset = %d, want the incoming 7 carried through the outage", cursor.RecommendationOffset)
+	}
+}
+
 // TestGetFeed_DiscoverKeepsSeenIDsItHasNotPassedYet pins when a carried id may
 // be dropped. The fetch reaches past the end of the page, so an id found among
 // the rows the page truncates away is still ahead of the cursor the page emits —

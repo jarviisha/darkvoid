@@ -126,7 +126,13 @@ func (b *mixedFeedBuilder) collect(ctx context.Context, userID uuid.UUID, author
 			recWindow.total = recommendations.Total
 			recommendationCandidates, loadErr := b.loadRecommendations(ctx, recommendations.Items, recommendations.Offset, cursor)
 			if loadErr != nil {
+				// A failed load is a broken source, not a spent one. The window
+				// also collapses to its start: its offsets have no candidates, and
+				// the frontier walk would otherwise read them as filtered out and
+				// step over recommendations nobody was ever shown.
 				logger.LogError(ctx, loadErr, "failed to load recommendation candidates", "user_id", userID)
+				sourceFailed = true
+				recWindow.end = recWindow.start
 			}
 			candidates = append(candidates, recommendationCandidates...)
 		}
@@ -358,6 +364,14 @@ func nextMixedCursor(userID uuid.UUID, page []*feedentity.FeedItem, incoming *fe
 			}
 		}
 		sort.Ints(next.RecommendationSeen)
+	} else if recWindow.end > 0 {
+		// Spent, or the provider answered nothing this page: park the offset at
+		// the end of what it returned rather than omit it. An omitted offset reads
+		// as 0, so the next page would ask for the same recommendations again, find
+		// candidates, never reach discover, and repeat them for the rest of the
+		// scroll. Past the end the provider returns an empty window, which is how
+		// recommendationsDry recognises it.
+		next.RecommendationOffset = recWindow.end
 	}
 
 	position, trendingSeen, trendingConsumed := advanceTrending(page, incoming, sources.trendingWindow, !sources.trendingTruncated && !sources.trendingFailed)
