@@ -20,7 +20,7 @@ Always prefer the `Makefile` — it loads `.env` automatically and scopes migrat
 - `make docker-up` / `make docker-down` / `make docker-logs` — full stack (Postgres + Redis + app) via `compose.yml` + `compose.dev.yml` through `scripts/dv`
 
 - `make ctl CTL_ARGS="user roles"` — operator CLI; `user grant-role -username u -role r` is the only way to assign a role no API endpoint hands out, such as `bot`, `mail suppressions` / `mail unsuppress -email x` manage the bounce suppression list (nothing in the API takes an address back off it), and `codohue reindex` re-sends existing posts to the recommendation index (posts are indexed once at creation with no retry queue, so an outage leaves them missing until this is run)
-- `make install-tools` — installs `sqlc`, `swag`, `golangci-lint`, `air`, `migrate`
+- `make install-tools` — installs `sqlc`, `golangci-lint`, `air`, `migrate`. `swag` is not installed: the swagger targets `go run` it at `SWAG_VERSION`, which must equal the `swaggo/swag` version in `go.mod` — a v2 binary on PATH writes a `docs/docs.go` that does not build, and CI fails a PR whose `docs/` was not regenerated
 
 ### Migrations
 

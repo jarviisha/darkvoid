@@ -110,3 +110,12 @@ jobs:
           make install-sqlc
           make sqlc-generate
           git diff --exit-code -- internal/feature/*/db
+
+      # The schema test pins struct tags to service validation, but clients
+      # generate from docs/swagger.json. A tag changed without regenerating
+      # passes every test and still publishes the old schema. swag fmt also
+      # rewrites annotations, hence the source directories in the diff.
+      - name: Verify Swagger docs are regenerated
+        run: |
+          make swagger-generate
+          git diff --exit-code -- docs cmd internal
