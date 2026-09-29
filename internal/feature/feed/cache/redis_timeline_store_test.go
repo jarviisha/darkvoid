@@ -39,7 +39,7 @@ func newRedisTimelineStoreForTest(t *testing.T) (*RedisTimelineStore, *pkgredis.
 	return NewRedisTimelineStore(client, timelineSettings(3, time.Hour)), client
 }
 
-func TestRedisTimelineStore_SetReadTrimAndTTL(t *testing.T) {
+func TestRedisTimelineStore_ReadTrimAndTTL(t *testing.T) {
 	ctx := context.Background()
 	store, client := newRedisTimelineStoreForTest(t)
 	defer client.Close() //nolint:errcheck
@@ -52,8 +52,8 @@ func TestRedisTimelineStore_SetReadTrimAndTTL(t *testing.T) {
 		{PostID: uuid.New(), Score: 400},
 	}
 
-	if err := store.SetPostsBatch(ctx, userID, entries); err != nil {
-		t.Fatalf("SetPostsBatch: %v", err)
+	if err := store.ReplacePosts(ctx, userID, entries, time.Now()); err != nil {
+		t.Fatalf("ReplacePosts: %v", err)
 	}
 	if err := store.AddPost(ctx, userID, entries[3]); err != nil {
 		t.Fatalf("AddPost duplicate: %v", err)
@@ -116,35 +116,6 @@ func TestRedisTimelineStore_AddPostKeepsExistingScore(t *testing.T) {
 	}
 }
 
-func TestRedisTimelineStore_SetPostsBatchOverwritesAndInserts(t *testing.T) {
-	ctx := context.Background()
-	store, client := newRedisTimelineStoreForTest(t)
-	defer client.Close() //nolint:errcheck
-
-	userID := uuid.New()
-	existing := uuid.New()
-	fresh := uuid.New()
-	if err := store.AddPost(ctx, userID, feed.TimelineEntry{PostID: existing, Score: 100}); err != nil {
-		t.Fatalf("AddPost: %v", err)
-	}
-	if err := store.SetPostsBatch(ctx, userID, []feed.TimelineEntry{
-		{PostID: existing, Score: 300},
-		{PostID: fresh, Score: 200},
-	}); err != nil {
-		t.Fatalf("SetPostsBatch: %v", err)
-	}
-	if got := int64(client.ZScore(ctx, timelineKey(userID), existing.String()).Val()); got != 300 {
-		t.Fatalf("existing member score = %d, want overwritten 300", got)
-	}
-	if got := int64(client.ZScore(ctx, timelineKey(userID), fresh.String()).Val()); got != 200 {
-		t.Fatalf("inserted member score = %d, want 200", got)
-	}
-
-	if err := store.SetPostsBatch(ctx, userID, nil); err != nil {
-		t.Fatalf("SetPostsBatch empty must no-op: %v", err)
-	}
-}
-
 func TestRedisTimelineStore_ReplaceRemovesStaleAndPreservesConcurrentFanout(t *testing.T) {
 	ctx := context.Background()
 	store, client := newRedisTimelineStoreForTest(t)
@@ -158,7 +129,7 @@ func TestRedisTimelineStore_ReplaceRemovesStaleAndPreservesConcurrentFanout(t *t
 	// old post while refresh is rebuilding the same timeline).
 	concurrent := feed.TimelineEntry{PostID: uuid.New(), Score: feed.PackTimelineScore(1, preserveAfter.Add(-time.Hour))}
 	wanted := feed.TimelineEntry{PostID: uuid.New(), Score: feed.PackTimelineScore(2, preserveAfter.Add(-time.Hour))}
-	if err := store.SetPostsBatch(ctx, userID, []feed.TimelineEntry{stale}); err != nil {
+	if err := store.ReplacePosts(ctx, userID, []feed.TimelineEntry{stale}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.AddPost(ctx, userID, concurrent); err != nil {
@@ -191,8 +162,8 @@ func TestRedisTimelineStore_EqualScoreBlockPagination(t *testing.T) {
 		members = append(members, feed.TimelineEntry{PostID: uuid.New(), Score: score})
 	}
 	bigStore := NewRedisTimelineStore(client, timelineSettings(200, time.Hour))
-	if err := bigStore.SetPostsBatch(ctx, userID, members); err != nil {
-		t.Fatalf("SetPostsBatch: %v", err)
+	if err := bigStore.ReplacePosts(ctx, userID, members, time.Now()); err != nil {
+		t.Fatalf("ReplacePosts: %v", err)
 	}
 
 	seen := make(map[uuid.UUID]bool, len(members))
@@ -229,8 +200,8 @@ func TestRedisTimelineStore_LegacyScalePositionReadsFromTop(t *testing.T) {
 		{PostID: uuid.New(), Score: feed.PackTimelineScore(30, at)},
 		{PostID: uuid.New(), Score: feed.PackTimelineScore(20, at)},
 	}
-	if err := store.SetPostsBatch(ctx, userID, entries); err != nil {
-		t.Fatalf("SetPostsBatch: %v", err)
+	if err := store.ReplacePosts(ctx, userID, entries, time.Now()); err != nil {
+		t.Fatalf("ReplacePosts: %v", err)
 	}
 
 	// A pre-migration cursor carries a UnixMicro-scale score (~1.7e15), above
@@ -255,11 +226,11 @@ func TestRedisTimelineStore_TieCursor(t *testing.T) {
 	const score = int64(30_000_000_000)
 	low := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	high := uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff")
-	if err := store.SetPostsBatch(ctx, userID, []feed.TimelineEntry{
+	if err := store.ReplacePosts(ctx, userID, []feed.TimelineEntry{
 		{PostID: low, Score: score},
 		{PostID: high, Score: score},
-	}); err != nil {
-		t.Fatalf("SetPostsBatch: %v", err)
+	}, time.Now()); err != nil {
+		t.Fatalf("ReplacePosts: %v", err)
 	}
 
 	page, err := store.ReadPage(ctx, userID, nil, 2)
@@ -331,8 +302,8 @@ func TestRedisTimelineStore_TrimBoundFollowsSettingsChange(t *testing.T) {
 	for i := range entries {
 		entries[i] = feed.TimelineEntry{PostID: uuid.New(), Score: int64(100 * (i + 1))}
 	}
-	if err := store.SetPostsBatch(ctx, userID, entries); err != nil {
-		t.Fatalf("SetPostsBatch: %v", err)
+	if err := store.ReplacePosts(ctx, userID, entries, time.Now()); err != nil {
+		t.Fatalf("ReplacePosts: %v", err)
 	}
 	page, err := store.ReadPage(ctx, userID, nil, 10)
 	if err != nil {
@@ -357,20 +328,6 @@ func TestRedisTimelineStore_TrimBoundFollowsSettingsChange(t *testing.T) {
 	}
 	if len(page.Entries) != 2 {
 		t.Fatalf("entries = %d, want 2 — the store is still trimming to the cap it was built with", len(page.Entries))
-	}
-
-	// Trim() reads the same live bound rather than a captured one.
-	rs.TimelineMaxItems = 1
-	settings.Set(rs)
-	if err = store.Trim(ctx, userID); err != nil {
-		t.Fatalf("Trim: %v", err)
-	}
-	page, err = store.ReadPage(ctx, userID, nil, 10)
-	if err != nil {
-		t.Fatalf("ReadPage after Trim: %v", err)
-	}
-	if len(page.Entries) != 1 {
-		t.Fatalf("entries after Trim = %d, want 1", len(page.Entries))
 	}
 }
 

@@ -101,26 +101,19 @@ func TestLocalRanker_FollowsSettingsChange(t *testing.T) {
 // scales and the two would sort against each other.
 func TestEventDispatcher_WriteScoreFollowsSettingsChange(t *testing.T) {
 	settings := NewSettings(DefaultRuntimeSettings())
-	handler := &recordingEventHandler{events: make(chan Event, 2)}
-	dispatcher := NewEventDispatcher(settings, 1, 2, handler)
+	dispatcher := NewEventDispatcher(settings, 1, 1, nil)
 	defer dispatcher.Close()
 
 	createdAt := time.Date(2026, 7, 24, 9, 30, 0, 0, time.UTC)
-	if err := dispatcher.EmitPostCreated(context.Background(), uuid.New(), uuid.New(), "public", createdAt); err != nil {
-		t.Fatalf("EmitPostCreated: %v", err)
-	}
-	first := <-handler.events
+	event := Event{Type: EventPostCreated, PostID: uuid.New(), CreatedAt: createdAt}
+	first := dispatcher.withWriteScore(event)
 
 	rs := DefaultRuntimeSettings()
 	rs.Scorer.RecencyScale = 200
 	rs.Scorer.RelationshipBonus = 100
 	settings.Set(rs)
 
-	if err := dispatcher.EmitPostCreated(context.Background(), uuid.New(), uuid.New(), "public", createdAt); err != nil {
-		t.Fatalf("EmitPostCreated after settings change: %v", err)
-	}
-	second := <-handler.events
-
+	second := dispatcher.withWriteScore(event)
 	if want := PackTimelineScore(300, createdAt); second.Score != want {
 		t.Fatalf("write score after settings change = %d, want %d", second.Score, want)
 	}

@@ -31,6 +31,13 @@ type RuntimeSettings struct {
 	RecommendationWeight float64
 }
 
+// ScorerConfig holds the weights of the local ranking formula; see LocalRanker.
+type ScorerConfig struct {
+	RelationshipBonus float64 // bonus added when post author is followed
+	RecencyScale      float64 // multiplier for recency signal; max recency = RecencyScale at t=0
+	DecayExponent     float64 // power applied to recency decay
+}
+
 // DefaultRuntimeSettings returns the values the feed runs on before the first
 // settings read succeeds, and the ones the feed package's own tests use. This is
 // the only copy in Go; the other is the column defaults in settings.feed, and

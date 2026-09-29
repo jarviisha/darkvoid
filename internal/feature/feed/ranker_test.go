@@ -1,6 +1,7 @@
 package feed
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
@@ -9,10 +10,21 @@ import (
 	feedentity "github.com/jarviisha/darkvoid/internal/feature/feed/entity"
 )
 
-func TestScorer_Score(t *testing.T) {
+func TestLocalRanker_Formula(t *testing.T) {
 	cfg := ScorerConfig{RelationshipBonus: 10, RecencyScale: 20, DecayExponent: 1.5}
-	scorer := NewScorer(cfg)
+	rs := DefaultRuntimeSettings()
+	rs.Scorer = cfg
+	ranker := NewLocalRanker(NewSettings(rs))
 	now := time.Now()
+
+	score := func(post *feedentity.Post, isFollowing bool, now time.Time) float64 {
+		t.Helper()
+		scores, err := ranker.RankPosts(context.Background(), []*feedentity.Post{post}, map[string]bool{post.AuthorID.String(): isFollowing}, now)
+		if err != nil {
+			t.Fatalf("RankPosts: %v", err)
+		}
+		return scores[post.ID.String()]
+	}
 
 	makePost := func(likes int64, hoursAgo float64) *feedentity.Post {
 		return &feedentity.Post{
@@ -24,17 +36,17 @@ func TestScorer_Score(t *testing.T) {
 
 	t.Run("relationship bonus applied when following", func(t *testing.T) {
 		post := makePost(0, 0)
-		withBonus := scorer.Score(post, true, now)
-		withoutBonus := scorer.Score(post, false, now)
+		withBonus := score(post, true, now)
+		withoutBonus := score(post, false, now)
 		if withBonus-withoutBonus != cfg.RelationshipBonus {
 			t.Errorf("expected bonus=%.1f, got diff=%.4f", cfg.RelationshipBonus, withBonus-withoutBonus)
 		}
 	})
 
 	t.Run("engagement increases score logarithmically", func(t *testing.T) {
-		low := scorer.Score(makePost(10, 0), false, now)
-		mid := scorer.Score(makePost(100, 0), false, now)
-		high := scorer.Score(makePost(1000, 0), false, now)
+		low := score(makePost(10, 0), false, now)
+		mid := score(makePost(100, 0), false, now)
+		high := score(makePost(1000, 0), false, now)
 		if !(low < mid && mid < high) {
 			t.Error("expected score to increase with likes")
 		}
@@ -45,8 +57,8 @@ func TestScorer_Score(t *testing.T) {
 	})
 
 	t.Run("recency decays over time", func(t *testing.T) {
-		fresh := scorer.Score(makePost(0, 0), false, now)
-		old := scorer.Score(makePost(0, 24), false, now)
+		fresh := score(makePost(0, 0), false, now)
+		old := score(makePost(0, 24), false, now)
 		if fresh <= old {
 			t.Errorf("expected fresh post (%.4f) to score higher than old post (%.4f)", fresh, old)
 		}
@@ -54,19 +66,19 @@ func TestScorer_Score(t *testing.T) {
 
 	t.Run("table examples", func(t *testing.T) {
 		// A: 100 likes, 1h, following  → engagement≈46.2, recency=20/2^1.5≈7.1, bonus=10 → ~63.2
-		scoreA := scorer.Score(makePost(100, 1), true, now)
+		scoreA := score(makePost(100, 1), true, now)
 		if math.Abs(scoreA-63.2) > 1.5 {
 			t.Errorf("post A: expected ~63.2, got %.2f", scoreA)
 		}
 
 		// B: 500 likes, 2h, not following → engagement≈62.2, recency=20/3^1.5≈3.8, bonus=0 → ~66.0
-		scoreB := scorer.Score(makePost(500, 2), false, now)
+		scoreB := score(makePost(500, 2), false, now)
 		if math.Abs(scoreB-66.0) > 1.5 {
 			t.Errorf("post B: expected ~66.0, got %.2f", scoreB)
 		}
 
 		// C: 10 likes, 0.5h, following → engagement≈24.0, recency=20/1.5^1.5≈10.9, bonus=10 → ~44.9
-		scoreC := scorer.Score(makePost(10, 0.5), true, now)
+		scoreC := score(makePost(10, 0.5), true, now)
 		if math.Abs(scoreC-44.9) > 1.5 {
 			t.Errorf("post C: expected ~44.9, got %.2f", scoreC)
 		}
@@ -84,7 +96,7 @@ func TestScorer_Score(t *testing.T) {
 			LikeCount: 0,
 			CreatedAt: now.Add(1 * time.Hour),
 		}
-		score := scorer.Score(future, false, now)
+		score := score(future, false, now)
 		if score < 0 {
 			t.Errorf("expected non-negative score, got %.4f", score)
 		}

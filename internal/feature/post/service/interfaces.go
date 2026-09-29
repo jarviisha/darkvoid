@@ -124,13 +124,6 @@ type notificationEmitter interface {
 	EmitMention(ctx context.Context, actorID, recipientID, postID uuid.UUID) error
 }
 
-// FeedEventEmitter emits feed-impacting post events after successful mutations.
-type FeedEventEmitter interface {
-	EmitPostCreated(ctx context.Context, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error
-	EmitPostDeleted(ctx context.Context, postID, authorID uuid.UUID) error
-	EmitPostVisibilityChanged(ctx context.Context, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error
-}
-
 // FeedEventOutbox persists post feed events inside the post mutation transaction.
 type FeedEventOutbox interface {
 	EnqueuePostCreated(ctx context.Context, tx pgx.Tx, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error

@@ -58,8 +58,7 @@ func (app *Application) setupContexts(ctx context.Context) error {
 	if err := app.setupPostContext(store, feedCache, feedOutbox, codohueClient); err != nil {
 		return err
 	}
-	app.setupFeedContext(store, feedCache, feedOutbox, codohueClient)
-	if err := app.wireFeedDependencies(); err != nil {
+	if err := app.setupFeedContext(store, feedCache, feedOutbox, codohueClient); err != nil {
 		return err
 	}
 

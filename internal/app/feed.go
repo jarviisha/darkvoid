@@ -46,8 +46,7 @@ type FeedPorts struct {
 // as dependencies while being constructed first.
 //
 // codohueClient is built by the caller, not here: the post services need the
-// same client and are constructed first. Nil means the integration is off, and
-// the recommender and trending fetcher are simply not wired.
+// same client and are constructed first.
 func SetupFeedContext(
 	store storage.Storage,
 	postReader feed.PostReader,
@@ -58,7 +57,7 @@ func SetupFeedContext(
 	outbox *feed.PostgresOutbox,
 	codohueClient *codohue.Client,
 	feedFanoutCfg config.FeedFanoutConfig,
-) *FeedContext {
+) (*FeedContext, error) {
 	// One settings holder shared by the read path, the ranker, the timeline
 	// store, the background refresher and the dispatcher's write-time score, so
 	// all five stay on the same numbers and an operator's edit reaches them
@@ -66,27 +65,37 @@ func SetupFeedContext(
 	// them with the stored row during wiring, before the server starts serving.
 	settings := feed.NewSettings(feed.DefaultRuntimeSettings())
 	ranker := feed.NewLocalRanker(settings)
-	feedSvc := feedservice.NewFeedService(postReader, followReader, likeReader, ranker, cache)
 	timelineStore := feedcache.NewRedisTimelineStore(redisClient, settings)
-	feedSvc.WithTimelineStore(timelineStore)
-	feedSvc.WithSettings(settings)
 	// One refresher serves both consumers: the read path's refresh-on-miss and
 	// the fanout worker's follow-change rebuild.
 	refresher := feed.NewPreparedTimelineRefresher(postReader, followReader, timelineStore, ranker, settings)
-	feedSvc.WithTimelineRefresher(refresher)
+
+	// Nil means the integration is off, and the recommender and trending
+	// fetcher are simply not wired.
+	var opts []feedservice.FeedServiceOption
+	if codohueClient != nil {
+		opts = append(opts, feedservice.WithRecommender(codohueClient), feedservice.WithTrendingFetcher(codohueClient))
+	}
+	feedSvc, err := feedservice.NewFeedService(feedservice.FeedDeps{
+		Posts:     postReader,
+		Follows:   followReader,
+		Likes:     likeReader,
+		Ranker:    ranker,
+		Cache:     cache,
+		Timeline:  timelineStore,
+		Refresher: refresher,
+		Settings:  settings,
+	}, opts...)
+	if err != nil {
+		return nil, err
+	}
+
 	fanoutWorker := feed.NewFanoutWorker(followReader, timelineStore, refresher, settings)
 	// Workers and queue size stay environment-fed: they allocate a goroutine pool
 	// and a channel here, so a stored value could not take effect without
 	// rebuilding the dispatcher. See migrations/settings/000001_init.up.sql.
 	dispatcher := feed.NewEventDispatcher(settings, feedFanoutCfg.Workers, feedFanoutCfg.QueueSize, fanoutWorker)
 	dispatcher.WithOutbox(outbox)
-
-	// Wiring Codohue into other contexts (post services) is the caller's
-	// responsibility.
-	if codohueClient != nil {
-		feedSvc.WithRecommender(codohueClient)
-		feedSvc.WithTrendingFetcher(codohueClient)
-	}
 
 	feedHdlr := feedhandler.NewFeedHandler(feedSvc, store)
 
@@ -97,7 +106,7 @@ func SetupFeedContext(
 		cache:       cache,
 		settings:    settings,
 		outbox:      outbox,
-	}
+	}, nil
 }
 
 func (ctx *FeedContext) Ports() FeedPorts {

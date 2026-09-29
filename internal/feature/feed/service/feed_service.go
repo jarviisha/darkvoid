@@ -8,6 +8,7 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	feedcache "github.com/jarviisha/darkvoid/internal/feature/feed/cache"
 	feedentity "github.com/jarviisha/darkvoid/internal/feature/feed/entity"
+	"github.com/jarviisha/darkvoid/pkg/deps"
 	"github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
@@ -34,58 +35,87 @@ type FeedService struct {
 	enricher  *feedEnricher
 }
 
-// NewFeedService creates a new FeedService.
-func NewFeedService(postReader feed.PostReader, followReader feed.FollowReader, likeReader feed.LikeReader, ranker feed.Ranker, cache feedcache.FeedCache) *FeedService {
-	following := &followingResolver{reader: followReader, cache: cache}
-	enricher := &feedEnricher{likeReader: likeReader, following: following}
-	trending := &trendingSource{postReader: postReader, cache: cache}
+// FeedDeps carries the dependencies FeedService cannot work without.
+//
+// The timeline store, its refresher and the settings are required even while the
+// timeline read is switched off: whether it is on is a runtime setting, so the
+// service has to be able to serve it the moment an operator flips it.
+type FeedDeps struct {
+	Posts     feed.PostReader
+	Follows   feed.FollowReader
+	Likes     feed.LikeReader
+	Ranker    feed.Ranker
+	Cache     feedcache.FeedCache
+	Timeline  feed.TimelineStore
+	Refresher feed.TimelineRefresher
+	Settings  *feed.Settings
+}
 
-	return &FeedService{
+func (d FeedDeps) validate() error {
+	return deps.Missing(map[string]any{
+		"Posts":     d.Posts,
+		"Follows":   d.Follows,
+		"Likes":     d.Likes,
+		"Ranker":    d.Ranker,
+		"Cache":     d.Cache,
+		"Timeline":  d.Timeline,
+		"Refresher": d.Refresher,
+		"Settings":  d.Settings,
+	})
+}
+
+// FeedServiceOption configures the dependencies FeedService can run without.
+type FeedServiceOption func(*FeedService)
+
+// WithRecommender attaches a Codohue recommender for mixed-feed augmentation.
+// Absent whenever CODOHUE_ENABLED is unset, which is why it is an option rather
+// than a FeedDeps field.
+func WithRecommender(recommender feed.Recommender) FeedServiceOption {
+	return func(s *FeedService) { s.mixed.recommender = recommender }
+}
+
+// WithTrendingFetcher attaches a Codohue trending source. Optional for the same
+// reason as WithRecommender.
+func WithTrendingFetcher(fetcher feed.TrendingFetcher) FeedServiceOption {
+	return func(s *FeedService) { s.mixed.trending.fetcher = fetcher }
+}
+
+// NewFeedService creates a new FeedService.
+func NewFeedService(d FeedDeps, opts ...FeedServiceOption) (*FeedService, error) {
+	if err := d.validate(); err != nil {
+		return nil, err
+	}
+	following := &followingResolver{reader: d.Follows, cache: d.Cache}
+	enricher := &feedEnricher{likeReader: d.Likes, following: following}
+	trending := &trendingSource{postReader: d.Posts, cache: d.Cache}
+
+	s := &FeedService{
 		following: following,
 		timeline: &timelineReader{
-			postReader: postReader,
+			postReader: d.Posts,
 			following:  following,
 			enricher:   enricher,
+			store:      d.Timeline,
+			refresher:  d.Refresher,
+			settings:   d.Settings,
 		},
 		mixed: &mixedFeedBuilder{
-			postReader: postReader,
-			ranker:     ranker,
+			postReader: d.Posts,
+			ranker:     d.Ranker,
 			trending:   trending,
+			settings:   d.Settings,
 		},
 		discovery: &discoveryReader{
-			postReader: postReader,
-			ranker:     ranker,
+			postReader: d.Posts,
+			ranker:     d.Ranker,
 			enricher:   enricher,
 		},
 		enricher: enricher,
 	}
-}
-
-// WithRecommender attaches a Codohue recommender for mixed-feed augmentation.
-func (s *FeedService) WithRecommender(recommender feed.Recommender) {
-	s.mixed.recommender = recommender
-}
-
-// WithTrendingFetcher attaches a Codohue trending source.
-func (s *FeedService) WithTrendingFetcher(fetcher feed.TrendingFetcher) {
-	s.mixed.trending.fetcher = fetcher
-}
-
-// WithTimelineStore attaches a prepared timeline store for timeline-first reads.
-func (s *FeedService) WithTimelineStore(store feed.TimelineStore) {
-	s.timeline.store = store
-}
-
-// WithTimelineRefresher attaches a lazy refresher for missing prepared timelines.
-func (s *FeedService) WithTimelineRefresher(refresher feed.TimelineRefresher) {
-	s.timeline.refresher = refresher
-}
-
-// WithSettings attaches the live settings: the rollout consulted on every
-// timeline read, and the recommendation weight the mixed feed ranks with.
-func (s *FeedService) WithSettings(settings *feed.Settings) {
-	s.timeline.settings = settings
-	s.mixed.settings = settings
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
 }
 
 // GetFeed returns the cursor-paginated mixed feed for userID.

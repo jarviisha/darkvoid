@@ -119,13 +119,15 @@ then implement the adapter in `internal/app`.
 Optional infrastructure should degrade to a no-op implementation when disabled.
 Current examples:
 
-- Redis-backed caches fall back to `Nop*Cache` or `NopTimelineStore`.
 - Codohue recommendation/trending integration is wired only when enabled.
 - Email sending after registration is attached with `WithEmailSender`.
-- Feed timeline serving is gated by config and rollout percentage.
+- Feed timeline serving is gated by runtime settings and rollout percentage.
 
-Prefer `With...` methods for optional dependencies attached at wire-up time.
-They make the core constructor small and keep optional behavior explicit.
+Redis is not optional and has no no-op fallback; see `CLAUDE.md`.
+
+Optional dependencies arrive as functional options on the constructor
+(`feedservice.WithRecommender`, `service.WithCatalogIngester`), next to a
+`Deps` struct holding the required ones; see ADR 0001.
 
 ## API Conventions
 

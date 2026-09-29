@@ -49,7 +49,7 @@ func (s *recordingTimelineStore) AddPost(_ context.Context, userID uuid.UUID, en
 	return nil
 }
 
-func (s *recordingTimelineStore) SetPostsBatch(_ context.Context, userID uuid.UUID, entries []TimelineEntry) error {
+func (s *recordingTimelineStore) ReplacePosts(_ context.Context, userID uuid.UUID, entries []TimelineEntry, _ time.Time) error {
 	if s.err != nil {
 		return s.err
 	}
@@ -60,15 +60,9 @@ func (s *recordingTimelineStore) SetPostsBatch(_ context.Context, userID uuid.UU
 	return nil
 }
 
-func (s *recordingTimelineStore) ReplacePosts(_ context.Context, userID uuid.UUID, entries []TimelineEntry, _ time.Time) error {
-	return s.SetPostsBatch(context.Background(), userID, entries)
-}
-
 func (s *recordingTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *TimelinePosition, _ int) (*TimelinePage, error) {
 	return &TimelinePage{}, nil
 }
-
-func (s *recordingTimelineStore) Trim(_ context.Context, _ uuid.UUID) error { return nil }
 
 func (s *recordingTimelineStore) RemovePostBestEffort(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
 	return nil
@@ -242,17 +236,12 @@ func (s *flakyTimelineStore) AddPost(_ context.Context, userID uuid.UUID, entry 
 	return nil
 }
 
-func (s *flakyTimelineStore) SetPostsBatch(_ context.Context, _ uuid.UUID, _ []TimelineEntry) error {
-	return nil
-}
-
 func (s *flakyTimelineStore) ReplacePosts(_ context.Context, _ uuid.UUID, _ []TimelineEntry, _ time.Time) error {
 	return nil
 }
 func (s *flakyTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *TimelinePosition, _ int) (*TimelinePage, error) {
 	return &TimelinePage{}, nil
 }
-func (s *flakyTimelineStore) Trim(_ context.Context, _ uuid.UUID) error { return nil }
 func (s *flakyTimelineStore) RemovePostBestEffort(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
 	return nil
 }
