@@ -2,7 +2,6 @@ package feed
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
@@ -24,8 +23,6 @@ const (
 // eventHandlerTimeout caps per-event handler execution. Sized for fanout to
 // the configured maxFollowers cap (~10K serial Redis writes ≈ 10s) with headroom.
 const eventHandlerTimeout = 30 * time.Second
-
-var errFeedEventNotDispatched = errors.New("feed event was not dispatched")
 
 // Event is one feed-impacting mutation.
 type Event struct {
@@ -115,12 +112,23 @@ func NewEventDispatcher(settings *Settings, workers int, queueSize int, handler 
 // RecencyScale + RelationshipBonus (zero likes, zero age, author followed by
 // every fan-out recipient), so the constant is used openly; the createdAt
 // component of the packed score keeps fan-out writes newest-first inside this
-// shared rank bucket. Computed per emit rather than once, so that a weight change
+// shared rank bucket. Computed per event rather than once, so that a weight change
 // moves fan-out writes and read-path ranking together — the identity above is
 // only true while both use the same numbers.
 func (d *EventDispatcher) writeScore() float64 {
 	cfg := d.settings.Get().Scorer
 	return cfg.RecencyScale + cfg.RelationshipBonus
+}
+
+// withWriteScore gives a post event that arrives without a score the
+// write-time one, packed with the post's createdAt rather than time.Now() so
+// same-bucket fan-out writes stay newest-first. Outbox rows never carry a
+// score, so this is where every fanned-out post gets its first.
+func (d *EventDispatcher) withWriteScore(event Event) Event {
+	if event.Score == 0 && (event.Type == EventPostCreated || event.Type == EventVisibilityChanged) {
+		event.Score = PackTimelineScore(d.writeScore(), event.CreatedAt)
+	}
+	return event
 }
 
 func (d *EventDispatcher) Dispatch(ctx context.Context, event Event) bool {
@@ -212,9 +220,7 @@ func (d *EventDispatcher) consumeOutboxBatch() {
 func (d *EventDispatcher) processOutboxEntry(entry outboxEntry) {
 	eventErr := entry.DecodeErr
 	if eventErr == nil {
-		if entry.Event.Score == 0 && (entry.Event.Type == EventPostCreated || entry.Event.Type == EventVisibilityChanged) {
-			entry.Event.Score = PackTimelineScore(d.writeScore(), entry.Event.CreatedAt)
-		}
+		entry.Event = d.withWriteScore(entry.Event)
 		handlerCtx, cancel := context.WithTimeout(context.Background(), eventHandlerTimeout)
 		eventErr = d.handler.HandleFeedEvent(handlerCtx, entry.Event)
 		cancel()
@@ -252,53 +258,4 @@ func (d *EventDispatcher) handleEvent(event Event) {
 	if err := d.handler.HandleFeedEvent(ctx, event); err != nil {
 		logger.LogError(ctx, err, "feed event handling failed", "event_type", event.Type)
 	}
-}
-
-// EmitPostCreated publishes a post-created feed event.
-func (d *EventDispatcher) EmitPostCreated(ctx context.Context, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error {
-	if !d.Dispatch(ctx, Event{
-		Type:       EventPostCreated,
-		PostID:     postID,
-		AuthorID:   authorID,
-		Visibility: visibility,
-		CreatedAt:  createdAt,
-		Score:      PackTimelineScore(d.writeScore(), createdAt),
-	}) {
-		return errFeedEventNotDispatched
-	}
-	return nil
-}
-
-func (d *EventDispatcher) EmitPostDeleted(ctx context.Context, postID, authorID uuid.UUID) error {
-	if !d.Dispatch(ctx, Event{Type: EventPostDeleted, PostID: postID, AuthorID: authorID}) {
-		return errFeedEventNotDispatched
-	}
-	return nil
-}
-
-func (d *EventDispatcher) EmitPostVisibilityChanged(ctx context.Context, postID, authorID uuid.UUID, visibility string, createdAt time.Time) error {
-	if !d.Dispatch(ctx, Event{
-		Type: EventVisibilityChanged, PostID: postID, AuthorID: authorID,
-		Visibility: visibility, CreatedAt: createdAt,
-		Score: PackTimelineScore(d.writeScore(), createdAt),
-	}) {
-		return errFeedEventNotDispatched
-	}
-	return nil
-}
-
-// EmitFollowCreated publishes a follow-created feed event.
-func (d *EventDispatcher) EmitFollowCreated(ctx context.Context, followerID, followeeID uuid.UUID) error {
-	if !d.Dispatch(ctx, Event{Type: EventFollowCreated, ActorID: followerID, FolloweeID: followeeID, CreatedAt: time.Now().UTC()}) {
-		return errFeedEventNotDispatched
-	}
-	return nil
-}
-
-// EmitFollowDeleted publishes a follow-deleted feed event.
-func (d *EventDispatcher) EmitFollowDeleted(ctx context.Context, followerID, followeeID uuid.UUID) error {
-	if !d.Dispatch(ctx, Event{Type: EventFollowDeleted, ActorID: followerID, FolloweeID: followeeID, CreatedAt: time.Now().UTC()}) {
-		return errFeedEventNotDispatched
-	}
-	return nil
 }

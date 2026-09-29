@@ -77,7 +77,7 @@ func (r *stubRefreshRanker) RankPosts(_ context.Context, posts []*feedentity.Pos
 	return out, nil
 }
 
-func TestPreparedTimelineRefresher_WarmTimelinesWritesRankedPackedEntries(t *testing.T) {
+func TestPreparedTimelineRefresher_WritesRankedPackedEntries(t *testing.T) {
 	now := time.Now().UTC()
 	post := &feedentity.Post{ID: uuid.New(), CreatedAt: now}
 	postReader := &mockRefreshPostReader{posts: []*feedentity.Post{post}}
@@ -85,25 +85,23 @@ func TestPreparedTimelineRefresher_WarmTimelinesWritesRankedPackedEntries(t *tes
 	followed := uuid.New()
 	ranker := &stubRefreshRanker{scores: map[string]float64{post.ID.String(): 42.5}}
 	refresher := NewPreparedTimelineRefresher(postReader, &mockRefreshFollowReader{ids: []uuid.UUID{followed}}, store, ranker, settingsWithMaxItems(1))
-	userA, userB := uuid.New(), uuid.New()
+	userID := uuid.New()
 
-	if err := refresher.WarmTimelines(context.Background(), []uuid.UUID{userA, userB}); err != nil {
-		t.Fatalf("WarmTimelines: %v", err)
+	if err := refresher.RefreshTimeline(context.Background(), userID); err != nil {
+		t.Fatalf("RefreshTimeline: %v", err)
 	}
 	if postReader.lastLimit != 1 {
 		t.Fatalf("read limit = %d, want 1", postReader.lastLimit)
 	}
 	want := PackTimelineScore(42.5, now)
-	for _, userID := range []uuid.UUID{userA, userB} {
-		entries := store.set[userID]
-		if len(entries) != 1 || entries[0].PostID != post.ID || entries[0].Score != want {
-			t.Fatalf("entries for %s = %+v, want packed score %d", userID, entries, want)
-		}
+	entries := store.set[userID]
+	if len(entries) != 1 || entries[0].PostID != post.ID || entries[0].Score != want {
+		t.Fatalf("entries = %+v, want packed score %d", entries, want)
 	}
 	if len(store.added) != 0 {
 		t.Fatalf("refresher must replace the ranked snapshot, got NX adds: %+v", store.added)
 	}
-	if !ranker.gotFollowing[followed.String()] || !ranker.gotFollowing[userB.String()] {
+	if !ranker.gotFollowing[followed.String()] || !ranker.gotFollowing[userID.String()] {
 		t.Fatalf("ranker followingSet must contain followed authors and self, got %+v", ranker.gotFollowing)
 	}
 }
@@ -126,9 +124,6 @@ func TestPreparedTimelineRefresher_NilTimelineNoOps(t *testing.T) {
 	refresher := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, nil, &stubRefreshRanker{}, settingsWithMaxItems(10))
 	if err := refresher.RefreshTimeline(context.Background(), uuid.New()); err != nil {
 		t.Fatalf("RefreshTimeline with nil store should no-op: %v", err)
-	}
-	if err := refresher.WarmTimelines(context.Background(), []uuid.UUID{uuid.New()}); err != nil {
-		t.Fatalf("WarmTimelines with nil store should no-op: %v", err)
 	}
 }
 
@@ -172,25 +167,9 @@ func TestPreparedTimelineRefresher_TimelineWriteErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestPreparedTimelineRefresher_WarmTimelinesStopsOnFirstError(t *testing.T) {
-	post := &feedentity.Post{ID: uuid.New(), CreatedAt: time.Now().UTC()}
-	store := &recordingTimelineStore{err: errors.New("redis down")}
-	refresher := NewPreparedTimelineRefresher(
-		&mockRefreshPostReader{posts: []*feedentity.Post{post}},
-		&mockRefreshFollowReader{ids: []uuid.UUID{uuid.New()}},
-		store,
-		&stubRefreshRanker{},
-		settingsWithMaxItems(10),
-	)
-	err := refresher.WarmTimelines(context.Background(), []uuid.UUID{uuid.New(), uuid.New()})
-	if err == nil {
-		t.Fatal("expected warm timelines to surface store error")
-	}
-}
-
 // An unloaded holder reads as the defaults, not as zero. Refreshing every
 // timeline into an empty one is the failure that looks like success —
-// SetPostsBatch is called, no error is returned, and the feed simply starts
+// ReplacePosts is called, no error is returned, and the feed simply starts
 // missing.
 func TestPreparedTimelineRefresher_NilSettingsUseDefaultMaxItems(t *testing.T) {
 	r := NewPreparedTimelineRefresher(&mockRefreshPostReader{}, &mockRefreshFollowReader{}, &recordingTimelineStore{}, &stubRefreshRanker{}, nil)

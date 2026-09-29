@@ -158,30 +158,6 @@ func (m *mockNotifEmitter) DeleteNotification(ctx context.Context, actorID uuid.
 	return nil
 }
 
-type mockFollowFeedEmitter struct {
-	createdFollower uuid.UUID
-	createdFollowee uuid.UUID
-	deletedFollower uuid.UUID
-	deletedFollowee uuid.UUID
-	createCalls     int
-	deleteCalls     int
-	err             error
-}
-
-func (m *mockFollowFeedEmitter) EmitFollowCreated(_ context.Context, followerID, followeeID uuid.UUID) error {
-	m.createCalls++
-	m.createdFollower = followerID
-	m.createdFollowee = followeeID
-	return m.err
-}
-
-func (m *mockFollowFeedEmitter) EmitFollowDeleted(_ context.Context, followerID, followeeID uuid.UUID) error {
-	m.deleteCalls++
-	m.deletedFollower = followerID
-	m.deletedFollowee = followeeID
-	return m.err
-}
-
 func newFollowService(repo followRepo) *FollowService {
 	return &FollowService{followRepo: repo}
 }
@@ -245,39 +221,16 @@ func TestFollow_Success(t *testing.T) {
 	}
 }
 
-func TestFollow_EmitsFeedEventAfterSuccess(t *testing.T) {
-	followerID, followeeID := uuid.New(), uuid.New()
-	emitter := &mockFollowFeedEmitter{}
-	svc := newFollowService(&mockFollowRepo{})
-	svc.feedEmitter = emitter
-	if err := svc.Follow(context.Background(), followerID, followeeID); err != nil {
-		t.Fatalf("Follow: %v", err)
-	}
-	if emitter.createCalls != 1 || emitter.createdFollower != followerID || emitter.createdFollowee != followeeID {
-		t.Fatalf("created feed event mismatch: %+v", emitter)
-	}
-}
-
-func TestFollow_FeedEmitterFailureIsNonFatal(t *testing.T) {
-	svc := newFollowService(&mockFollowRepo{})
-	svc.feedEmitter = &mockFollowFeedEmitter{err: fmt.Errorf("queue full")}
-	if err := svc.Follow(context.Background(), uuid.New(), uuid.New()); err != nil {
-		t.Fatalf("Follow should ignore feed emitter error: %v", err)
-	}
-}
-
 func TestFollow_PersistsFeedOutboxInsideMutationTransaction(t *testing.T) {
 	repo := &mockFollowRepo{}
 	tx := &followMockTx{}
 	outbox := &mockFollowOutbox{}
-	emitter := &mockFollowFeedEmitter{}
 	svc := &FollowService{
 		followRepo: repo,
 		pool:       &followMockTxBeginner{tx: tx},
 		withTx:     func(pgx.Tx) followRepo { return repo },
 	}
 	svc.feedOutbox = outbox
-	svc.feedEmitter = emitter
 	if err := svc.Follow(context.Background(), uuid.New(), uuid.New()); err != nil {
 		t.Fatalf("Follow: %v", err)
 	}
@@ -286,9 +239,6 @@ func TestFollow_PersistsFeedOutboxInsideMutationTransaction(t *testing.T) {
 	}
 	if !tx.committed {
 		t.Fatal("follow transaction was not committed")
-	}
-	if emitter.createCalls != 0 {
-		t.Fatalf("in-memory emitter called despite durable outbox: %d", emitter.createCalls)
 	}
 }
 
@@ -438,27 +388,6 @@ func TestUnfollow_Success(t *testing.T) {
 	// request no longer includes the unfollowed user's posts.
 	if invalidatedID != followerID {
 		t.Errorf("expected cache invalidation for follower %v, got %v", followerID, invalidatedID)
-	}
-}
-
-func TestUnfollow_EmitsFeedEventAfterSuccess(t *testing.T) {
-	followerID, followeeID := uuid.New(), uuid.New()
-	emitter := &mockFollowFeedEmitter{}
-	svc := newFollowService(&mockFollowRepo{})
-	svc.feedEmitter = emitter
-	if err := svc.Unfollow(context.Background(), followerID, followeeID); err != nil {
-		t.Fatalf("Unfollow: %v", err)
-	}
-	if emitter.deleteCalls != 1 || emitter.deletedFollower != followerID || emitter.deletedFollowee != followeeID {
-		t.Fatalf("deleted feed event mismatch: %+v", emitter)
-	}
-}
-
-func TestUnfollow_FeedEmitterFailureIsNonFatal(t *testing.T) {
-	svc := newFollowService(&mockFollowRepo{})
-	svc.feedEmitter = &mockFollowFeedEmitter{err: fmt.Errorf("queue full")}
-	if err := svc.Unfollow(context.Background(), uuid.New(), uuid.New()); err != nil {
-		t.Fatalf("Unfollow should ignore feed emitter error: %v", err)
 	}
 }
 

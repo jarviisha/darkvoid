@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	"github.com/jarviisha/darkvoid/internal/feature/user/handler"
 	"github.com/jarviisha/darkvoid/internal/feature/user/repository"
 	"github.com/jarviisha/darkvoid/internal/feature/user/service"
@@ -47,7 +48,7 @@ type UserPorts struct {
 	// ActiveAuthors skips deactivated users, for naming notification actors.
 	Authors           *service.AuthorDirectory
 	ActiveAuthors     *service.AuthorDirectory
-	FeedFollowService feedFollowService
+	FeedFollowService feed.FollowGraphReader
 	PostFollowService postFollowService
 	SearchUserRepo    userSearchRepo
 	AdminUserStore    adminUserStoreSource
@@ -144,13 +145,6 @@ func (ctx *UserContext) Ports() UserPorts {
 		SearchUserRepo:    ctx.userRepo,
 		AdminUserStore:    ctx.userRepo,
 	}
-}
-
-// WireFeedEventEmitter attaches the feed event dispatcher to the follow service.
-// Deferred because the dispatcher's fanout worker reads posts, so the feed
-// context is built after this one.
-func (ctx *UserContext) WireFeedEventEmitter(e service.FollowFeedEventEmitter) error {
-	return ctx.followService.WireFeedEventEmitter(e)
 }
 
 // WireNotificationEmitter attaches the notification emitter to the follow

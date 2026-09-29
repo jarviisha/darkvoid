@@ -30,24 +30,6 @@ func WithCatalogIngester(ingester CatalogIngester) PostServiceOption {
 	return func(s *PostService) { s.catalogIngester = ingester }
 }
 
-// WireFeedEventEmitter attaches the feed event dispatcher.
-//
-// This is the one dependency that genuinely cannot arrive through the
-// constructor: the dispatcher's fanout worker reads posts, so the feed context
-// is built after this service. It returns an error rather than assigning
-// silently, because it is now the only path left by which a post service can
-// come up incompletely wired.
-func (s *PostService) WireFeedEventEmitter(e FeedEventEmitter) error {
-	if e == nil {
-		return errors.New("BAD_WIRING", "feed event emitter is nil", 500)
-	}
-	if s.feedEmitter != nil {
-		return errors.New("BAD_WIRING", "feed event emitter is already wired", 500)
-	}
-	s.feedEmitter = e
-	return nil
-}
-
 // PostService handles post business logic
 type PostService struct {
 	pool          txBeginner
@@ -62,10 +44,6 @@ type PostService struct {
 	notifEmitter        notificationEmitter
 	feedOutbox          FeedEventOutbox
 	trendingInvalidator TrendingInvalidator
-
-	// feedEmitter arrives through WireFeedEventEmitter after the feed context
-	// exists; see the comment there.
-	feedEmitter FeedEventEmitter
 
 	// Codohue, absent whenever CODOHUE_ENABLED is unset.
 	objectDeleter   ObjectDeleter
@@ -203,9 +181,6 @@ func (s *PostService) CreatePost(ctx context.Context, authorID uuid.UUID, conten
 	p.Mentions = s.hydrator.Mentioned(ctx, persistedMentionIDs)
 
 	s.ingestCatalogAsync(p.ID.String(), p.Content, p.Tags, p.AuthorID.String())
-	if s.feedOutbox == nil {
-		s.emitPostCreatedFeedEvent(ctx, p)
-	}
 
 	logger.Info(ctx, "post created", "post_id", p.ID, "author_id", authorID)
 	return p, nil
@@ -221,15 +196,6 @@ func (s *PostService) invalidateTrending(ctx context.Context) {
 	}
 	if err := s.trendingInvalidator.InvalidateTrending(ctx); err != nil {
 		logger.LogError(ctx, err, "failed to invalidate trending cache after post change")
-	}
-}
-
-func (s *PostService) emitPostCreatedFeedEvent(ctx context.Context, p *entity.Post) {
-	if s.feedEmitter == nil || p == nil {
-		return
-	}
-	if err := s.feedEmitter.EmitPostCreated(ctx, p.ID, p.AuthorID, string(p.Visibility), p.CreatedAt); err != nil {
-		logger.LogError(ctx, err, "failed to emit post-created feed event", "post_id", p.ID)
 	}
 }
 
@@ -376,11 +342,6 @@ func (s *PostService) UpdatePost(ctx context.Context, postID, userID uuid.UUID, 
 	s.hydrator.Hydrate(ctx, []*entity.Post{updated}, &userID, FieldsAll)
 
 	s.ingestCatalogAsync(postID.String(), updated.Content, updated.Tags, updated.AuthorID.String())
-	if existing.Visibility != updated.Visibility && s.feedOutbox == nil && s.feedEmitter != nil {
-		if err := s.feedEmitter.EmitPostVisibilityChanged(ctx, updated.ID, updated.AuthorID, string(updated.Visibility), updated.CreatedAt); err != nil {
-			logger.LogError(ctx, err, "failed to emit post visibility event", "post_id", postID)
-		}
-	}
 
 	logger.Info(ctx, "post updated", "post_id", postID)
 	return updated, nil
@@ -419,11 +380,6 @@ func (s *PostService) DeletePost(ctx context.Context, postID, userID uuid.UUID) 
 	// The trending cache serves full posts without re-checking the DB, so a
 	// deleted post would keep appearing in feeds until TTL without eviction.
 	s.invalidateTrending(ctx)
-	if s.feedOutbox == nil && s.feedEmitter != nil {
-		if err := s.feedEmitter.EmitPostDeleted(ctx, postID, existing.AuthorID); err != nil {
-			logger.LogError(ctx, err, "failed to emit post-deleted feed event", "post_id", postID)
-		}
-	}
 
 	// Remove the post from the recommendation index so it no longer appears in suggestions.
 	// Fire-and-forget — a failure here does not roll back the deletion.

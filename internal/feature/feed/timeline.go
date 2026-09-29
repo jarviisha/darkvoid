@@ -31,16 +31,12 @@ type TimelinePage struct {
 type TimelineStore interface {
 	// AddPost inserts one entry only if absent (ZADD NX): it never updates the
 	// score of an existing member, so a fan-out event that lands after a
-	// background re-rank cannot clobber the refreshed score.
+	// refresh cannot clobber the refreshed score.
 	AddPost(ctx context.Context, userID uuid.UUID, entry TimelineEntry) error
-	// SetPostsBatch upserts entries, overwriting scores of existing members.
-	// It is the write path for background ranking (refresher / re-rank jobs).
-	SetPostsBatch(ctx context.Context, userID uuid.UUID, entries []TimelineEntry) error
 	// ReplacePosts atomically replaces the refreshed snapshot while retaining
 	// fanout entries created after preserveAfter.
 	ReplacePosts(ctx context.Context, userID uuid.UUID, entries []TimelineEntry, preserveAfter time.Time) error
 	ReadPage(ctx context.Context, userID uuid.UUID, after *TimelinePosition, limit int) (*TimelinePage, error)
-	Trim(ctx context.Context, userID uuid.UUID) error
 	RemovePostBestEffort(ctx context.Context, userID uuid.UUID, postID uuid.UUID) error
 }
 

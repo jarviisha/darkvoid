@@ -23,12 +23,6 @@ type FeedInvalidator interface {
 	InvalidateFollowingIDs(ctx context.Context, userID uuid.UUID) error
 }
 
-// FollowFeedEventEmitter emits feed-impacting follow events.
-type FollowFeedEventEmitter interface {
-	EmitFollowCreated(ctx context.Context, followerID, followeeID uuid.UUID) error
-	EmitFollowDeleted(ctx context.Context, followerID, followeeID uuid.UUID) error
-}
-
 // FollowFeedEventOutbox persists follow feed events in the same transaction as
 // the follow-graph mutation.
 type FollowFeedEventOutbox interface {
@@ -55,13 +49,11 @@ type FollowService struct {
 	feedInvalidator FeedInvalidator
 	feedOutbox      FollowFeedEventOutbox
 
-	// These two cannot arrive through the constructor. The dispatcher's fanout
-	// worker reads posts, so the feed context is built after this service; and
-	// the notification context is built from the user repository, which
-	// SetupUserContext creates alongside this service. Both setters refuse a nil
-	// and refuse a second call, because they are the only remaining paths by
-	// which this service can come up incompletely wired.
-	feedEmitter  FollowFeedEventEmitter
+	// This cannot arrive through the constructor: the notification context is
+	// built from the user repository, which SetupUserContext creates alongside
+	// this service. The setter refuses a nil and refuses a second call, because
+	// it is the only remaining path by which this service can come up
+	// incompletely wired.
 	notifEmitter FollowNotificationEmitter
 }
 
@@ -101,19 +93,6 @@ func NewFollowService(deps FollowDeps) (*FollowService, error) {
 	}, nil
 }
 
-// WireFeedEventEmitter attaches the feed event dispatcher after the feed context
-// exists. See the field comment for why it cannot come through the constructor.
-func (s *FollowService) WireFeedEventEmitter(e FollowFeedEventEmitter) error {
-	if e == nil {
-		return errors.New("BAD_WIRING", "follow feed event emitter is nil", http.StatusInternalServerError)
-	}
-	if s.feedEmitter != nil {
-		return errors.New("BAD_WIRING", "follow feed event emitter is already wired", http.StatusInternalServerError)
-	}
-	s.feedEmitter = e
-	return nil
-}
-
 // WireNotificationEmitter attaches the notification emitter after the
 // notification context exists. See the field comment for why it cannot come
 // through the constructor.
@@ -147,9 +126,6 @@ func (s *FollowService) Follow(ctx context.Context, followerID, followeeID uuid.
 	}
 	logger.Info(ctx, "followed", "follower", followerID, "followee", followeeID)
 	s.invalidateFollowingIDs(ctx, followerID)
-	if s.feedOutbox == nil {
-		s.emitFollowCreated(ctx, followerID, followeeID)
-	}
 	s.emitFollowNotification(ctx, followerID, followeeID)
 	return nil
 }
@@ -164,9 +140,6 @@ func (s *FollowService) Unfollow(ctx context.Context, followerID, followeeID uui
 	}
 	logger.Info(ctx, "unfollowed", "follower", followerID, "followee", followeeID)
 	s.invalidateFollowingIDs(ctx, followerID)
-	if s.feedOutbox == nil {
-		s.emitFollowDeleted(ctx, followerID, followeeID)
-	}
 	s.deleteFollowNotification(ctx, followerID, followeeID)
 	return nil
 }
@@ -213,24 +186,6 @@ func (s *FollowService) emitFollowNotification(ctx context.Context, followerID, 
 	}
 	if err := s.notifEmitter.EmitFollow(ctx, followerID, followeeID); err != nil {
 		logger.LogError(ctx, err, "failed to emit follow notification", "follower", followerID, "followee", followeeID)
-	}
-}
-
-func (s *FollowService) emitFollowCreated(ctx context.Context, followerID, followeeID uuid.UUID) {
-	if s.feedEmitter == nil {
-		return
-	}
-	if err := s.feedEmitter.EmitFollowCreated(ctx, followerID, followeeID); err != nil {
-		logger.LogError(ctx, err, "failed to emit follow-created feed event", "follower", followerID, "followee", followeeID)
-	}
-}
-
-func (s *FollowService) emitFollowDeleted(ctx context.Context, followerID, followeeID uuid.UUID) {
-	if s.feedEmitter == nil {
-		return
-	}
-	if err := s.feedEmitter.EmitFollowDeleted(ctx, followerID, followeeID); err != nil {
-		logger.LogError(ctx, err, "failed to emit follow-deleted feed event", "follower", followerID, "followee", followeeID)
 	}
 }
 

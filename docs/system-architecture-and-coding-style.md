@@ -111,9 +111,9 @@ Optional infrastructure should be explicit and safe when disabled.
 
 Preferred patterns:
 
-- provide a no-op implementation for optional caches and stores
-- attach optional integrations with `With...` methods at wire-up time
-- keep constructors focused on required dependencies
+- take required dependencies as a validated `Deps` struct and optional
+  integrations as functional options to the same constructor (ADR 0001)
+- do not ship no-op caches or stores for Redis: it is required, see `CLAUDE.md`
 - gate optional read paths through configuration or rollout checks
 - treat external recommendation, mail, or cache systems as accelerators, not as
   the only source of truth unless the feature contract requires it
@@ -229,7 +229,7 @@ The preferred style is explicit, idiomatic Go:
 - prefer early returns for validation and error paths
 - use straightforward control flow over clever abstractions
 - keep constructors named `New<Type>` or `Setup<Feature>Context`
-- attach optional behavior through `With...` methods
+- take optional dependencies as functional options, required ones in a `Deps` struct
 - use structured parsers and encoders for structured data
 - keep comments for exported contracts, package docs, and non-obvious decisions
 - include `docs.go` for packages and update it when responsibilities change

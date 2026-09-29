@@ -3,7 +3,6 @@ package app
 import (
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	feedcache "github.com/jarviisha/darkvoid/internal/feature/feed/cache"
-	postservice "github.com/jarviisha/darkvoid/internal/feature/post/service"
 	"github.com/jarviisha/darkvoid/pkg/codohue"
 	"github.com/jarviisha/darkvoid/pkg/storage"
 )
@@ -13,45 +12,31 @@ func (app *Application) setupFeedContext(
 	cache feedcache.FeedCache,
 	outbox *feed.PostgresOutbox,
 	codohueClient *codohue.Client,
-) {
+) error {
 	postPorts := app.Post.Ports()
 	userPorts := app.User.Ports()
-	postReader, followReader, likeReader := buildFeedReaders(
-		postPorts.FeedPostRepo,
-		postPorts.Hydrator,
-		postPorts.FeedLikeRepo,
-		userPorts.FeedFollowService,
-	)
+	posts := &postReader{
+		postRepo: postPorts.FeedPostRepo,
+		hydrator: postPorts.Hydrator,
+	}
 
-	app.Feed = SetupFeedContext(
+	// The follow service and the like repository already have the method sets
+	// the feed declares, so they go in as they are.
+	feedCtx, err := SetupFeedContext(
 		store,
-		postReader, followReader, likeReader,
+		posts, userPorts.FeedFollowService, postPorts.FeedLikeRepo,
 		app.redis, cache, outbox, codohueClient,
 		app.cfg.FeedFanout,
 	)
+	if err != nil {
+		return err
+	}
+	app.Feed = feedCtx
 	app.log.Info("feed context initialized",
 		"redis_cache", app.redis != nil,
 		"codohue_enabled", app.cfg.Codohue.Enabled,
 		"codohue_events_redis_dedicated", app.codohueEvents != nil,
 	)
-}
-
-// wireFeedDependencies attaches the event dispatcher to the two services that
-// emit feed events.
-//
-// The cache and the outbox no longer pass through here — both are built before
-// any context and arrive through the constructors. The dispatcher cannot: its
-// fanout worker reads posts, so it does not exist until the post context does.
-func (app *Application) wireFeedDependencies() error {
-	dispatcher := app.Feed.Ports().Dispatcher
-
-	if err := app.Post.WireFeedEventEmitter(dispatcher); err != nil {
-		return err
-	}
-	if err := app.User.WireFeedEventEmitter(dispatcher); err != nil {
-		return err
-	}
-	app.log.Info("feed event dispatcher wired into post and follow services")
 	return nil
 }
 
@@ -64,16 +49,4 @@ func (app *Application) wireFeedDependencies() error {
 // dependencies to arrive by post-construction mutation.
 func (app *Application) setupFeedInfra() (feedcache.FeedCache, *feed.PostgresOutbox) {
 	return feedcache.NewRedisFeedCache(app.redis), feed.NewPostgresOutbox(app.pool)
-}
-
-func buildFeedReaders(
-	postRepo feedPostRepo,
-	hydrator *postservice.Hydrator,
-	likeRepo feedLikeRepo,
-	followService feedFollowService,
-) (feed.PostReader, feed.FollowGraphReader, feed.LikeReader) {
-	return &postReader{
-		postRepo: postRepo,
-		hydrator: hydrator,
-	}, &followReader{followService: followService}, &likeReader{likeRepo: likeRepo}
 }
