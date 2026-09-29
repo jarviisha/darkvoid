@@ -4,8 +4,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	postentity "github.com/jarviisha/darkvoid/internal/feature/post/entity"
-	userrepo "github.com/jarviisha/darkvoid/internal/feature/user/repository"
 	userservice "github.com/jarviisha/darkvoid/internal/feature/user/service"
 )
 
@@ -20,55 +18,6 @@ func (c *postFollowChecker) IsFollowing(ctx context.Context, followerID, followe
 
 func (c *postFollowChecker) GetFollowingAmong(ctx context.Context, followerID uuid.UUID, followeeIDs []uuid.UUID) ([]uuid.UUID, error) {
 	return c.followService.GetFollowingAmong(ctx, followerID, followeeIDs)
-}
-
-// postUserReader implements service.userReader using the user repository port.
-type postUserReader struct {
-	userRepo postUserRepo
-}
-
-func (r *postUserReader) GetAuthorsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]*postentity.Author, error) {
-	users, err := r.userRepo.GetUsersByIDsAny(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make(map[uuid.UUID]*postentity.Author, len(users))
-	for _, u := range users {
-		result[u.ID] = &postentity.Author{
-			ID:          u.ID,
-			Username:    u.Username,
-			DisplayName: u.DisplayName,
-			AvatarKey:   u.AvatarKey,
-		}
-	}
-	return result, nil
-}
-
-type postUserRepoAdapter struct {
-	userRepo *userrepo.UserRepository
-}
-
-func buildPostUserRepo(userRepo *userrepo.UserRepository) postUserRepo {
-	return &postUserRepoAdapter{userRepo: userRepo}
-}
-
-func (r *postUserRepoAdapter) GetUsersByIDsAny(ctx context.Context, ids []uuid.UUID) ([]*postUser, error) {
-	users, err := r.userRepo.GetUsersByIDsAny(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]*postUser, len(users))
-	for i, u := range users {
-		result[i] = &postUser{
-			ID:          u.ID,
-			Username:    u.Username,
-			DisplayName: u.DisplayName,
-			AvatarKey:   u.AvatarKey,
-		}
-	}
-	return result, nil
 }
 
 type postFollowServiceAdapter struct {

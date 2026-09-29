@@ -29,7 +29,6 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	feedcache "github.com/jarviisha/darkvoid/internal/feature/feed/cache"
 	notifcache "github.com/jarviisha/darkvoid/internal/feature/notification/cache"
-	notifentity "github.com/jarviisha/darkvoid/internal/feature/notification/entity"
 	notifrepo "github.com/jarviisha/darkvoid/internal/feature/notification/repository"
 	notifservice "github.com/jarviisha/darkvoid/internal/feature/notification/service"
 	postentity "github.com/jarviisha/darkvoid/internal/feature/post/entity"
@@ -401,52 +400,6 @@ type seedServices struct {
 	comment *postservice.CommentService
 }
 
-type seedUserReader struct {
-	userRepo *userrepo.UserRepository
-}
-
-func (r *seedUserReader) GetAuthorsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]*postentity.Author, error) {
-	users, err := r.userRepo.GetUsersByIDsAny(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-
-	authors := make(map[uuid.UUID]*postentity.Author, len(users))
-	for _, u := range users {
-		authors[u.ID] = &postentity.Author{
-			ID:          u.ID,
-			Username:    u.Username,
-			DisplayName: u.DisplayName,
-			AvatarKey:   u.AvatarKey,
-		}
-	}
-	return authors, nil
-}
-
-// seedNotificationUserReader is the notification context's view of the same
-// users seedUserReader serves to the post context. Two readers for one query
-// because each context owns its own actor shape.
-type seedNotificationUserReader struct {
-	userRepo *userrepo.UserRepository
-}
-
-func (r *seedNotificationUserReader) GetAuthorsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]*notifentity.Actor, error) {
-	users, err := r.userRepo.GetUsersByIDs(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	actors := make(map[uuid.UUID]*notifentity.Actor, len(users))
-	for _, u := range users {
-		actors[u.ID] = &notifentity.Actor{
-			ID:          u.ID,
-			Username:    u.Username,
-			DisplayName: u.DisplayName,
-			AvatarKey:   u.AvatarKey,
-		}
-	}
-	return actors, nil
-}
-
 // newSeedServices builds the post services the seeder writes through.
 //
 // It builds the same dependencies the API does, rather than leaving them out.
@@ -459,7 +412,7 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 
 	userRepository := userrepo.NewUserRepository(pool)
 	followRepository := userrepo.NewFollowRepository(pool)
-	userReader := &seedUserReader{userRepo: userRepository}
+	authors := userservice.NewAuthorDirectory(userRepository)
 
 	postRepository := postrepo.NewPostRepository(pool)
 	mediaRepository := postrepo.NewMediaRepository(pool)
@@ -508,7 +461,7 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 	notifSvc := notifservice.NewNotificationService(
 		notifrepo.NewNotificationRepository(pool),
 		notifcache.NewRedisNotificationCache(redisClient),
-		&seedNotificationUserReader{userRepo: userRepository},
+		userservice.NewActiveAuthorDirectory(userRepository),
 	)
 
 	var postOpts []postservice.PostServiceOption
@@ -544,10 +497,17 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 	}
 
 	postSvc, err := postservice.NewPostService(postservice.PostDeps{
-		Pool:                pool,
-		Posts:               postRepository,
-		Media:               mediaRepository,
-		Users:               userReader,
+		Pool:  pool,
+		Posts: postRepository,
+		Media: mediaRepository,
+		Hydrator: postservice.NewHydrator(postservice.HydratorDeps{
+			Media:    mediaRepository,
+			Likes:    likeRepository,
+			Users:    authors,
+			Tags:     hashtagRepository,
+			Mentions: mentionRepository,
+			Follows:  followSvc,
+		}),
 		Hashtags:            hashtagRepository,
 		Likes:               likeRepository,
 		Mentions:            mentionRepository,
@@ -575,7 +535,7 @@ func newSeedServices(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config
 		Comments:        commentRepository,
 		CommentMedia:    commentMediaRepository,
 		Posts:           postRepository,
-		Users:           userReader,
+		Users:           authors,
 		CommentLikes:    commentLikeRepository,
 		CommentMentions: commentMentionRepository,
 		FollowChecker:   followSvc,

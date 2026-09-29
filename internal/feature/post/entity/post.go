@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jarviisha/darkvoid/internal/author"
 )
 
 type Visibility string
@@ -14,12 +15,8 @@ const (
 	VisibilityPrivate   Visibility = "private"
 )
 
-type Author struct {
-	ID          uuid.UUID
-	Username    string
-	DisplayName string
-	AvatarKey   *string
-}
+// Author is resolved by the user context's AuthorDirectory.
+type Author = author.Author
 
 type Post struct {
 	ID         uuid.UUID

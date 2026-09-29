@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jarviisha/darkvoid/internal/feature/post/entity"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
 
@@ -41,37 +40,15 @@ func (s *PostService) persistMentions(
 	return ids, nil
 }
 
-// enrichMentionsAfterCommit enriches mention user info and fires notifications.
-// This is called AFTER transaction commit. Errors are logged but not fatal.
-func (s *PostService) enrichMentionsAfterCommit(
-	ctx context.Context,
-	postID, actorID uuid.UUID,
-	mentionIDs []uuid.UUID,
-) []*entity.MentionedUser {
-	if s.userReader == nil || len(mentionIDs) == 0 {
-		return nil
+// emitMentions fires a mention notification per recipient. Called AFTER the
+// transaction commits; errors are logged, not returned.
+func (s *PostService) emitMentions(ctx context.Context, postID, actorID uuid.UUID, mentionIDs []uuid.UUID) {
+	if s.notifEmitter == nil {
+		return
 	}
-
-	authors, err := s.userReader.GetAuthorsByIDs(ctx, mentionIDs)
-	if err != nil {
-		logger.LogError(ctx, err, "failed to enrich mention authors", "post_id", postID)
-		authors = make(map[uuid.UUID]*entity.Author)
-	}
-
-	mentioned := make([]*entity.MentionedUser, 0, len(mentionIDs))
 	for _, uid := range mentionIDs {
-		if a, ok := authors[uid]; ok {
-			mentioned = append(mentioned, &entity.MentionedUser{
-				ID:          a.ID,
-				Username:    a.Username,
-				DisplayName: a.DisplayName,
-			})
-		}
-		if s.notifEmitter != nil {
-			if err := s.notifEmitter.EmitMention(ctx, actorID, uid, postID); err != nil {
-				logger.LogError(ctx, err, "failed to emit mention notification", "post_id", postID, "recipient_id", uid)
-			}
+		if err := s.notifEmitter.EmitMention(ctx, actorID, uid, postID); err != nil {
+			logger.LogError(ctx, err, "failed to emit mention notification", "post_id", postID, "recipient_id", uid)
 		}
 	}
-	return mentioned
 }

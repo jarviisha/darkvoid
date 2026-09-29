@@ -9,7 +9,7 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	feedentity "github.com/jarviisha/darkvoid/internal/feature/feed/entity"
 	postentity "github.com/jarviisha/darkvoid/internal/feature/post/entity"
-	userentity "github.com/jarviisha/darkvoid/internal/feature/user/entity"
+	postservice "github.com/jarviisha/darkvoid/internal/feature/post/service"
 	pkgerrors "github.com/jarviisha/darkvoid/pkg/errors"
 	"github.com/jarviisha/darkvoid/pkg/logger"
 )
@@ -42,45 +42,16 @@ func toFeedPost(p *postentity.Post) *feedentity.Post {
 		CommentCount:      p.CommentCount,
 		IsLiked:           p.IsLiked,
 		IsFollowingAuthor: p.IsFollowingAuthor,
+		Author:            p.Author,
 	}
-}
-
-// --- userReader ---
-
-// userReader implements feed.UserReader using UserRepository.
-type userReader struct {
-	userRepo feedUserRepo
-}
-
-type feedUserRepo interface {
-	GetUsersByIDsAny(ctx context.Context, ids []uuid.UUID) ([]*userentity.User, error)
-}
-
-func (r *userReader) GetAuthorsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]*feedentity.Author, error) {
-	users, err := r.userRepo.GetUsersByIDsAny(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	result := make(map[uuid.UUID]*feedentity.Author, len(users))
-	for _, u := range users {
-		result[u.ID] = &feedentity.Author{
-			ID:          u.ID,
-			Username:    u.Username,
-			DisplayName: u.DisplayName,
-			AvatarKey:   u.AvatarKey,
-		}
-	}
-	return result, nil
 }
 
 // --- postReader ---
 
 // postReader implements feed.PostReader using post repositories directly.
 type postReader struct {
-	postRepo   feedPostRepo
-	mediaRepo  feedMediaRepo
-	likeRepo   feedLikeRepo
-	userReader feed.UserReader
+	postRepo feedPostRepo
+	hydrator *postservice.Hydrator
 }
 
 type feedPostRepo interface {
@@ -88,10 +59,6 @@ type feedPostRepo interface {
 	GetTrendingPosts(ctx context.Context, limit int32) ([]*postentity.Post, error)
 	GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*postentity.Post, error)
 	GetDiscoverWithCursor(ctx context.Context, cursorCreatedAt pgtype.Timestamptz, cursorID uuid.UUID, limit int32) ([]*postentity.Post, error)
-}
-
-type feedMediaRepo interface {
-	GetByPostsBatch(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID][]*postentity.PostMedia, error)
 }
 
 type feedLikeRepo interface {
@@ -116,7 +83,7 @@ func (r *postReader) GetFollowingPostsWithCursor(ctx context.Context, authorIDs 
 	if err != nil {
 		return nil, pkgerrors.NewInternalError(err)
 	}
-	return r.convertAndEnrich(ctx, posts), nil
+	return r.hydrate(ctx, posts, nil), nil
 }
 
 func (r *postReader) GetTrendingPosts(ctx context.Context, limit int32) ([]*feedentity.Post, error) {
@@ -124,7 +91,7 @@ func (r *postReader) GetTrendingPosts(ctx context.Context, limit int32) ([]*feed
 	if err != nil {
 		return nil, pkgerrors.NewInternalError(err)
 	}
-	return r.convertAndEnrich(ctx, posts), nil
+	return r.hydrate(ctx, posts, nil), nil
 }
 
 func (r *postReader) GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*feedentity.Post, error) {
@@ -142,7 +109,7 @@ func (r *postReader) GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*fee
 			ordered = append(ordered, p)
 		}
 	}
-	return r.convertAndEnrich(ctx, ordered), nil
+	return r.hydrate(ctx, ordered, nil), nil
 }
 
 func (r *postReader) GetDiscoverWithCursor(ctx context.Context, cursor *feed.DiscoverCursor, limit int32, viewerID *uuid.UUID) ([]*feedentity.Post, error) {
@@ -164,92 +131,22 @@ func (r *postReader) GetDiscoverWithCursor(ctx context.Context, cursor *feed.Dis
 		logger.LogError(ctx, err, "failed to get discover feed")
 		return nil, pkgerrors.NewInternalError(err)
 	}
-	result := r.convertAndEnrich(ctx, posts)
-	if viewerID != nil {
-		r.enrichIsLiked(ctx, *viewerID, result)
-	}
-	return result, nil
+	return r.hydrate(ctx, posts, viewerID), nil
 }
 
-// convertAndEnrich converts post entities and enriches them with media and author info in batch.
-// Is-liked enrichment is handled by the caller when a viewerID is available.
-func (r *postReader) convertAndEnrich(ctx context.Context, posts []*postentity.Post) []*feedentity.Post {
+// hydrate fills media and authors, plus the liked flag when viewerID is set,
+// and converts to the feed's view. Following and trending pass nil: trending
+// is cached across viewers, and the feed service fills likes for those itself.
+func (r *postReader) hydrate(ctx context.Context, posts []*postentity.Post, viewerID *uuid.UUID) []*feedentity.Post {
 	if len(posts) == 0 {
 		return nil
 	}
-
-	ids := make([]uuid.UUID, len(posts))
-	for i, p := range posts {
-		ids[i] = p.ID
-	}
-	mediaMap, err := r.mediaRepo.GetByPostsBatch(ctx, ids)
-	if err != nil {
-		logger.LogError(ctx, err, "failed to batch fetch post media for feed")
-	} else {
-		for _, p := range posts {
-			if media, ok := mediaMap[p.ID]; ok {
-				p.Media = media
-			}
-		}
-	}
-
+	r.hydrator.Hydrate(ctx, posts, viewerID, postservice.FieldMedia|postservice.FieldAuthor|postservice.FieldLiked)
 	result := make([]*feedentity.Post, len(posts))
 	for i, p := range posts {
 		result[i] = toFeedPost(p)
 	}
-	r.enrichAuthors(ctx, result)
 	return result
-}
-
-// enrichIsLiked batch-fetches like status for the viewer and sets Post.IsLiked.
-// Best-effort: on error, posts are returned as-is.
-func (r *postReader) enrichIsLiked(ctx context.Context, viewerID uuid.UUID, posts []*feedentity.Post) {
-	ids := make([]uuid.UUID, len(posts))
-	for i, p := range posts {
-		ids[i] = p.ID
-	}
-	likedIDs, err := r.likeRepo.GetLikedPostIDs(ctx, viewerID, ids)
-	if err != nil {
-		logger.LogError(ctx, err, "failed to batch fetch liked post IDs for feed")
-		return
-	}
-	likedSet := make(map[uuid.UUID]bool, len(likedIDs))
-	for _, id := range likedIDs {
-		likedSet[id] = true
-	}
-	for _, p := range posts {
-		p.IsLiked = likedSet[p.ID]
-	}
-}
-
-// enrichAuthors batch-fetches author info for the given posts and sets Post.Author.
-// Best-effort: on error, posts are returned without author info rather than failing the request.
-func (r *postReader) enrichAuthors(ctx context.Context, posts []*feedentity.Post) {
-	if len(posts) == 0 {
-		return
-	}
-
-	// Collect unique author IDs
-	seen := make(map[uuid.UUID]bool, len(posts))
-	ids := make([]uuid.UUID, 0, len(posts))
-	for _, p := range posts {
-		if !seen[p.AuthorID] {
-			seen[p.AuthorID] = true
-			ids = append(ids, p.AuthorID)
-		}
-	}
-
-	authors, err := r.userReader.GetAuthorsByIDs(ctx, ids)
-	if err != nil {
-		logger.LogError(ctx, err, "failed to enrich post authors")
-		return
-	}
-
-	for _, p := range posts {
-		if a, ok := authors[p.AuthorID]; ok {
-			p.Author = a
-		}
-	}
 }
 
 // --- followReader ---

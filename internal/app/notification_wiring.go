@@ -5,8 +5,7 @@ import (
 )
 
 func (app *Application) setupNotificationContext(store storage.Storage) {
-	userReader := buildNotificationUserReader(app.User.Ports().NotificationUserRepo)
-	app.Notification = SetupNotificationContext(app.pool, store, userReader, app.redis)
+	app.Notification = SetupNotificationContext(app.pool, store, app.User.Ports().ActiveAuthors, app.redis)
 	app.log.Info("notification context initialized", "redis_pubsub", app.redis != nil)
 }
 

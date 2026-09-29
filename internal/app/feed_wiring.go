@@ -3,6 +3,7 @@ package app
 import (
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	feedcache "github.com/jarviisha/darkvoid/internal/feature/feed/cache"
+	postservice "github.com/jarviisha/darkvoid/internal/feature/post/service"
 	"github.com/jarviisha/darkvoid/pkg/codohue"
 	"github.com/jarviisha/darkvoid/pkg/storage"
 )
@@ -17,9 +18,8 @@ func (app *Application) setupFeedContext(
 	userPorts := app.User.Ports()
 	postReader, followReader, likeReader := buildFeedReaders(
 		postPorts.FeedPostRepo,
-		postPorts.FeedMediaRepo,
+		postPorts.Hydrator,
 		postPorts.FeedLikeRepo,
-		userPorts.FeedUserRepo,
 		userPorts.FeedFollowService,
 	)
 
@@ -68,17 +68,12 @@ func (app *Application) setupFeedInfra() (feedcache.FeedCache, *feed.PostgresOut
 
 func buildFeedReaders(
 	postRepo feedPostRepo,
-	mediaRepo feedMediaRepo,
+	hydrator *postservice.Hydrator,
 	likeRepo feedLikeRepo,
-	userRepo feedUserRepo,
 	followService feedFollowService,
 ) (feed.PostReader, feed.FollowGraphReader, feed.LikeReader) {
-	ur := &userReader{userRepo: userRepo}
-
 	return &postReader{
-		postRepo:   postRepo,
-		mediaRepo:  mediaRepo,
-		likeRepo:   likeRepo,
-		userReader: ur,
+		postRepo: postRepo,
+		hydrator: hydrator,
 	}, &followReader{followService: followService}, &likeReader{likeRepo: likeRepo}
 }
