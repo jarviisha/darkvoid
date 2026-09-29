@@ -92,23 +92,11 @@ func (m *mockLikeReader) GetLikedPostIDs(_ context.Context, _ uuid.UUID, _ []uui
 	return nil, nil
 }
 
+// mockTimelineStore serves pages in order, then empty ones.
 type mockTimelineStore struct {
-	pages       []*feed.TimelinePage
-	readCount   int
-	addedBatch  []feed.TimelineEntry
-	addedUserID uuid.UUID
-}
-
-func (m *mockTimelineStore) AddPost(_ context.Context, userID uuid.UUID, entry feed.TimelineEntry) error {
-	m.addedUserID = userID
-	m.addedBatch = append(m.addedBatch, entry)
-	return nil
-}
-
-func (m *mockTimelineStore) ReplacePosts(_ context.Context, userID uuid.UUID, entries []feed.TimelineEntry, _ time.Time) error {
-	m.addedUserID = userID
-	m.addedBatch = append(m.addedBatch, entries...)
-	return nil
+	emptyTimelineStore
+	pages     []*feed.TimelinePage
+	readCount int
 }
 
 func (m *mockTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *feed.TimelinePosition, _ int) (*feed.TimelinePage, error) {
@@ -119,10 +107,6 @@ func (m *mockTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *feed.Tim
 	page := m.pages[m.readCount]
 	m.readCount++
 	return page, nil
-}
-
-func (m *mockTimelineStore) RemovePostBestEffort(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
-	return nil
 }
 
 type mockTimelineRefresher struct {

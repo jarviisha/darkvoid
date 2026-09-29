@@ -231,7 +231,8 @@ The dominant style is idiomatic, explicit Go:
 - pass `context.Context` as the first argument for request-scoped work
 - accept narrow interfaces at package boundaries and return concrete structs
 - prefer constructor functions named `New<Type>` or `Setup<Feature>Context`
-- keep optional dependencies explicit through `With...` methods
+- take required dependencies as a validated `Deps` struct and optional ones as
+  functional options (ADR 0001)
 - use early returns for validation and error paths
 - avoid clever control flow when straight-line code is clearer
 - use standard library encoders/parsers instead of ad hoc string handling where

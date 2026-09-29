@@ -43,16 +43,16 @@ Each feature under `internal/feature/<feature>/` owns its own `handler`, `servic
 
 `Application` (`internal/app/app.go`) constructs and owns all contexts. `context_setup.go` orchestrates init order; each `<feature>_wiring.go` file does the dependency injection, and `<feature>.go` defines the context struct + `Ports()` method used by other contexts.
 
-### Deferred Wiring Pattern
+### Dependencies Arrive at Construction
 
-Because contexts can't depend on each other at construction time, cross-context dependencies are injected *after* setup via `With...` methods. Example: `FollowService.WithFeedInvalidator(...)` is called in `wireFeedDependencies()` so that follow/unfollow can evict `following:ids:{userID}` in the feed cache. Do the same when adding new cross-context wiring — don't introduce direct feature imports.
+Services take a `<Service>Deps` struct of required dependencies, validated by `deps.Missing` so a missed wire fails the boot naming the field, plus functional options for the ones a deployment can run without (the Codohue integrations). Cross-context dependencies arrive the same way whenever the dependency exists first — which is why the feed cache and outbox are built ahead of every context, so `FollowDeps.FeedInvalidator` can evict `following:ids:{userID}` on follow/unfollow. Only a genuine construction cycle justifies a deferred `Wire…(x) error` call; two remain, listed in `docs/adr/0001-cross-context-dependencies-arrive-at-construction.md`. Don't introduce direct feature imports.
 
 ### Feed Subsystem (recently refactored — see `memory/` notes)
 
 - **DB cursor pagination** via `(created_at, id) < (cursor_ts, cursor_id)` row value comparison (see `migrations/post/000001_init.up.sql` for the composite partial index).
 - **Page 1**: merge ~60 following posts with cached trending, score+sort, return top 20. **Page 2+**: pure following in DB order, no trending injection. **Discover fallback**: when a user has an empty following feed, cursor hands off seamlessly to `GetDiscoverWithCursor` because `FollowingCursor` and `DiscoverCursor` share fields.
 - **Cache keys**: `following:ids:{userID}` (5m TTL), `trending:posts` (15m TTL). No per-user feed cache. Redis is a **hard dependency** — see Configuration below.
-- **Scoring**: `score = log(1+likes)*10 + RecencyScale/(1+hours)^decay + RelationshipBonus`, defaults `RelationshipBonus=10, RecencyScale=20, DecayExponent=1.5`. The three weights are stored in `settings.feed`, not compiled in — see Runtime settings below. Local ranker is the default; Codohue CF recommender plugs in via `feedSvc.WithRecommender(...)` when `CODOHUE_ENABLED=true`.
+- **Scoring**: `score = log(1+likes)*10 + RecencyScale/(1+hours)^decay + RelationshipBonus`, defaults `RelationshipBonus=10, RecencyScale=20, DecayExponent=1.5`. The three weights are stored in `settings.feed`, not compiled in — see Runtime settings below. Local ranker is the default; Codohue CF recommender plugs in via the `feedservice.WithRecommender(...)` option to `NewFeedService` when `CODOHUE_ENABLED=true`.
 
 ### Routing Groups
 
