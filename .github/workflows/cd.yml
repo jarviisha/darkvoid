@@ -1,19 +1,18 @@
 name: CD
 
-# Manual, and it deploys a tag rather than whatever landed on main.
+# Manual, and it deploys a tag or a commit rather than whatever landed on main.
 #
 # It used to fire on every CI success on main, which made "merged" and "deployed"
 # the same event: nobody chose when a deploy happened, and the only way to not
-# deploy something was to not merge it. A tag is the choice, and naming it here is
-# the second one.
+# deploy something was to not merge it. Naming the tag or commit here is the choice.
 #
 # Deliberately not `push: tags: ['v*']` — that is automation again, with tag
 # creation as its trigger, and a mistyped or premature tag would deploy on its own.
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Tag to deploy, e.g. v0.3.1. Must exist and its commit must have a green CI run.'
+      ref:
+        description: 'Tag (e.g. v0.3.1) or commit SHA on main (short or full) to deploy. Its commit must have a green CI run.'
         required: true
         type: string
 
@@ -27,39 +26,66 @@ jobs:
     permissions:
       contents: read
       packages: write
-      # gh run list queries the Actions API for the tag's CI result.
+      # gh run list queries the Actions API for the commit's CI result.
       actions: read
     outputs:
       app_digest: ${{ steps.build.outputs.digest }}
       backup_digest: ${{ steps.build_backup.outputs.digest }}
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: refs/tags/${{ inputs.tag }}
-
+      # Resolved through the API before checkout: actions/checkout fetches a tag
+      # or a full SHA, not a short one, and a branch name is a moving target
+      # rather than a choice, so only a tag or a commit is accepted.
+      #
       # The old trigger could not run without a green CI, so that guarantee came
-      # for free. A dispatch can name any tag, so the check has to be made
+      # for free. A dispatch can name anything, so the check has to be made
       # explicitly or this workflow would happily deploy a commit that never
       # passed anything.
-      - name: Resolve the tag and require a green CI run for its commit
+      - name: Resolve the ref and require a green CI run for its commit
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ inputs.ref }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          sha="$(git rev-parse HEAD)"
+          # Only the existence probe is silenced: its 404 is the "not a tag" answer.
+          # The lookups below keep their errors, so a rate limit or an ambiguous
+          # short SHA fails with GitHub's reason rather than as "not a SHA".
+          if gh api "repos/$REPO/git/ref/tags/$REF" --silent 2>/dev/null; then
+            echo "tag=$REF" >> "$GITHUB_OUTPUT"
+            echo "version=$REF" >> "$GITHUB_OUTPUT"
+            # Fully qualified: a branch of the same name would otherwise win.
+            sha="$(gh api "repos/$REPO/commits/refs/tags/$REF" --jq .sha)"
+          elif [[ "$REF" =~ ^[0-9a-f]{7,40}$ ]]; then
+            sha="$(gh api "repos/$REPO/commits/$REF" --jq .sha)"
+            echo "version=$sha" >> "$GITHUB_OUTPUT"
+            # A bare commit carries no release decision of its own, so it has to
+            # be one main already accepted — not a PR head that merely passed CI.
+            status="$(gh api "repos/$REPO/compare/main...$sha" --jq .status)"
+            if [ "$status" != behind ] && [ "$status" != identical ]; then
+              echo "$sha is not on main (compare: $status). Merge it or tag it first." >&2
+              exit 1
+            fi
+          else
+            echo "'$REF' is neither a tag nor a commit SHA in $REPO." >&2
+            exit 1
+          fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "Deploying ${{ inputs.tag }} -> $sha"
-          conclusions="$(gh run list --workflow CI --commit "$sha" --json conclusion --jq '.[].conclusion')"
+          echo "Deploying $REF -> $sha"
+          conclusions="$(gh run list --workflow CI --commit "$sha" --repo "$REPO" --json conclusion --jq '.[].conclusion')"
           if [ -z "$conclusions" ]; then
-            echo "No CI run recorded for $sha. Push the tag's commit through CI first." >&2
+            echo "No CI run recorded for $sha. Push the commit through CI first." >&2
             exit 1
           fi
           grep -Fxq success <<< "$conclusions" || {
             echo "No successful CI run for $sha; saw: $conclusions" >&2
             exit 1
           }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.sha }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -102,10 +128,10 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+            ${{ steps.resolve.outputs.tag && format('{0}/{1}:{2}', env.REGISTRY, env.IMAGE_NAME, steps.resolve.outputs.tag) || '' }}
           labels: |
             org.opencontainers.image.revision=${{ steps.resolve.outputs.sha }}
-            org.opencontainers.image.version=${{ inputs.tag }}
+            org.opencontainers.image.version=${{ steps.resolve.outputs.version }}
 
       - name: Publish backup by tested commit
         id: build_backup
@@ -116,10 +142,10 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backup:${{ steps.resolve.outputs.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backup:${{ inputs.tag }}
+            ${{ steps.resolve.outputs.tag && format('{0}/{1}-backup:{2}', env.REGISTRY, env.IMAGE_NAME, steps.resolve.outputs.tag) || '' }}
           labels: |
             org.opencontainers.image.revision=${{ steps.resolve.outputs.sha }}
-            org.opencontainers.image.version=${{ inputs.tag }}
+            org.opencontainers.image.version=${{ steps.resolve.outputs.version }}
 
   deploy:
     runs-on: ubuntu-latest
@@ -137,7 +163,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ inputs.tag }}
+          ref: ${{ needs.build_and_push.outputs.sha }}
           fetch-depth: 0
 
       - name: Package immutable release
@@ -146,7 +172,7 @@ jobs:
           # This workflow's own run_number, not CI's. deploy-release.sh refuses a
           # sequence lower than the deployed one, so the counter must not change
           # again after this: CD is at 39 where CI was at 64, and had a release
-          # ever been recorded under CI's numbering the first tag deploy would
+          # ever been recorded under CI's numbering the first dispatched deploy would
           # have been rejected as "older". Nothing is recorded yet — there is no
           # current symlink on the host — so this switch sets the baseline rather
           # than colliding with one. Renaming this workflow would reset the

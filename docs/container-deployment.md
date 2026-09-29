@@ -90,11 +90,14 @@ The host needs Docker Compose 2.24 or newer, Bash, jq, curl, flock, and GNU core
 CD currently targets the GitHub `development` environment at `/opt/darkvoid-dev`.
 No production environment or infrastructure is provisioned by this refactor.
 
-**Deploys are manual and name a tag.** Run the CD workflow from Actions (or
-`gh workflow run CD -f tag=v0.3.1`) with a tag that already exists; CD resolves it
-to a commit and refuses to continue unless that commit has a successful CI run.
-Merging to `main` no longer deploys anything, and neither does pushing a tag — the
-dispatch is the decision. Tag first, then deploy the tag.
+**Deploys are manual and name a tag or a commit.** Run the CD workflow from Actions
+(or `gh workflow run CD -f ref=v0.3.1`, or `-f ref=2c806b4`) with a tag that already
+exists or a commit SHA, short or full, that is already on `main`; CD resolves it to a
+commit and refuses to continue unless that commit has a successful CI run. Branch
+names are refused — a branch moves, so it names no particular build. A tag deploy
+also publishes the images under the tag name; a commit deploy publishes them under
+the SHA only. Merging to `main` no longer deploys anything, and neither does pushing
+a tag — the dispatch is the decision.
 
 ```text
 /opt/darkvoid-dev/

@@ -28,7 +28,10 @@ for required in \
 	'app_digest: ${{ steps.build.outputs.digest }}' \
 	'backup_digest: ${{ steps.build_backup.outputs.digest }}' \
 	'workflow_dispatch:' \
-	'ref: refs/tags/${{ inputs.tag }}' \
+	'ref: ${{ steps.resolve.outputs.sha }}' \
+	'ref: ${{ needs.build_and_push.outputs.sha }}' \
+	'commits/refs/tags/' \
+	'compare/main...' \
 	'gh run list --workflow CI --commit' \
 	'create-release.sh' \
 	'deploy-release.sh' \
@@ -36,5 +39,5 @@ for required in \
 	grep -Fq "$required" .github/workflows/cd.yml || fail "CD is missing: $required"
 done
 grep -Fq 'workflow_run' .github/workflows/cd.yml \
-	&& fail 'CD still has a workflow_run trigger; deploys must be dispatched by tag'
+	&& fail 'CD still has a workflow_run trigger; deploys must be dispatched by tag or commit'
 echo 'Production image pinning tests passed'
