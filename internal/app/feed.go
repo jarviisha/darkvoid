@@ -21,7 +21,8 @@ type FeedContext struct {
 	// Handlers
 	feedHandler *feedhandler.FeedHandler
 
-	// Cache is exported so app.go can wire WithTrendingInvalidator into post services.
+	// cache is handed out through Ports; the post services take it as their
+	// TrendingInvalidator.
 	cache feedcache.FeedCache
 
 	// settings is the one holder every component above reads its tunable knobs
