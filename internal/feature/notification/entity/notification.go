@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jarviisha/darkvoid/internal/author"
 )
 
 // NotificationType represents the kind of notification.
@@ -21,12 +22,7 @@ const (
 )
 
 // Actor holds minimal user info for notification display.
-type Actor struct {
-	ID          uuid.UUID
-	Username    string
-	DisplayName string
-	AvatarKey   *string
-}
+type Actor = author.Author
 
 // Payload is a sealed interface — exactly one concrete type per NotificationType.
 type Payload interface {

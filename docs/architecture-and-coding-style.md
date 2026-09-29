@@ -57,8 +57,9 @@ Constructors should keep this order visible:
 Cross-context dependencies should not be imported directly by feature services.
 Instead, `internal/app` exposes narrow ports from each context and builds
 adapters between them. For example, post services need author and follow data,
-but they depend on local `userReader` and `followChecker` interfaces; the app
-layer adapts the user context to those interfaces.
+but they depend on local `userReader` and `followChecker` interfaces. Author
+lookups need no adapter: every context names the shared `internal/author.Author`,
+so the user context's `AuthorDirectory` satisfies each `userReader` as it is.
 
 ## Request Flow
 

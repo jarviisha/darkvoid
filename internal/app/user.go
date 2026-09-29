@@ -44,13 +44,14 @@ type UserContext struct {
 }
 
 type UserPorts struct {
-	FeedUserRepo         feedUserRepo
-	FeedFollowService    feed.FollowGraphReader
-	PostUserRepo         postUserRepo
-	PostFollowService    postFollowService
-	NotificationUserRepo notificationUserRepo
-	SearchUserRepo       userSearchRepo
-	AdminUserStore       adminUserStoreSource
+	// Authors resolves users whatever their status, for attributing content;
+	// ActiveAuthors skips deactivated users, for naming notification actors.
+	Authors           *service.AuthorDirectory
+	ActiveAuthors     *service.AuthorDirectory
+	FeedFollowService feed.FollowGraphReader
+	PostFollowService postFollowService
+	SearchUserRepo    userSearchRepo
+	AdminUserStore    adminUserStoreSource
 }
 
 // SetupUserContext initializes the User context with all required dependencies.
@@ -137,13 +138,12 @@ func (ctx *UserContext) SuppressionChecker() mailer.SuppressionChecker {
 
 func (ctx *UserContext) Ports() UserPorts {
 	return UserPorts{
-		FeedUserRepo:         ctx.userRepo,
-		FeedFollowService:    ctx.followService,
-		PostUserRepo:         buildPostUserRepo(ctx.userRepo),
-		PostFollowService:    buildPostFollowService(ctx.followService),
-		NotificationUserRepo: ctx.userRepo,
-		SearchUserRepo:       ctx.userRepo,
-		AdminUserStore:       ctx.userRepo,
+		Authors:           service.NewAuthorDirectory(ctx.userRepo),
+		ActiveAuthors:     service.NewActiveAuthorDirectory(ctx.userRepo),
+		FeedFollowService: ctx.followService,
+		PostFollowService: buildPostFollowService(ctx.followService),
+		SearchUserRepo:    ctx.userRepo,
+		AdminUserStore:    ctx.userRepo,
 	}
 }
 

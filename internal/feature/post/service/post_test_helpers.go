@@ -192,7 +192,8 @@ func (m *mockTrendingInvalidator) InvalidateTrending(_ context.Context) error {
 
 // newPostService creates a PostService with the given mocks for testing.
 func newPostService(pr postRepo, mr mediaRepo, lr likeRepo) *PostService {
-	return &PostService{pool: &mockTxBeginner{}, postRepo: pr, mediaRepo: mr, likeRepo: lr}
+	return &PostService{pool: &mockTxBeginner{}, postRepo: pr, mediaRepo: mr, likeRepo: lr,
+		hydrator: NewHydrator(HydratorDeps{Media: mr, Likes: lr})}
 }
 
 // samplePost returns a sample post entity for testing.
@@ -430,5 +431,6 @@ func newCommentLikeService(clr commentLikeRepo, cr commentRepo) *CommentLikeServ
 
 // newHashtagService creates a HashtagService with the given mocks for testing.
 func newHashtagService(hr hashtagRepo, hc hashtagCache, pr postRepo) *HashtagService {
-	return &HashtagService{hashtagRepo: hr, hashtagCache: hc, postRepo: pr}
+	return &HashtagService{hashtagRepo: hr, hashtagCache: hc, postRepo: pr,
+		hydrator: NewHydrator(HydratorDeps{Tags: hr})}
 }

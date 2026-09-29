@@ -37,7 +37,7 @@ type PostService struct {
 	mediaRepo     mediaRepo
 	likeRepo      likeRepo
 	followChecker followChecker
-	userReader    userReader
+	hydrator      *Hydrator
 	hashtagRepo   hashtagRepo
 	mentionRepo   mentionRepo
 
@@ -60,7 +60,7 @@ type PostDeps struct {
 	Pool                *pgxpool.Pool
 	Posts               *repository.PostRepository
 	Media               *repository.MediaRepository
-	Users               userReader
+	Hydrator            *Hydrator
 	Hashtags            *repository.HashtagRepository
 	Likes               likeRepo
 	Mentions            *repository.MentionRepository
@@ -75,7 +75,7 @@ func (d PostDeps) validate() error {
 		"Pool":                d.Pool,
 		"Posts":               d.Posts,
 		"Media":               d.Media,
-		"Users":               d.Users,
+		"Hydrator":            d.Hydrator,
 		"Hashtags":            d.Hashtags,
 		"Likes":               d.Likes,
 		"Mentions":            d.Mentions,
@@ -95,7 +95,7 @@ func NewPostService(deps PostDeps, opts ...PostServiceOption) (*PostService, err
 		pool:                deps.Pool,
 		postRepo:            &postRepoTxable{deps.Posts},
 		mediaRepo:           &mediaRepoTxable{deps.Media},
-		userReader:          deps.Users,
+		hydrator:            deps.Hydrator,
 		hashtagRepo:         &hashtagRepoTxable{deps.Hashtags},
 		likeRepo:            deps.Likes,
 		mentionRepo:         &mentionRepoTxable{deps.Mentions},
@@ -176,8 +176,9 @@ func (s *PostService) CreatePost(ctx context.Context, authorID uuid.UUID, conten
 		return nil, errors.NewInternalError(err)
 	}
 
-	// Enrich mentions and fire notifications AFTER commit (non-fatal)
-	p.Mentions = s.enrichMentionsAfterCommit(ctx, p.ID, authorID, persistedMentionIDs)
+	// Notify and resolve mentions AFTER commit (non-fatal)
+	s.emitMentions(ctx, p.ID, authorID, persistedMentionIDs)
+	p.Mentions = s.hydrator.Mentioned(ctx, persistedMentionIDs)
 
 	s.ingestCatalogAsync(p.ID.String(), p.Content, p.Tags, p.AuthorID.String())
 
@@ -205,11 +206,7 @@ func (s *PostService) GetPost(ctx context.Context, postID uuid.UUID, viewerID *u
 		return nil, err
 	}
 
-	s.enrichBatch(ctx, []*entity.Post{p}, viewerID)
-	s.enrichAuthors(ctx, []*entity.Post{p})
-	s.enrichTags(ctx, []*entity.Post{p})
-	s.enrichMentions(ctx, []*entity.Post{p})
-	s.enrichIsFollowingAuthor(ctx, []*entity.Post{p}, viewerID)
+	s.hydrator.Hydrate(ctx, []*entity.Post{p}, viewerID, FieldsAll)
 	return p, nil
 }
 
@@ -260,11 +257,7 @@ func (s *PostService) GetUserPosts(ctx context.Context, authorID uuid.UUID, view
 		posts = posts[:limit]
 	}
 
-	s.enrichBatch(ctx, posts, viewerID)
-	s.enrichAuthors(ctx, posts)
-	s.enrichTags(ctx, posts)
-	s.enrichMentions(ctx, posts)
-	s.enrichIsFollowingAuthor(ctx, posts, viewerID)
+	s.hydrator.Hydrate(ctx, posts, viewerID, FieldsAll)
 
 	return posts, nextCursor, nil
 }
@@ -339,17 +332,14 @@ func (s *PostService) UpdatePost(ctx context.Context, postID, userID uuid.UUID, 
 		return nil, errors.NewInternalError(err)
 	}
 
-	// Enrich mentions and fire notifications AFTER commit (non-fatal)
-	updated.Mentions = s.enrichMentionsAfterCommit(ctx, postID, userID, persistedMentionIDs)
+	// Fire mention notifications AFTER commit (non-fatal)
+	s.emitMentions(ctx, postID, userID, persistedMentionIDs)
 
 	// The trending cache may hold this post's old content or visibility;
 	// without eviction a post edited private keeps serving publicly until TTL.
 	s.invalidateTrending(ctx)
 
-	s.enrichBatch(ctx, []*entity.Post{updated}, &userID)
-	s.enrichAuthors(ctx, []*entity.Post{updated})
-	s.enrichTags(ctx, []*entity.Post{updated})
-	s.enrichMentions(ctx, []*entity.Post{updated})
+	s.hydrator.Hydrate(ctx, []*entity.Post{updated}, &userID, FieldsAll)
 
 	s.ingestCatalogAsync(postID.String(), updated.Content, updated.Tags, updated.AuthorID.String())
 

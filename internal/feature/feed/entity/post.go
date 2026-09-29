@@ -4,15 +4,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jarviisha/darkvoid/internal/author"
 )
 
 // Author holds minimal author information embedded in a feed post.
-type Author struct {
-	ID          uuid.UUID
-	Username    string
-	DisplayName string
-	AvatarKey   *string
-}
+type Author = author.Author
 
 // Post is the feed-context view of a post.
 // The app layer converts post.entity.Post → Post when crossing context boundaries.

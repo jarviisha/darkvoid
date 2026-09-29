@@ -16,10 +16,8 @@ func (app *Application) setupFeedContext(
 	postPorts := app.Post.Ports()
 	userPorts := app.User.Ports()
 	posts := &postReader{
-		postRepo:   postPorts.FeedPostRepo,
-		mediaRepo:  postPorts.FeedMediaRepo,
-		likeRepo:   postPorts.FeedLikeRepo,
-		userReader: &userReader{userRepo: userPorts.FeedUserRepo},
+		postRepo: postPorts.FeedPostRepo,
+		hydrator: postPorts.Hydrator,
 	}
 
 	// The follow service and the like repository already have the method sets

@@ -678,3 +678,80 @@ func TestGetUserPosts_RepoError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+// The response lists mentions in the order the author wrote them. Reading them
+// back cannot give that: the batch query has no ORDER BY, and every row of one
+// transaction shares its created_at.
+func TestCreatePost_MentionsInWrittenOrder_WithoutReadBack(t *testing.T) {
+	u1, u2, u3 := uuid.New(), uuid.New(), uuid.New()
+	mr := &mockMentionRepo{
+		getBatch: func(context.Context, []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+			t.Error("mentions read back after create")
+			return nil, nil
+		},
+	}
+	users := &mockUserReader{
+		getAuthorsByIDs: func(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]*entity.Author, error) {
+			m := make(map[uuid.UUID]*entity.Author, len(ids))
+			for _, id := range ids {
+				m[id] = &entity.Author{ID: id, Username: id.String()}
+			}
+			return m, nil
+		},
+	}
+	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, &mockLikeRepo{})
+	svc.mentionRepo = mr
+	svc.hydrator = NewHydrator(HydratorDeps{Users: users, Mentions: mr})
+
+	p, err := svc.CreatePost(context.Background(), uuid.New(), "hi", entity.VisibilityPublic, nil, []uuid.UUID{u3, u1, u2}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(p.Mentions) != 3 || p.Mentions[0].ID != u3 || p.Mentions[1].ID != u1 || p.Mentions[2].ID != u2 {
+		t.Errorf("mentions = %v, want [u3 u1 u2]", p.Mentions)
+	}
+}
+
+// The updated post comes back hydrated as its author sees it: author, mentions
+// read from what was stored, and the author's own liked flag.
+func TestUpdatePost_ReturnsHydratedPost(t *testing.T) {
+	authorID, postID, mentioned := uuid.New(), uuid.New(), uuid.New()
+	pr := &mockPostRepo{
+		getByID: func(context.Context, uuid.UUID) (*entity.Post, error) {
+			p := samplePost(authorID)
+			p.ID = postID
+			return p, nil
+		},
+		update: func(_ context.Context, _ uuid.UUID, content string, v entity.Visibility) (*entity.Post, error) {
+			return &entity.Post{ID: postID, AuthorID: authorID, Content: content, Visibility: v}, nil
+		},
+	}
+	lr := &mockLikeRepo{getLikedPostIDs: func(_ context.Context, _ uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error) { return ids, nil }}
+	mr := &mockMentionRepo{getBatch: func(context.Context, []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+		return map[uuid.UUID][]uuid.UUID{postID: {mentioned}}, nil
+	}}
+	users := &mockUserReader{getAuthorsByIDs: func(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]*entity.Author, error) {
+		m := make(map[uuid.UUID]*entity.Author, len(ids))
+		for _, id := range ids {
+			m[id] = &entity.Author{ID: id}
+		}
+		return m, nil
+	}}
+	svc := newPostService(pr, &mockMediaRepo{}, lr)
+	svc.mentionRepo = mr
+	svc.hydrator = NewHydrator(HydratorDeps{Likes: lr, Users: users, Mentions: mr})
+
+	p, err := svc.UpdatePost(context.Background(), postID, authorID, "edited", entity.VisibilityPublic, []uuid.UUID{mentioned}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if p.Author == nil || p.Author.ID != authorID {
+		t.Errorf("author = %+v, want %s", p.Author, authorID)
+	}
+	if len(p.Mentions) != 1 || p.Mentions[0].ID != mentioned {
+		t.Errorf("mentions = %v, want [%s]", p.Mentions, mentioned)
+	}
+	if !p.IsLiked {
+		t.Error("expected IsLiked for the author's own like")
+	}
+}

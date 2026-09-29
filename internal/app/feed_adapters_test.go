@@ -13,7 +13,9 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
 	feedentity "github.com/jarviisha/darkvoid/internal/feature/feed/entity"
 	postentity "github.com/jarviisha/darkvoid/internal/feature/post/entity"
+	postservice "github.com/jarviisha/darkvoid/internal/feature/post/service"
 	userentity "github.com/jarviisha/darkvoid/internal/feature/user/entity"
+	userservice "github.com/jarviisha/darkvoid/internal/feature/user/service"
 	pkgerrors "github.com/jarviisha/darkvoid/pkg/errors"
 )
 
@@ -79,6 +81,10 @@ func (r *fakeFeedUserRepo) GetUsersByIDsAny(context.Context, []uuid.UUID) ([]*us
 	return r.users, r.err
 }
 
+func (r *fakeFeedUserRepo) GetUsersByIDs(context.Context, []uuid.UUID) ([]*userentity.User, error) {
+	panic("feed authors must include deactivated users")
+}
+
 type feedReaderFakes struct {
 	posts *fakeFeedPostRepo
 	media *fakeFeedMediaRepo
@@ -94,10 +100,12 @@ func newTestFeedPostReader(posts ...*postentity.Post) (*postReader, feedReaderFa
 		users: &fakeFeedUserRepo{},
 	}
 	return &postReader{
-		postRepo:   f.posts,
-		mediaRepo:  f.media,
-		likeRepo:   f.likes,
-		userReader: &userReader{userRepo: f.users},
+		postRepo: f.posts,
+		hydrator: postservice.NewHydrator(postservice.HydratorDeps{
+			Media: f.media,
+			Likes: f.likes,
+			Users: userservice.NewAuthorDirectory(f.users),
+		}),
 	}, f
 }
 
@@ -122,8 +130,12 @@ func TestToFeedPost_CopiesEveryField(t *testing.T) {
 	p.Media = []*postentity.PostMedia{{
 		ID: uuid.New(), PostID: p.ID, MediaKey: "k", MediaType: "image", Position: 2, CreatedAt: p.CreatedAt,
 	}}
+	p.Author = &postentity.Author{ID: p.AuthorID, Username: "a"}
 
 	got := toFeedPost(p)
+	if got.Author != p.Author {
+		t.Fatalf("author = %+v, want %+v", got.Author, p.Author)
+	}
 
 	if got.ID != p.ID || got.AuthorID != p.AuthorID || got.Content != p.Content ||
 		got.Visibility != "followers" || !got.CreatedAt.Equal(p.CreatedAt) || !got.UpdatedAt.Equal(p.UpdatedAt) ||

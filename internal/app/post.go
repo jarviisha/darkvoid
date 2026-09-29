@@ -10,6 +10,7 @@ import (
 	"github.com/jarviisha/darkvoid/internal/feature/post/handler"
 	"github.com/jarviisha/darkvoid/internal/feature/post/repository"
 	"github.com/jarviisha/darkvoid/internal/feature/post/service"
+	userservice "github.com/jarviisha/darkvoid/internal/feature/user/service"
 	"github.com/jarviisha/darkvoid/pkg/codohue"
 	"github.com/jarviisha/darkvoid/pkg/deps"
 	pkgredis "github.com/jarviisha/darkvoid/pkg/redis"
@@ -30,6 +31,7 @@ type PostContext struct {
 	commentMentionRepo *repository.CommentMentionRepository
 
 	// Services
+	hydrator           *service.Hydrator
 	postService        *service.PostService
 	likeService        *service.LikeService
 	commentService     *service.CommentService
@@ -46,31 +48,20 @@ type PostContext struct {
 
 type PostPorts struct {
 	FeedPostRepo      feedPostRepo
-	FeedMediaRepo     feedMediaRepo
+	Hydrator          *service.Hydrator
 	FeedLikeRepo      feedLikeRepo
 	SearchPostRepo    postSearchRepo
 	SearchHashtagRepo hashtagSearchRepo
 }
 
-type postUserRepo interface {
-	GetUsersByIDsAny(ctx context.Context, ids []uuid.UUID) ([]*postUser, error)
-}
-
 func (ctx *PostContext) Ports() PostPorts {
 	return PostPorts{
 		FeedPostRepo:      ctx.postRepo,
-		FeedMediaRepo:     ctx.mediaRepo,
+		Hydrator:          ctx.hydrator,
 		FeedLikeRepo:      ctx.likeRepo,
 		SearchPostRepo:    ctx.searchRepo,
 		SearchHashtagRepo: ctx.hashtagRepo,
 	}
-}
-
-type postUser struct {
-	ID          uuid.UUID
-	Username    string
-	DisplayName string
-	AvatarKey   *string
 }
 
 type postFollowService interface {
@@ -86,7 +77,7 @@ type postFollowService interface {
 type PostContextDeps struct {
 	Pool          *pgxpool.Pool
 	Storage       storage.Storage
-	UserRepo      postUserRepo
+	Authors       *userservice.AuthorDirectory
 	Redis         *pkgredis.Client
 	FollowService postFollowService
 	Notifications *NotificationContext
@@ -103,7 +94,7 @@ func SetupPostContext(d PostContextDeps) (*PostContext, error) {
 	if err := deps.Missing(map[string]any{
 		"Pool":          d.Pool,
 		"Storage":       d.Storage,
-		"UserRepo":      d.UserRepo,
+		"Authors":       d.Authors,
 		"Redis":         d.Redis,
 		"FollowService": d.FollowService,
 		"Notifications": d.Notifications,
@@ -124,10 +115,17 @@ func SetupPostContext(d PostContextDeps) (*PostContext, error) {
 	mentionRepo := repository.NewMentionRepository(d.Pool)
 	commentMentionRepo := repository.NewCommentMentionRepository(d.Pool)
 
-	ur := &postUserReader{userRepo: d.UserRepo}
 	hCache := postcache.NewRedisHashtagCache(d.Redis)
 	checker := &postFollowChecker{followService: d.FollowService}
 	notif := d.Notifications.notifService
+	hydrator := service.NewHydrator(service.HydratorDeps{
+		Media:    mediaRepo,
+		Likes:    likeRepo,
+		Users:    d.Authors,
+		Tags:     hashtagRepo,
+		Mentions: mentionRepo,
+		Follows:  checker,
+	})
 
 	var postOpts []service.PostServiceOption
 	var likeOpts []service.LikeServiceOption
@@ -145,7 +143,7 @@ func SetupPostContext(d PostContextDeps) (*PostContext, error) {
 		Pool:                d.Pool,
 		Posts:               postRepo,
 		Media:               mediaRepo,
-		Users:               ur,
+		Hydrator:            hydrator,
 		Hashtags:            hashtagRepo,
 		Likes:               likeRepo,
 		Mentions:            mentionRepo,
@@ -173,7 +171,7 @@ func SetupPostContext(d PostContextDeps) (*PostContext, error) {
 		Comments:        commentRepo,
 		CommentMedia:    commentMediaRepo,
 		Posts:           postRepo,
-		Users:           ur,
+		Users:           d.Authors,
 		CommentLikes:    commentLikeRepo,
 		CommentMentions: commentMentionRepo,
 		FollowChecker:   checker,
@@ -194,9 +192,10 @@ func SetupPostContext(d PostContextDeps) (*PostContext, error) {
 		return nil, fmt.Errorf("comment like service: %w", err)
 	}
 
-	hashtagService := service.NewHashtagService(hashtagRepo, hCache, postRepo, ur)
+	hashtagService := service.NewHashtagService(hashtagRepo, hCache, postRepo, hydrator)
 
 	return &PostContext{
+		hydrator:           hydrator,
 		postRepo:           postRepo,
 		mediaRepo:          mediaRepo,
 		likeRepo:           likeRepo,

@@ -87,7 +87,7 @@ func TestNewPostService_NamesEveryMissingDependency(t *testing.T) {
 		t.Fatal("NewPostService(PostDeps{}) returned a nil error — want the missing dependencies named")
 	}
 	for _, want := range []string{
-		"Pool", "Posts", "Media", "Users", "Hashtags", "Likes", "Mentions",
+		"Pool", "Posts", "Media", "Hydrator", "Hashtags", "Likes", "Mentions",
 		"FollowChecker", "Notifications", "TrendingInvalidator", "FeedOutbox",
 	} {
 		if !strings.Contains(err.Error(), want) {

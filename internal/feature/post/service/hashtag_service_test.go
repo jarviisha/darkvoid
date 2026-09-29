@@ -313,7 +313,7 @@ func TestGetPostsByHashtag_EnrichAuthors_Success(t *testing.T) {
 		},
 	}
 	svc := newHashtagService(hr, &mockHashtagCache{}, &mockPostRepo{})
-	svc.userReader = &mockUserReader{
+	svc.hydrator.d.Users = &mockUserReader{
 		getAuthorsByIDs: func(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]*entity.Author, error) {
 			m := make(map[uuid.UUID]*entity.Author, len(ids))
 			for _, id := range ids {
@@ -343,7 +343,7 @@ func TestGetPostsByHashtag_EnrichAuthors_RepoError_NonFatal(t *testing.T) {
 		},
 	}
 	svc := newHashtagService(hr, &mockHashtagCache{}, &mockPostRepo{})
-	svc.userReader = &mockUserReader{
+	svc.hydrator.d.Users = &mockUserReader{
 		getAuthorsByIDs: func(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]*entity.Author, error) {
 			return nil, errors.New("user service down")
 		},
@@ -355,5 +355,39 @@ func TestGetPostsByHashtag_EnrichAuthors_RepoError_NonFatal(t *testing.T) {
 	}
 	if len(posts) != 1 {
 		t.Errorf("expected 1 post despite enrich error, got %d", len(posts))
+	}
+}
+
+// Page 1 is shared by every viewer, so the copy written to the cache must not
+// carry the first viewer's liked flag, while that viewer's response still does.
+func TestGetPostsByHashtag_Page1CachedWithoutViewerFields(t *testing.T) {
+	viewerID := uuid.New()
+	hr := &mockHashtagRepo{
+		getPostsByHashtag: func(context.Context, string, pgtype.Timestamptz, uuid.UUID, int32) ([]*entity.Post, error) {
+			return []*entity.Post{{ID: uuid.New(), AuthorID: uuid.New()}}, nil
+		},
+	}
+	var cachedLiked *bool
+	hc := &mockHashtagCache{
+		setHashtagPostsPage1: func(_ context.Context, _ string, page *postcache.HashtagPostsPage) error {
+			liked := page.Posts[0].IsLiked
+			cachedLiked = &liked
+			return nil
+		},
+	}
+	svc := newHashtagService(hr, hc, &mockPostRepo{})
+	svc.hydrator.d.Likes = &mockLikeRepo{
+		getLikedPostIDs: func(_ context.Context, _ uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error) { return ids, nil },
+	}
+
+	posts, _, err := svc.GetPostsByHashtag(context.Background(), "golang", &viewerID, nil, 20)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cachedLiked == nil || *cachedLiked {
+		t.Errorf("cached page IsLiked = %v, want false", cachedLiked)
+	}
+	if !posts[0].IsLiked {
+		t.Error("expected the viewer's response to carry IsLiked")
 	}
 }

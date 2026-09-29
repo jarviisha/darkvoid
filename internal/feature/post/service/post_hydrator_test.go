@@ -10,16 +10,16 @@ import (
 )
 
 // --------------------------------------------------------------------------
-// enrichBatch tests
+// media and liked tests
 // --------------------------------------------------------------------------
 
-func TestEnrichBatch_EmptyPosts(t *testing.T) {
-	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, &mockLikeRepo{})
-	svc.enrichBatch(context.Background(), []*entity.Post{}, nil)
+func TestHydrate_EmptyPosts(t *testing.T) {
+	h := NewHydrator(HydratorDeps{Media: &mockMediaRepo{}, Likes: &mockLikeRepo{}})
+	h.Hydrate(context.Background(), []*entity.Post{}, nil, FieldMedia|FieldLiked)
 	// No panic = success
 }
 
-func TestEnrichBatch_MediaOnly(t *testing.T) {
+func TestHydrate_MediaOnly(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 	post2 := samplePost(uuid.New())
@@ -33,8 +33,8 @@ func TestEnrichBatch_MediaOnly(t *testing.T) {
 		},
 	}
 
-	svc := newPostService(&mockPostRepo{}, mr, &mockLikeRepo{})
-	svc.enrichBatch(ctx, []*entity.Post{post1, post2}, nil)
+	h := NewHydrator(HydratorDeps{Media: mr, Likes: &mockLikeRepo{}})
+	h.Hydrate(ctx, []*entity.Post{post1, post2}, nil, FieldMedia|FieldLiked)
 
 	if len(post1.Media) != 1 {
 		t.Errorf("expected 1 media for post1, got %d", len(post1.Media))
@@ -47,7 +47,7 @@ func TestEnrichBatch_MediaOnly(t *testing.T) {
 	}
 }
 
-func TestEnrichBatch_MediaError_NonFatal(t *testing.T) {
+func TestHydrate_MediaError_NonFatal(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 
@@ -57,8 +57,8 @@ func TestEnrichBatch_MediaError_NonFatal(t *testing.T) {
 		},
 	}
 
-	svc := newPostService(&mockPostRepo{}, mr, &mockLikeRepo{})
-	svc.enrichBatch(ctx, []*entity.Post{post1}, nil)
+	h := NewHydrator(HydratorDeps{Media: mr, Likes: &mockLikeRepo{}})
+	h.Hydrate(ctx, []*entity.Post{post1}, nil, FieldMedia|FieldLiked)
 
 	// Should not panic, media should be nil/empty
 	if post1.Media != nil {
@@ -66,7 +66,7 @@ func TestEnrichBatch_MediaError_NonFatal(t *testing.T) {
 	}
 }
 
-func TestEnrichBatch_IsLiked_NoViewerID(t *testing.T) {
+func TestHydrate_Liked_NoViewerID(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 
@@ -77,15 +77,15 @@ func TestEnrichBatch_IsLiked_NoViewerID(t *testing.T) {
 		},
 	}
 
-	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, lr)
-	svc.enrichBatch(ctx, []*entity.Post{post1}, nil)
+	h := NewHydrator(HydratorDeps{Media: &mockMediaRepo{}, Likes: lr})
+	h.Hydrate(ctx, []*entity.Post{post1}, nil, FieldMedia|FieldLiked)
 
 	if post1.IsLiked {
 		t.Error("expected IsLiked to be false when no viewerID")
 	}
 }
 
-func TestEnrichBatch_IsLiked_WithViewerID(t *testing.T) {
+func TestHydrate_Liked_WithViewerID(t *testing.T) {
 	ctx := context.Background()
 	viewerID := uuid.New()
 	post1 := samplePost(uuid.New())
@@ -102,8 +102,8 @@ func TestEnrichBatch_IsLiked_WithViewerID(t *testing.T) {
 		},
 	}
 
-	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, lr)
-	svc.enrichBatch(ctx, []*entity.Post{post1, post2, post3}, &viewerID)
+	h := NewHydrator(HydratorDeps{Media: &mockMediaRepo{}, Likes: lr})
+	h.Hydrate(ctx, []*entity.Post{post1, post2, post3}, &viewerID, FieldMedia|FieldLiked)
 
 	if !post1.IsLiked {
 		t.Error("expected post1 IsLiked = true")
@@ -116,7 +116,7 @@ func TestEnrichBatch_IsLiked_WithViewerID(t *testing.T) {
 	}
 }
 
-func TestEnrichBatch_IsLikedError_NonFatal(t *testing.T) {
+func TestHydrate_Liked_Error_NonFatal(t *testing.T) {
 	ctx := context.Background()
 	viewerID := uuid.New()
 	post1 := samplePost(uuid.New())
@@ -127,8 +127,8 @@ func TestEnrichBatch_IsLikedError_NonFatal(t *testing.T) {
 		},
 	}
 
-	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, lr)
-	svc.enrichBatch(ctx, []*entity.Post{post1}, &viewerID)
+	h := NewHydrator(HydratorDeps{Media: &mockMediaRepo{}, Likes: lr})
+	h.Hydrate(ctx, []*entity.Post{post1}, &viewerID, FieldMedia|FieldLiked)
 
 	// Should not panic, IsLiked should be false
 	if post1.IsLiked {
@@ -136,13 +136,13 @@ func TestEnrichBatch_IsLikedError_NonFatal(t *testing.T) {
 	}
 }
 
-func TestEnrichBatch_NoLikeRepo(t *testing.T) {
+func TestHydrate_Liked_NoLikeRepo(t *testing.T) {
 	ctx := context.Background()
 	viewerID := uuid.New()
 	post1 := samplePost(uuid.New())
 
-	svc := newPostService(&mockPostRepo{}, &mockMediaRepo{}, nil)
-	svc.enrichBatch(ctx, []*entity.Post{post1}, &viewerID)
+	h := NewHydrator(HydratorDeps{Media: &mockMediaRepo{}, Likes: nil})
+	h.Hydrate(ctx, []*entity.Post{post1}, &viewerID, FieldMedia|FieldLiked)
 
 	if post1.IsLiked {
 		t.Error("expected IsLiked = false when likeRepo is nil")
@@ -153,23 +153,23 @@ func TestEnrichBatch_NoLikeRepo(t *testing.T) {
 // enrichAuthors tests
 // --------------------------------------------------------------------------
 
-func TestEnrichAuthors_EmptyPosts(t *testing.T) {
-	svc := &PostService{}
-	svc.enrichAuthors(context.Background(), []*entity.Post{})
+func TestHydrate_Authors_EmptyPosts(t *testing.T) {
+	h := NewHydrator(HydratorDeps{})
+	h.Hydrate(context.Background(), []*entity.Post{}, nil, FieldAuthor)
 	// No panic = success
 }
 
-func TestEnrichAuthors_NoUserReader(t *testing.T) {
+func TestHydrate_Authors_NoUserReader(t *testing.T) {
 	post1 := samplePost(uuid.New())
-	svc := &PostService{userReader: nil}
-	svc.enrichAuthors(context.Background(), []*entity.Post{post1})
+	h := NewHydrator(HydratorDeps{Users: nil})
+	h.Hydrate(context.Background(), []*entity.Post{post1}, nil, FieldAuthor)
 
 	if post1.Author != nil {
 		t.Error("expected nil author when userReader is nil")
 	}
 }
 
-func TestEnrichAuthors_SinglePost(t *testing.T) {
+func TestHydrate_Authors_SinglePost(t *testing.T) {
 	ctx := context.Background()
 	authorID := uuid.New()
 	post1 := samplePost(authorID)
@@ -182,8 +182,8 @@ func TestEnrichAuthors_SinglePost(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{userReader: mockUR}
-	svc.enrichAuthors(ctx, []*entity.Post{post1})
+	h := NewHydrator(HydratorDeps{Users: mockUR})
+	h.Hydrate(ctx, []*entity.Post{post1}, nil, FieldAuthor)
 
 	if post1.Author == nil {
 		t.Fatal("expected author to be set")
@@ -193,7 +193,7 @@ func TestEnrichAuthors_SinglePost(t *testing.T) {
 	}
 }
 
-func TestEnrichAuthors_MultiplePosts_SameAuthor(t *testing.T) {
+func TestHydrate_Authors_MultiplePosts_SameAuthor(t *testing.T) {
 	ctx := context.Background()
 	authorID := uuid.New()
 	post1 := samplePost(authorID)
@@ -212,8 +212,8 @@ func TestEnrichAuthors_MultiplePosts_SameAuthor(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{userReader: mockUR}
-	svc.enrichAuthors(ctx, []*entity.Post{post1, post2, post3})
+	h := NewHydrator(HydratorDeps{Users: mockUR})
+	h.Hydrate(ctx, []*entity.Post{post1, post2, post3}, nil, FieldAuthor)
 
 	if post1.Author == nil || post1.Author.Username != "bob" {
 		t.Error("expected post1 author to be bob")
@@ -223,7 +223,7 @@ func TestEnrichAuthors_MultiplePosts_SameAuthor(t *testing.T) {
 	}
 }
 
-func TestEnrichAuthors_MultiplePosts_DifferentAuthors(t *testing.T) {
+func TestHydrate_Authors_MultiplePosts_DifferentAuthors(t *testing.T) {
 	ctx := context.Background()
 	author1 := uuid.New()
 	author2 := uuid.New()
@@ -239,8 +239,8 @@ func TestEnrichAuthors_MultiplePosts_DifferentAuthors(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{userReader: mockUR}
-	svc.enrichAuthors(ctx, []*entity.Post{post1, post2})
+	h := NewHydrator(HydratorDeps{Users: mockUR})
+	h.Hydrate(ctx, []*entity.Post{post1, post2}, nil, FieldAuthor)
 
 	if post1.Author == nil || post1.Author.Username != "alice" {
 		t.Error("expected post1 author to be alice")
@@ -250,7 +250,7 @@ func TestEnrichAuthors_MultiplePosts_DifferentAuthors(t *testing.T) {
 	}
 }
 
-func TestEnrichAuthors_Error_NonFatal(t *testing.T) {
+func TestHydrate_Authors_Error_NonFatal(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 
@@ -260,8 +260,8 @@ func TestEnrichAuthors_Error_NonFatal(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{userReader: mockUR}
-	svc.enrichAuthors(ctx, []*entity.Post{post1})
+	h := NewHydrator(HydratorDeps{Users: mockUR})
+	h.Hydrate(ctx, []*entity.Post{post1}, nil, FieldAuthor)
 
 	// Should not panic, author should be nil
 	if post1.Author != nil {
@@ -273,19 +273,19 @@ func TestEnrichAuthors_Error_NonFatal(t *testing.T) {
 // enrichIsFollowingAuthor tests
 // --------------------------------------------------------------------------
 
-func TestEnrichIsFollowingAuthor_NoFollowChecker(t *testing.T) {
+func TestHydrate_IsFollowingAuthor_NoFollowChecker(t *testing.T) {
 	post1 := samplePost(uuid.New())
 	viewerID := uuid.New()
 
-	svc := &PostService{followChecker: nil}
-	svc.enrichIsFollowingAuthor(context.Background(), []*entity.Post{post1}, &viewerID)
+	h := NewHydrator(HydratorDeps{Follows: nil})
+	h.Hydrate(context.Background(), []*entity.Post{post1}, &viewerID, FieldFollowingAuthor)
 
 	if post1.IsFollowingAuthor {
 		t.Error("expected IsFollowingAuthor = false when followChecker is nil")
 	}
 }
 
-func TestEnrichIsFollowingAuthor_NoViewerID(t *testing.T) {
+func TestHydrate_IsFollowingAuthor_NoViewerID(t *testing.T) {
 	post1 := samplePost(uuid.New())
 
 	mockFC := &mockFollowChecker{
@@ -295,17 +295,17 @@ func TestEnrichIsFollowingAuthor_NoViewerID(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{followChecker: mockFC}
-	svc.enrichIsFollowingAuthor(context.Background(), []*entity.Post{post1}, nil)
+	h := NewHydrator(HydratorDeps{Follows: mockFC})
+	h.Hydrate(context.Background(), []*entity.Post{post1}, nil, FieldFollowingAuthor)
 }
 
-func TestEnrichIsFollowingAuthor_EmptyPosts(t *testing.T) {
+func TestHydrate_IsFollowingAuthor_EmptyPosts(t *testing.T) {
 	viewerID := uuid.New()
-	svc := &PostService{followChecker: &mockFollowChecker{}}
-	svc.enrichIsFollowingAuthor(context.Background(), []*entity.Post{}, &viewerID)
+	h := NewHydrator(HydratorDeps{Follows: &mockFollowChecker{}})
+	h.Hydrate(context.Background(), []*entity.Post{}, &viewerID, FieldFollowingAuthor)
 }
 
-func TestEnrichIsFollowingAuthor_ViewerIsAuthor_Skipped(t *testing.T) {
+func TestHydrate_IsFollowingAuthor_ViewerIsAuthor_Skipped(t *testing.T) {
 	ctx := context.Background()
 	viewerID := uuid.New()
 	post1 := samplePost(viewerID) // Viewer is the author
@@ -317,15 +317,15 @@ func TestEnrichIsFollowingAuthor_ViewerIsAuthor_Skipped(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{followChecker: mockFC}
-	svc.enrichIsFollowingAuthor(ctx, []*entity.Post{post1}, &viewerID)
+	h := NewHydrator(HydratorDeps{Follows: mockFC})
+	h.Hydrate(ctx, []*entity.Post{post1}, &viewerID, FieldFollowingAuthor)
 
 	if post1.IsFollowingAuthor {
 		t.Error("expected IsFollowingAuthor = false for own post")
 	}
 }
 
-func TestEnrichIsFollowingAuthor_Success(t *testing.T) {
+func TestHydrate_IsFollowingAuthor_Success(t *testing.T) {
 	ctx := context.Background()
 	viewerID := uuid.New()
 	author1 := uuid.New()
@@ -352,8 +352,8 @@ func TestEnrichIsFollowingAuthor_Success(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{followChecker: mockFC}
-	svc.enrichIsFollowingAuthor(ctx, []*entity.Post{post1, post2, post3}, &viewerID)
+	h := NewHydrator(HydratorDeps{Follows: mockFC})
+	h.Hydrate(ctx, []*entity.Post{post1, post2, post3}, &viewerID, FieldFollowingAuthor)
 	if batchCalls != 1 {
 		t.Fatalf("batch follow calls = %d, want 1", batchCalls)
 	}
@@ -369,7 +369,7 @@ func TestEnrichIsFollowingAuthor_Success(t *testing.T) {
 	}
 }
 
-func TestEnrichIsFollowingAuthor_Error_NonFatal(t *testing.T) {
+func TestHydrate_IsFollowingAuthor_Error_NonFatal(t *testing.T) {
 	ctx := context.Background()
 	viewerID := uuid.New()
 	post1 := samplePost(uuid.New())
@@ -380,8 +380,8 @@ func TestEnrichIsFollowingAuthor_Error_NonFatal(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{followChecker: mockFC}
-	svc.enrichIsFollowingAuthor(ctx, []*entity.Post{post1}, &viewerID)
+	h := NewHydrator(HydratorDeps{Follows: mockFC})
+	h.Hydrate(ctx, []*entity.Post{post1}, &viewerID, FieldFollowingAuthor)
 
 	// Should not panic, IsFollowingAuthor should be false
 	if post1.IsFollowingAuthor {
@@ -393,22 +393,22 @@ func TestEnrichIsFollowingAuthor_Error_NonFatal(t *testing.T) {
 // enrichTags tests
 // --------------------------------------------------------------------------
 
-func TestEnrichTags_EmptyPosts(t *testing.T) {
-	svc := &PostService{hashtagRepo: &mockHashtagRepo{}}
-	svc.enrichTags(context.Background(), []*entity.Post{})
+func TestHydrate_Tags_EmptyPosts(t *testing.T) {
+	h := NewHydrator(HydratorDeps{Tags: &mockHashtagRepo{}})
+	h.Hydrate(context.Background(), []*entity.Post{}, nil, FieldTags)
 }
 
-func TestEnrichTags_NoHashtagRepo(t *testing.T) {
+func TestHydrate_Tags_NoHashtagRepo(t *testing.T) {
 	post1 := samplePost(uuid.New())
-	svc := &PostService{hashtagRepo: nil}
-	svc.enrichTags(context.Background(), []*entity.Post{post1})
+	h := NewHydrator(HydratorDeps{Tags: nil})
+	h.Hydrate(context.Background(), []*entity.Post{post1}, nil, FieldTags)
 
 	if post1.Tags != nil {
 		t.Error("expected nil tags when hashtagRepo is nil")
 	}
 }
 
-func TestEnrichTags_Success(t *testing.T) {
+func TestHydrate_Tags_Success(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 	post2 := samplePost(uuid.New())
@@ -422,8 +422,8 @@ func TestEnrichTags_Success(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{hashtagRepo: mockHR}
-	svc.enrichTags(ctx, []*entity.Post{post1, post2})
+	h := NewHydrator(HydratorDeps{Tags: mockHR})
+	h.Hydrate(ctx, []*entity.Post{post1, post2}, nil, FieldTags)
 
 	if len(post1.Tags) != 2 {
 		t.Errorf("expected 2 tags for post1, got %d", len(post1.Tags))
@@ -436,7 +436,7 @@ func TestEnrichTags_Success(t *testing.T) {
 	}
 }
 
-func TestEnrichTags_Error_NonFatal(t *testing.T) {
+func TestHydrate_Tags_Error_NonFatal(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 
@@ -446,8 +446,8 @@ func TestEnrichTags_Error_NonFatal(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{hashtagRepo: mockHR}
-	svc.enrichTags(ctx, []*entity.Post{post1})
+	h := NewHydrator(HydratorDeps{Tags: mockHR})
+	h.Hydrate(ctx, []*entity.Post{post1}, nil, FieldTags)
 
 	// Should not panic, tags should be nil/empty
 }
@@ -456,22 +456,22 @@ func TestEnrichTags_Error_NonFatal(t *testing.T) {
 // enrichMentions tests
 // --------------------------------------------------------------------------
 
-func TestEnrichMentions_EmptyPosts(t *testing.T) {
-	svc := &PostService{mentionRepo: &mockMentionRepo{}, userReader: &mockUserReader{}}
-	svc.enrichMentions(context.Background(), []*entity.Post{})
+func TestHydrate_Mentions_EmptyPosts(t *testing.T) {
+	h := NewHydrator(HydratorDeps{Mentions: &mockMentionRepo{}, Users: &mockUserReader{}})
+	h.Hydrate(context.Background(), []*entity.Post{}, nil, FieldMentions)
 }
 
-func TestEnrichMentions_NoMentionRepo(t *testing.T) {
+func TestHydrate_Mentions_NoMentionRepo(t *testing.T) {
 	post1 := samplePost(uuid.New())
-	svc := &PostService{mentionRepo: nil, userReader: &mockUserReader{}}
-	svc.enrichMentions(context.Background(), []*entity.Post{post1})
+	h := NewHydrator(HydratorDeps{Mentions: nil, Users: &mockUserReader{}})
+	h.Hydrate(context.Background(), []*entity.Post{post1}, nil, FieldMentions)
 
 	if post1.Mentions != nil {
 		t.Error("expected nil mentions when mentionRepo is nil")
 	}
 }
 
-func TestEnrichMentions_Success(t *testing.T) {
+func TestHydrate_Mentions_Success(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 	post2 := samplePost(uuid.New())
@@ -498,8 +498,8 @@ func TestEnrichMentions_Success(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{mentionRepo: mockMR, userReader: mockUR}
-	svc.enrichMentions(ctx, []*entity.Post{post1, post2})
+	h := NewHydrator(HydratorDeps{Mentions: mockMR, Users: mockUR})
+	h.Hydrate(ctx, []*entity.Post{post1, post2}, nil, FieldMentions)
 
 	if len(post1.Mentions) != 2 {
 		t.Errorf("expected 2 mentions for post1, got %d", len(post1.Mentions))
@@ -512,7 +512,7 @@ func TestEnrichMentions_Success(t *testing.T) {
 	}
 }
 
-func TestEnrichMentions_NoMentionsInPosts(t *testing.T) {
+func TestHydrate_Mentions_NoMentionsInPosts(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 
@@ -522,8 +522,8 @@ func TestEnrichMentions_NoMentionsInPosts(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{mentionRepo: mockMR, userReader: &mockUserReader{}}
-	svc.enrichMentions(ctx, []*entity.Post{post1})
+	h := NewHydrator(HydratorDeps{Mentions: mockMR, Users: &mockUserReader{}})
+	h.Hydrate(ctx, []*entity.Post{post1}, nil, FieldMentions)
 
 	// Should not call userReader when no mentions
 	if len(post1.Mentions) > 0 {
@@ -531,7 +531,7 @@ func TestEnrichMentions_NoMentionsInPosts(t *testing.T) {
 	}
 }
 
-func TestEnrichMentions_GetBatchError_NonFatal(t *testing.T) {
+func TestHydrate_Mentions_GetBatchError_NonFatal(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 
@@ -541,13 +541,13 @@ func TestEnrichMentions_GetBatchError_NonFatal(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{mentionRepo: mockMR, userReader: &mockUserReader{}}
-	svc.enrichMentions(ctx, []*entity.Post{post1})
+	h := NewHydrator(HydratorDeps{Mentions: mockMR, Users: &mockUserReader{}})
+	h.Hydrate(ctx, []*entity.Post{post1}, nil, FieldMentions)
 
 	// Should not panic
 }
 
-func TestEnrichMentions_GetAuthorsByIDsError_NonFatal(t *testing.T) {
+func TestHydrate_Mentions_GetAuthorsByIDsError_NonFatal(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 	user1 := uuid.New()
@@ -566,8 +566,59 @@ func TestEnrichMentions_GetAuthorsByIDsError_NonFatal(t *testing.T) {
 		},
 	}
 
-	svc := &PostService{mentionRepo: mockMR, userReader: mockUR}
-	svc.enrichMentions(ctx, []*entity.Post{post1})
+	h := NewHydrator(HydratorDeps{Mentions: mockMR, Users: mockUR})
+	h.Hydrate(ctx, []*entity.Post{post1}, nil, FieldMentions)
 
 	// Should not panic, mentions should be empty
+}
+
+// Authors and mentions used to be fetched by two separate lookups, so a post
+// with mentions cost two round trips to the user directory.
+func TestHydrate_AuthorAndMentions_OneDirectoryLookup(t *testing.T) {
+	authorID, mentionedID := uuid.New(), uuid.New()
+	p := samplePost(authorID)
+
+	var lookups [][]uuid.UUID
+	h := NewHydrator(HydratorDeps{
+		Mentions: &mockMentionRepo{
+			getBatch: func(context.Context, []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+				return map[uuid.UUID][]uuid.UUID{p.ID: {mentionedID}}, nil
+			},
+		},
+		Users: &mockUserReader{
+			getAuthorsByIDs: func(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]*entity.Author, error) {
+				lookups = append(lookups, ids)
+				return map[uuid.UUID]*entity.Author{
+					authorID:    {ID: authorID, Username: "author"},
+					mentionedID: {ID: mentionedID, Username: "mentioned"},
+				}, nil
+			},
+		},
+	})
+	h.Hydrate(context.Background(), []*entity.Post{p}, nil, FieldAuthor|FieldMentions)
+
+	if len(lookups) != 1 || len(lookups[0]) != 2 {
+		t.Fatalf("expected one lookup of 2 ids, got %v", lookups)
+	}
+	if p.Author == nil || p.Author.Username != "author" {
+		t.Errorf("author not set: %+v", p.Author)
+	}
+	if len(p.Mentions) != 1 || p.Mentions[0].Username != "mentioned" {
+		t.Errorf("mentions not set: %+v", p.Mentions)
+	}
+}
+
+func TestHydrate_ViewerFieldsSkippedWithoutViewer(t *testing.T) {
+	p := samplePost(uuid.New())
+	h := NewHydrator(HydratorDeps{
+		Likes: &mockLikeRepo{getLikedPostIDs: func(context.Context, uuid.UUID, []uuid.UUID) ([]uuid.UUID, error) {
+			t.Error("likes queried without a viewer")
+			return nil, nil
+		}},
+		Follows: &mockFollowChecker{getFollowingAmong: func(context.Context, uuid.UUID, []uuid.UUID) ([]uuid.UUID, error) {
+			t.Error("follows queried without a viewer")
+			return nil, nil
+		}},
+	})
+	h.Hydrate(context.Background(), []*entity.Post{p}, nil, FieldsAll)
 }

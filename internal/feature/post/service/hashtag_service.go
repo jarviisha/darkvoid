@@ -24,7 +24,7 @@ type HashtagService struct {
 	hashtagRepo  hashtagRepo
 	hashtagCache hashtagCache
 	postRepo     postRepo
-	userReader   userReader
+	hydrator     *Hydrator
 }
 
 // NewHashtagService creates a new HashtagService.
@@ -32,13 +32,13 @@ func NewHashtagService(
 	hashtagRepo *repository.HashtagRepository,
 	hashtagCache hashtagCache,
 	postRepo *repository.PostRepository,
-	userReader userReader,
+	hydrator *Hydrator,
 ) *HashtagService {
 	return &HashtagService{
 		hashtagRepo:  &hashtagRepoTxable{hashtagRepo},
 		hashtagCache: hashtagCache,
 		postRepo:     &postRepoTxable{postRepo},
-		userReader:   userReader,
+		hydrator:     hydrator,
 	}
 }
 
@@ -100,6 +100,7 @@ func (s *HashtagService) GetPostsByHashtag(ctx context.Context, name string, vie
 			if page.NextCursor != "" {
 				nextCursor, _ = post.DecodeUserPostCursor(page.NextCursor)
 			}
+			s.hydrator.Hydrate(ctx, page.Posts, viewerID, FieldsViewer)
 			return page.Posts, nextCursor, nil
 		}
 	}
@@ -131,7 +132,9 @@ func (s *HashtagService) GetPostsByHashtag(ctx context.Context, name string, vie
 		posts = posts[:limit]
 	}
 
-	s.enrichHashtagPosts(ctx, posts, viewerID)
+	// Page 1 is cached for every viewer, so only viewer-independent fields
+	// may be filled before it is written.
+	s.hydrator.Hydrate(ctx, posts, nil, FieldsShared)
 
 	// Cache page 1 result (cursor was nil → this is the first page).
 	if cursor == nil {
@@ -145,48 +148,6 @@ func (s *HashtagService) GetPostsByHashtag(ctx context.Context, name string, vie
 		}
 	}
 
+	s.hydrator.Hydrate(ctx, posts, viewerID, FieldsViewer)
 	return posts, nextCursor, nil
-}
-
-// enrichHashtagPosts enriches a slice of posts with author info and tags.
-func (s *HashtagService) enrichHashtagPosts(ctx context.Context, posts []*entity.Post, viewerID *uuid.UUID) {
-	if len(posts) == 0 {
-		return
-	}
-
-	// Batch-fetch tags
-	ids := make([]uuid.UUID, len(posts))
-	for i, p := range posts {
-		ids[i] = p.ID
-	}
-	if tagsMap, err := s.hashtagRepo.GetNamesByPostIDs(ctx, ids); err == nil {
-		for _, p := range posts {
-			if names, ok := tagsMap[p.ID]; ok {
-				p.Tags = names
-			}
-		}
-	}
-
-	// Batch-fetch authors
-	if s.userReader != nil {
-		seen := make(map[uuid.UUID]bool, len(posts))
-		authorIDs := make([]uuid.UUID, 0, len(posts))
-		for _, p := range posts {
-			if !seen[p.AuthorID] {
-				seen[p.AuthorID] = true
-				authorIDs = append(authorIDs, p.AuthorID)
-			}
-		}
-		authors, err := s.userReader.GetAuthorsByIDs(ctx, authorIDs)
-		if err != nil {
-			logger.LogError(ctx, err, "failed to enrich hashtag post authors")
-		} else {
-			for _, p := range posts {
-				if a, ok := authors[p.AuthorID]; ok {
-					p.Author = a
-				}
-			}
-		}
-	}
-	_ = viewerID // isLiked enrichment can be added when a likeRepo is injected
 }

@@ -64,7 +64,7 @@ func (app *Application) setupPostContext(
 	post, err := SetupPostContext(PostContextDeps{
 		Pool:          app.pool,
 		Storage:       store,
-		UserRepo:      userPorts.PostUserRepo,
+		Authors:       userPorts.Authors,
 		Redis:         app.redis,
 		FollowService: userPorts.PostFollowService,
 		Notifications: app.Notification,
