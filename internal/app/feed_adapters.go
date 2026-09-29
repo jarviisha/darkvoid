@@ -83,7 +83,7 @@ func (r *postReader) GetFollowingPostsWithCursor(ctx context.Context, authorIDs 
 	if err != nil {
 		return nil, pkgerrors.NewInternalError(err)
 	}
-	return r.hydrate(ctx, posts, nil), nil
+	return r.hydrate(ctx, posts, nil, feedSharedFields), nil
 }
 
 func (r *postReader) GetTrendingPosts(ctx context.Context, limit int32) ([]*feedentity.Post, error) {
@@ -91,7 +91,7 @@ func (r *postReader) GetTrendingPosts(ctx context.Context, limit int32) ([]*feed
 	if err != nil {
 		return nil, pkgerrors.NewInternalError(err)
 	}
-	return r.hydrate(ctx, posts, nil), nil
+	return r.hydrate(ctx, posts, nil, feedSharedFields), nil
 }
 
 func (r *postReader) GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*feedentity.Post, error) {
@@ -109,7 +109,7 @@ func (r *postReader) GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*fee
 			ordered = append(ordered, p)
 		}
 	}
-	return r.hydrate(ctx, ordered, nil), nil
+	return r.hydrate(ctx, ordered, nil, feedSharedFields), nil
 }
 
 func (r *postReader) GetDiscoverWithCursor(ctx context.Context, cursor *feed.DiscoverCursor, limit int32, viewerID *uuid.UUID) ([]*feedentity.Post, error) {
@@ -131,17 +131,20 @@ func (r *postReader) GetDiscoverWithCursor(ctx context.Context, cursor *feed.Dis
 		logger.LogError(ctx, err, "failed to get discover feed")
 		return nil, pkgerrors.NewInternalError(err)
 	}
-	return r.hydrate(ctx, posts, viewerID), nil
+	return r.hydrate(ctx, posts, viewerID, feedSharedFields|postservice.FieldLiked), nil
 }
 
-// hydrate fills media and authors, plus the liked flag when viewerID is set,
-// and converts to the feed's view. Following and trending pass nil: trending
-// is cached across viewers, and the feed service fills likes for those itself.
-func (r *postReader) hydrate(ctx context.Context, posts []*postentity.Post, viewerID *uuid.UUID) []*feedentity.Post {
+// feedSharedFields is what a feed post carries whoever reads it. Following,
+// trending and by-id reads stop there: trending is cached across viewers, and
+// the feed service fills likes for those itself. Only discover adds FieldLiked.
+const feedSharedFields = postservice.FieldMedia | postservice.FieldAuthor
+
+// hydrate fills fields and converts to the feed's view.
+func (r *postReader) hydrate(ctx context.Context, posts []*postentity.Post, viewerID *uuid.UUID, fields postservice.Fields) []*feedentity.Post {
 	if len(posts) == 0 {
 		return nil
 	}
-	r.hydrator.Hydrate(ctx, posts, viewerID, postservice.FieldMedia|postservice.FieldAuthor|postservice.FieldLiked)
+	r.hydrator.Hydrate(ctx, posts, viewerID, fields)
 	result := make([]*feedentity.Post, len(posts))
 	for i, p := range posts {
 		result[i] = toFeedPost(p)

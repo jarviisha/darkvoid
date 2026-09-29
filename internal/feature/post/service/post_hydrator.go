@@ -176,21 +176,36 @@ func (h *Hydrator) people(ctx context.Context, posts []*entity.Post, ids []uuid.
 				p.Author = a
 			}
 		}
-		mentioned, ok := mentionMap[p.ID]
-		if !ok {
-			continue
-		}
-		p.Mentions = make([]*entity.MentionedUser, 0, len(mentioned))
-		for _, id := range mentioned {
-			if a, ok := authors[id]; ok {
-				p.Mentions = append(p.Mentions, &entity.MentionedUser{
-					ID:          a.ID,
-					Username:    a.Username,
-					DisplayName: a.DisplayName,
-				})
-			}
+		if mentioned, ok := mentionMap[p.ID]; ok {
+			p.Mentions = mentionedUsers(authors, mentioned)
 		}
 	}
+}
+
+// Mentioned resolves user ids the caller already holds, keeping their order.
+// A post that was just written knows its mentions in the order the author typed
+// them; reading them back cannot recover that order.
+func (h *Hydrator) Mentioned(ctx context.Context, ids []uuid.UUID) []*entity.MentionedUser {
+	if len(ids) == 0 || h.d.Users == nil {
+		return nil
+	}
+	authors, err := h.d.Users.GetAuthorsByIDs(ctx, ids)
+	if err != nil {
+		logger.LogError(ctx, err, "failed to fetch mentioned users")
+		return nil
+	}
+	return mentionedUsers(authors, ids)
+}
+
+// mentionedUsers projects ids through authors in order, dropping unknown ids.
+func mentionedUsers(authors map[uuid.UUID]*entity.Author, ids []uuid.UUID) []*entity.MentionedUser {
+	out := make([]*entity.MentionedUser, 0, len(ids))
+	for _, id := range ids {
+		if a, ok := authors[id]; ok {
+			out = append(out, &entity.MentionedUser{ID: a.ID, Username: a.Username, DisplayName: a.DisplayName})
+		}
+	}
+	return out
 }
 
 func (h *Hydrator) liked(ctx context.Context, posts []*entity.Post, ids []uuid.UUID, viewerID uuid.UUID) {

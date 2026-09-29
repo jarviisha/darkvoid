@@ -199,10 +199,8 @@ func (s *PostService) CreatePost(ctx context.Context, authorID uuid.UUID, conten
 	}
 
 	// Notify and resolve mentions AFTER commit (non-fatal)
-	if len(persistedMentionIDs) > 0 {
-		s.emitMentions(ctx, p.ID, authorID, persistedMentionIDs)
-		s.hydrator.Hydrate(ctx, []*entity.Post{p}, nil, FieldMentions)
-	}
+	s.emitMentions(ctx, p.ID, authorID, persistedMentionIDs)
+	p.Mentions = s.hydrator.Mentioned(ctx, persistedMentionIDs)
 
 	s.ingestCatalogAsync(p.ID.String(), p.Content, p.Tags, p.AuthorID.String())
 	if s.feedOutbox == nil {

@@ -10,16 +10,16 @@ import (
 )
 
 // --------------------------------------------------------------------------
-// enrichBatch tests
+// media and liked tests
 // --------------------------------------------------------------------------
 
-func TestHydrate_Batch_EmptyPosts(t *testing.T) {
+func TestHydrate_EmptyPosts(t *testing.T) {
 	h := NewHydrator(HydratorDeps{Media: &mockMediaRepo{}, Likes: &mockLikeRepo{}})
 	h.Hydrate(context.Background(), []*entity.Post{}, nil, FieldMedia|FieldLiked)
 	// No panic = success
 }
 
-func TestHydrate_Batch_MediaOnly(t *testing.T) {
+func TestHydrate_MediaOnly(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 	post2 := samplePost(uuid.New())
@@ -47,7 +47,7 @@ func TestHydrate_Batch_MediaOnly(t *testing.T) {
 	}
 }
 
-func TestHydrate_Batch_MediaError_NonFatal(t *testing.T) {
+func TestHydrate_MediaError_NonFatal(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 
@@ -66,7 +66,7 @@ func TestHydrate_Batch_MediaError_NonFatal(t *testing.T) {
 	}
 }
 
-func TestHydrate_Batch_IsLiked_NoViewerID(t *testing.T) {
+func TestHydrate_Liked_NoViewerID(t *testing.T) {
 	ctx := context.Background()
 	post1 := samplePost(uuid.New())
 
@@ -85,7 +85,7 @@ func TestHydrate_Batch_IsLiked_NoViewerID(t *testing.T) {
 	}
 }
 
-func TestHydrate_Batch_IsLiked_WithViewerID(t *testing.T) {
+func TestHydrate_Liked_WithViewerID(t *testing.T) {
 	ctx := context.Background()
 	viewerID := uuid.New()
 	post1 := samplePost(uuid.New())
@@ -116,7 +116,7 @@ func TestHydrate_Batch_IsLiked_WithViewerID(t *testing.T) {
 	}
 }
 
-func TestHydrate_Batch_IsLikedError_NonFatal(t *testing.T) {
+func TestHydrate_Liked_Error_NonFatal(t *testing.T) {
 	ctx := context.Background()
 	viewerID := uuid.New()
 	post1 := samplePost(uuid.New())
@@ -136,7 +136,7 @@ func TestHydrate_Batch_IsLikedError_NonFatal(t *testing.T) {
 	}
 }
 
-func TestHydrate_Batch_NoLikeRepo(t *testing.T) {
+func TestHydrate_Liked_NoLikeRepo(t *testing.T) {
 	ctx := context.Background()
 	viewerID := uuid.New()
 	post1 := samplePost(uuid.New())
