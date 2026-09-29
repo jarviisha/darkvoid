@@ -119,13 +119,15 @@ then implement the adapter in `internal/app`.
 Optional infrastructure should degrade to a no-op implementation when disabled.
 Current examples:
 
-- Redis-backed caches fall back to `Nop*Cache` or `NopTimelineStore`.
 - Codohue recommendation/trending integration is wired only when enabled.
 - Email sending after registration is attached with `WithEmailSender`.
-- Feed timeline serving is gated by config and rollout percentage.
+- Feed timeline serving is gated by runtime settings and rollout percentage.
 
-Prefer `With...` methods for optional dependencies attached at wire-up time.
-They make the core constructor small and keep optional behavior explicit.
+Redis is not optional and has no no-op fallback; see `CLAUDE.md`.
+
+Optional dependencies arrive as functional options on the constructor
+(`feedservice.WithRecommender`, `service.WithCatalogIngester`), next to a
+`Deps` struct holding the required ones; see ADR 0001.
 
 ## API Conventions
 
@@ -229,7 +231,8 @@ The dominant style is idiomatic, explicit Go:
 - pass `context.Context` as the first argument for request-scoped work
 - accept narrow interfaces at package boundaries and return concrete structs
 - prefer constructor functions named `New<Type>` or `Setup<Feature>Context`
-- keep optional dependencies explicit through `With...` methods
+- take required dependencies as a validated `Deps` struct and optional ones as
+  functional options (ADR 0001)
 - use early returns for validation and error paths
 - avoid clever control flow when straight-line code is clearer
 - use standard library encoders/parsers instead of ad hoc string handling where

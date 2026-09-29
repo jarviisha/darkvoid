@@ -25,20 +25,11 @@ type timelineReader struct {
 }
 
 func (r *timelineReader) readAllowed(userID uuid.UUID) bool {
-	if r.store == nil {
-		return false
-	}
-	if r.settings == nil {
-		return true
-	}
 	settings := r.settings.Get()
 	return settings.TimelineEnabled && inRollout(userID, settings.TimelineRolloutPercent)
 }
 
 func (r *timelineReader) refreshAllowed() bool {
-	if r.settings == nil {
-		return true
-	}
 	return r.settings.Get().TimelineRefreshOnMiss
 }
 
@@ -74,7 +65,7 @@ func (r *timelineReader) read(ctx context.Context, userID uuid.UUID, cursor *fee
 	if err != nil {
 		return nil, nil, err
 	}
-	if position == nil && (page == nil || len(page.Entries) == 0) && r.refresher != nil && r.refreshAllowed() {
+	if position == nil && (page == nil || len(page.Entries) == 0) && r.refreshAllowed() {
 		feed.CountLazyRefresh()
 		logger.Info(ctx, "timeline refresh on miss started", "user_id", userID)
 		if refreshErr := r.refreshShared(ctx, userID); refreshErr != nil {

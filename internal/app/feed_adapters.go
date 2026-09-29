@@ -47,7 +47,7 @@ func toFeedPost(p *postentity.Post) *feedentity.Post {
 
 // --- userReader ---
 
-// userReader implements feed.UserReader using UserRepository.
+// userReader resolves post authors for postReader.
 type userReader struct {
 	userRepo feedUserRepo
 }
@@ -80,7 +80,7 @@ type postReader struct {
 	postRepo   feedPostRepo
 	mediaRepo  feedMediaRepo
 	likeRepo   feedLikeRepo
-	userReader feed.UserReader
+	userReader *userReader
 }
 
 type feedPostRepo interface {
@@ -250,35 +250,4 @@ func (r *postReader) enrichAuthors(ctx context.Context, posts []*feedentity.Post
 			p.Author = a
 		}
 	}
-}
-
-// --- followReader ---
-
-// followReader implements feed.FollowReader using FollowService.
-type followReader struct {
-	followService feedFollowService
-}
-
-type feedFollowService interface {
-	GetFollowingIDs(ctx context.Context, targetID uuid.UUID) ([]uuid.UUID, error)
-	GetFollowerIDs(ctx context.Context, targetID uuid.UUID, limit int) ([]uuid.UUID, error)
-}
-
-func (r *followReader) GetFollowingIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
-	return r.followService.GetFollowingIDs(ctx, userID)
-}
-
-func (r *followReader) GetFollowerIDs(ctx context.Context, targetID uuid.UUID, limit int) ([]uuid.UUID, error) {
-	return r.followService.GetFollowerIDs(ctx, targetID, limit)
-}
-
-// --- likeReader ---
-
-// likeReader implements feed.LikeReader using LikeRepository.
-type likeReader struct {
-	likeRepo feedLikeRepo
-}
-
-func (r *likeReader) GetLikedPostIDs(ctx context.Context, userID uuid.UUID, postIDs []uuid.UUID) ([]uuid.UUID, error) {
-	return r.likeRepo.GetLikedPostIDs(ctx, userID, postIDs)
 }

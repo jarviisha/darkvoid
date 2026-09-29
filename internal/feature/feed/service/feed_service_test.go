@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jarviisha/darkvoid/internal/feature/feed"
-	feedcache "github.com/jarviisha/darkvoid/internal/feature/feed/cache"
 	feedentity "github.com/jarviisha/darkvoid/internal/feature/feed/entity"
 )
 
@@ -93,27 +92,11 @@ func (m *mockLikeReader) GetLikedPostIDs(_ context.Context, _ uuid.UUID, _ []uui
 	return nil, nil
 }
 
+// mockTimelineStore serves pages in order, then empty ones.
 type mockTimelineStore struct {
-	pages       []*feed.TimelinePage
-	readCount   int
-	addedBatch  []feed.TimelineEntry
-	addedUserID uuid.UUID
-}
-
-func (m *mockTimelineStore) AddPost(_ context.Context, userID uuid.UUID, entry feed.TimelineEntry) error {
-	m.addedUserID = userID
-	m.addedBatch = append(m.addedBatch, entry)
-	return nil
-}
-
-func (m *mockTimelineStore) SetPostsBatch(_ context.Context, userID uuid.UUID, entries []feed.TimelineEntry) error {
-	m.addedUserID = userID
-	m.addedBatch = append(m.addedBatch, entries...)
-	return nil
-}
-
-func (m *mockTimelineStore) ReplacePosts(_ context.Context, userID uuid.UUID, entries []feed.TimelineEntry, _ time.Time) error {
-	return m.SetPostsBatch(context.Background(), userID, entries)
+	emptyTimelineStore
+	pages     []*feed.TimelinePage
+	readCount int
 }
 
 func (m *mockTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *feed.TimelinePosition, _ int) (*feed.TimelinePage, error) {
@@ -124,12 +107,6 @@ func (m *mockTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *feed.Tim
 	page := m.pages[m.readCount]
 	m.readCount++
 	return page, nil
-}
-
-func (m *mockTimelineStore) Trim(_ context.Context, _ uuid.UUID) error { return nil }
-
-func (m *mockTimelineStore) RemovePostBestEffort(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
-	return nil
 }
 
 type mockTimelineRefresher struct {
@@ -184,15 +161,56 @@ func timelineSettings(enabled bool, rolloutPercent int, refreshOnMiss bool) *fee
 	return feed.NewSettings(rs)
 }
 
-func newTestService(posts *mockPostReader, ranker feed.Ranker) *FeedService {
-	return NewFeedService(
-		posts,
-		&mockFollowReader{ids: []uuid.UUID{uuid.New()}},
-		&mockLikeReader{},
-		ranker,
-		feedcache.NewNopFeedCache(),
-	)
+// testDeps is a complete FeedDeps on the default settings, which keep the
+// timeline read switched off, so a test reaches the mixed feed unless it opts
+// into the timeline by replacing Settings.
+func testDeps(posts *mockPostReader, ranker feed.Ranker) FeedDeps {
+	return FeedDeps{
+		Posts:     posts,
+		Follows:   &mockFollowReader{ids: []uuid.UUID{uuid.New()}},
+		Likes:     &mockLikeReader{},
+		Ranker:    ranker,
+		Cache:     nopFeedCache{},
+		Timeline:  emptyTimelineStore{},
+		Refresher: &mockTimelineRefresher{},
+		Settings:  feed.NewSettings(feed.DefaultRuntimeSettings()),
+	}
 }
+
+func newTestServiceFrom(deps FeedDeps, opts ...FeedServiceOption) *FeedService {
+	svc, err := NewFeedService(deps, opts...)
+	if err != nil {
+		panic(err)
+	}
+	return svc
+}
+
+func newTestService(posts *mockPostReader, ranker feed.Ranker, opts ...FeedServiceOption) *FeedService {
+	return newTestServiceFrom(testDeps(posts, ranker), opts...)
+}
+
+func TestNewFeedService_NamesEveryMissingDependency(t *testing.T) {
+	_, err := NewFeedService(FeedDeps{})
+	if err == nil {
+		t.Fatal("NewFeedService(FeedDeps{}) = nil error")
+	}
+	want := "missing required dependencies: Cache, Follows, Likes, Posts, Ranker, Refresher, Settings, Timeline"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
+	}
+}
+
+// nopFeedCache always misses, so every test reads through to its fakes.
+type nopFeedCache struct{}
+
+func (nopFeedCache) GetFollowingIDs(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+func (nopFeedCache) SetFollowingIDs(context.Context, uuid.UUID, []uuid.UUID) error { return nil }
+func (nopFeedCache) InvalidateFollowingIDs(context.Context, uuid.UUID) error       { return nil }
+func (nopFeedCache) GetTrending(context.Context) ([]*feedentity.Post, error)       { return nil, nil }
+func (nopFeedCache) SetTrending(context.Context, []*feedentity.Post) error         { return nil }
+func (nopFeedCache) InvalidateTrending(context.Context) error                      { return nil }
 
 func TestGetFeed_MixedFallbackDoesNotEmitSessionCursor(t *testing.T) {
 	now := time.Now().UTC()
@@ -264,8 +282,10 @@ func TestGetFeed_TimelineOrderCharacterization(t *testing.T) {
 	}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: entries}}}
 
-	svc := newTestService(reader, &mockRanker{scores: scores})
-	svc.WithTimelineStore(store)
+	deps := testDeps(reader, &mockRanker{scores: scores})
+	deps.Timeline = store
+	deps.Settings = timelineSettings(true, 100, false)
+	svc := newTestServiceFrom(deps)
 	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
 		t.Fatalf("GetFeed: %v", err)
@@ -313,8 +333,10 @@ func TestGetFeed_TimelineServesStoredOrder(t *testing.T) {
 	reader.returnOrder = []uuid.UUID{second.ID, first.ID}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: entries}}}
 
-	svc := newTestService(reader, &mockRanker{scores: realtimeScores})
-	svc.WithTimelineStore(store)
+	deps := testDeps(reader, &mockRanker{scores: realtimeScores})
+	deps.Timeline = store
+	deps.Settings = timelineSettings(true, 100, false)
+	svc := newTestServiceFrom(deps)
 	page, _, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
 		t.Fatalf("GetFeed: %v", err)
@@ -352,8 +374,10 @@ func TestGetFeed_TimelineFirstOrderingAndCursor(t *testing.T) {
 	}
 	store.pages = []*feed.TimelinePage{{Entries: entries}}
 
-	svc := newTestService(reader, &mockRanker{scores: scores})
-	svc.WithTimelineStore(store)
+	deps := testDeps(reader, &mockRanker{scores: scores})
+	deps.Timeline = store
+	deps.Settings = timelineSettings(true, 100, false)
+	svc := newTestServiceFrom(deps)
 	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
 		t.Fatalf("GetFeed: %v", err)
@@ -380,8 +404,10 @@ func TestGetFeed_TimelineExactEndHasNoCursor(t *testing.T) {
 		entries = append(entries, feed.TimelineEntry{PostID: p.ID, Score: feed.PackTimelineScore(30, p.CreatedAt)})
 	}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: entries, HasMore: false}}}
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	svc.WithTimelineStore(store)
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	deps.Timeline = store
+	deps.Settings = timelineSettings(true, 100, false)
+	svc := newTestServiceFrom(deps)
 
 	page, next, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -408,8 +434,10 @@ func TestGetFeed_TimelinePaginationNoDuplicates(t *testing.T) {
 		{Entries: allEntries[pageSize:]},
 	}}
 
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	svc.WithTimelineStore(store)
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	deps.Timeline = store
+	deps.Settings = timelineSettings(true, 100, false)
+	svc := newTestServiceFrom(deps)
 	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
 		t.Fatalf("GetFeed page1: %v", err)
@@ -459,14 +487,11 @@ func TestGetFeed_TimelineFiltersStaleVisibilityAndFollowState(t *testing.T) {
 		{PostID: unfollowed.ID, Score: feed.PackTimelineScore(30, unfollowed.CreatedAt)},
 	}}}}
 
-	svc := NewFeedService(
-		reader,
-		&mockFollowReader{ids: []uuid.UUID{followedAuthor}},
-		&mockLikeReader{},
-		&mockRanker{scores: map[uuid.UUID]float64{}},
-		feedcache.NewNopFeedCache(),
-	)
-	svc.WithTimelineStore(store)
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	deps.Follows = &mockFollowReader{ids: []uuid.UUID{followedAuthor}}
+	deps.Timeline = store
+	deps.Settings = timelineSettings(true, 100, false)
+	svc := newTestServiceFrom(deps)
 	page, _, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
 		t.Fatalf("GetFeed: %v", err)
@@ -487,8 +512,10 @@ func TestGetFeed_TimelineIncludesOwnersPrivatePost(t *testing.T) {
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: []feed.TimelineEntry{
 		{PostID: private.ID, Score: feed.PackTimelineScore(30, private.CreatedAt)},
 	}}}}
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	svc.WithTimelineStore(store)
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	deps.Timeline = store
+	deps.Settings = timelineSettings(true, 100, false)
+	svc := newTestServiceFrom(deps)
 
 	page, _, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -509,8 +536,10 @@ func TestGetFeed_StaleTimelineContinuationEndsWithoutSwitchingSource(t *testing.
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{{Entries: []feed.TimelineEntry{
 		{PostID: missingPostID, Score: feed.PackTimelineScore(30, time.Now().UTC())},
 	}}}}
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	svc.WithTimelineStore(store)
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	deps.Timeline = store
+	deps.Settings = timelineSettings(true, 100, false)
+	svc := newTestServiceFrom(deps)
 	score := feed.PackTimelineScore(31, time.Now().UTC())
 	cursor := &feed.FeedCursor{
 		TimelineScore:  &score,
@@ -539,9 +568,11 @@ func TestGetFeed_TimelineRefreshesOnMiss(t *testing.T) {
 	}}
 	refresher := &mockTimelineRefresher{}
 
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	svc.WithTimelineStore(store)
-	svc.WithTimelineRefresher(refresher)
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	deps.Timeline = store
+	deps.Refresher = refresher
+	deps.Settings = timelineSettings(true, 100, true)
+	svc := newTestServiceFrom(deps)
 	page, _, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
 		t.Fatalf("GetFeed: %v", err)
@@ -571,9 +602,10 @@ func TestGetFeed_TimelineRolloutGateDisablesPreparedTimelineRead(t *testing.T) {
 		{PostID: timelinePost.ID, Score: feed.PackTimelineScore(30, timelinePost.CreatedAt)},
 	}}}}
 
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{fallbackPost.ID: 1}})
-	svc.WithTimelineStore(store)
-	svc.WithSettings(timelineSettings(false, 100, true))
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{fallbackPost.ID: 1}})
+	deps.Timeline = store
+	deps.Settings = timelineSettings(false, 100, true)
+	svc := newTestServiceFrom(deps)
 
 	page, _, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -593,10 +625,11 @@ func TestGetFeed_TimelineRefreshOnMissGate(t *testing.T) {
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{{}}}
 	refresher := &mockTimelineRefresher{}
 
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	svc.WithTimelineStore(store)
-	svc.WithTimelineRefresher(refresher)
-	svc.WithSettings(timelineSettings(true, 100, false))
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	deps.Timeline = store
+	deps.Refresher = refresher
+	deps.Settings = timelineSettings(true, 100, false)
+	svc := newTestServiceFrom(deps)
 
 	if _, _, err := svc.GetFeed(context.Background(), userID, nil); err != nil {
 		t.Fatalf("GetFeed: %v", err)
@@ -637,11 +670,10 @@ func TestGetFeed_RecommendationScoreAndRankAffectOrdering(t *testing.T) {
 	reader.byID[highRank.ID] = highRank
 	reader.byID[reader.following[0].ID] = reader.following[0]
 
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	svc.WithRecommender(&mockRecommender{items: []feed.RecommendedItem{
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}}, WithRecommender(&mockRecommender{items: []feed.RecommendedItem{
 		{ObjectID: lowRank.ID.String(), Score: 0.1, Rank: 2},
 		{ObjectID: highRank.ID.String(), Score: 0.9, Rank: 1},
-	}})
+	}}))
 
 	page, _, err := svc.GetFeed(context.Background(), uuid.New(), nil)
 	if err != nil {
@@ -671,18 +703,13 @@ func TestGetFeed_RecommendationWeightFollowsSettings(t *testing.T) {
 	reader.byID[followed.ID] = followed
 	reader.byID[recommended.ID] = recommended
 
-	svc := NewFeedService(
-		reader,
-		&mockFollowReader{ids: []uuid.UUID{followed.AuthorID}},
-		&mockLikeReader{},
-		&mockRanker{scores: map[uuid.UUID]float64{followed.ID: 10}},
-		feedcache.NewNopFeedCache(),
-	)
-	svc.WithRecommender(&mockRecommender{items: []feed.RecommendedItem{
-		{ObjectID: recommended.ID.String(), Score: 0.9, Rank: 2},
-	}})
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{followed.ID: 10}})
+	deps.Follows = &mockFollowReader{ids: []uuid.UUID{followed.AuthorID}}
 	settings := feed.NewSettings(feed.DefaultRuntimeSettings())
-	svc.WithSettings(settings)
+	deps.Settings = settings
+	svc := newTestServiceFrom(deps, WithRecommender(&mockRecommender{items: []feed.RecommendedItem{
+		{ObjectID: recommended.ID.String(), Score: 0.9, Rank: 2},
+	}}))
 
 	first := func() uuid.UUID {
 		t.Helper()
@@ -734,17 +761,12 @@ func TestGetFeed_SupplementalMergeCollapsesDuplicatesFiltersVisibilityAndBounds(
 		reader.byID[p.ID] = p
 	}
 
-	svc := NewFeedService(
-		reader,
-		&mockFollowReader{ids: []uuid.UUID{followedAuthor}},
-		&mockLikeReader{},
-		&mockRanker{scores: map[uuid.UUID]float64{}},
-		feedcache.NewNopFeedCache(),
-	)
-	svc.WithRecommender(&mockRecommender{items: []feed.RecommendedItem{
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	deps.Follows = &mockFollowReader{ids: []uuid.UUID{followedAuthor}}
+	svc := newTestServiceFrom(deps, WithRecommender(&mockRecommender{items: []feed.RecommendedItem{
 		{ObjectID: duplicate.ID.String(), Score: 1, Rank: 1},
 		{ObjectID: privateRecommendation.ID.String(), Score: 1, Rank: 2},
-	}})
+	}}))
 
 	page, _, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -782,14 +804,9 @@ func TestGetFeed_SupplementalProviderFailuresReturnValidFeed(t *testing.T) {
 		trending:    []*feedentity.Post{testPost(now.Add(-time.Minute))},
 	}
 
-	svc := NewFeedService(
-		reader,
-		&mockFollowReader{ids: []uuid.UUID{followedAuthor}},
-		&mockLikeReader{},
-		&mockRanker{scores: map[uuid.UUID]float64{local.ID: 10}},
-		feedcache.NewNopFeedCache(),
-	)
-	svc.WithRecommender(&mockRecommender{err: errors.New("recommendations down")})
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{local.ID: 10}})
+	deps.Follows = &mockFollowReader{ids: []uuid.UUID{followedAuthor}}
+	svc := newTestServiceFrom(deps, WithRecommender(&mockRecommender{err: errors.New("recommendations down")}))
 
 	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -893,13 +910,9 @@ func TestGetFeed_V2CursorDoesNotRequireSessionState(t *testing.T) {
 		byID:      map[uuid.UUID]*feedentity.Post{local.ID: local},
 	}
 
-	svc := NewFeedService(
-		reader,
-		&mockFollowReader{ids: []uuid.UUID{followedAuthor}},
-		&mockLikeReader{},
-		&mockRanker{scores: map[uuid.UUID]float64{local.ID: 10}},
-		feedcache.NewNopFeedCache(),
-	)
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{local.ID: 10}})
+	deps.Follows = &mockFollowReader{ids: []uuid.UUID{followedAuthor}}
+	svc := newTestServiceFrom(deps)
 	page, _, err := svc.GetFeed(context.Background(), userID, &feed.FeedCursor{TimelineUser: userID.String()})
 	if err != nil {
 		t.Fatalf("GetFeed with no-version cursor: %v", err)
@@ -928,8 +941,7 @@ func TestGetFeed_RecommendationOffsetContinuation(t *testing.T) {
 		recs = append(recs, feed.RecommendedItem{ObjectID: p.ID.String(), Score: 1, Rank: i + 1})
 	}
 
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	svc.WithRecommender(&mockRecommender{items: recs})
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}}, WithRecommender(&mockRecommender{items: recs}))
 	userID := uuid.New()
 
 	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
@@ -969,8 +981,7 @@ func TestGetFeed_RecommendationOffsetDoesNotSkipOutrankedItems(t *testing.T) {
 	recommended := testPost(now.Add(-time.Hour))
 	recommended.AuthorID = uuid.New()
 	reader.byID[recommended.ID] = recommended
-	svc := newTestService(reader, &mockRanker{scores: scores})
-	svc.WithRecommender(&mockRecommender{items: []feed.RecommendedItem{{ObjectID: recommended.ID.String(), Rank: 1}}})
+	svc := newTestService(reader, &mockRanker{scores: scores}, WithRecommender(&mockRecommender{items: []feed.RecommendedItem{{ObjectID: recommended.ID.String(), Rank: 1}}}))
 
 	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -1167,13 +1178,9 @@ func TestGetFeed_TrendingSurvivesPageWithNoTrendingShown(t *testing.T) {
 		scores[p.ID] = float64(i + 1)
 	}
 
-	svc := NewFeedService(
-		reader,
-		&mockFollowReader{ids: []uuid.UUID{followedAuthor}},
-		&mockLikeReader{},
-		&mockRanker{scores: scores},
-		feedcache.NewNopFeedCache(),
-	)
+	deps := testDeps(reader, &mockRanker{scores: scores})
+	deps.Follows = &mockFollowReader{ids: []uuid.UUID{followedAuthor}}
+	svc := newTestServiceFrom(deps)
 
 	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -1220,13 +1227,9 @@ func TestGetFeed_FollowingContinuationNoDuplicates(t *testing.T) {
 		scores[p.ID] = float64(total - i)
 	}
 
-	svc := NewFeedService(
-		reader,
-		&mockFollowReader{ids: []uuid.UUID{followedAuthor}},
-		&mockLikeReader{},
-		&mockRanker{scores: scores},
-		feedcache.NewNopFeedCache(),
-	)
+	deps := testDeps(reader, &mockRanker{scores: scores})
+	deps.Follows = &mockFollowReader{ids: []uuid.UUID{followedAuthor}}
+	svc := newTestServiceFrom(deps)
 
 	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -1288,13 +1291,9 @@ func TestGetFeed_FollowingExhaustionHandsOffToDiscoverBelowLastServed(t *testing
 		reader.byID[p.ID] = p
 	}
 
-	svc := NewFeedService(
-		reader,
-		&mockFollowReader{ids: []uuid.UUID{followedAuthor}},
-		&mockLikeReader{},
-		&mockRanker{scores: scores},
-		feedcache.NewNopFeedCache(),
-	)
+	deps := testDeps(reader, &mockRanker{scores: scores})
+	deps.Follows = &mockFollowReader{ids: []uuid.UUID{followedAuthor}}
+	svc := newTestServiceFrom(deps)
 
 	page1, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -1337,16 +1336,12 @@ type emptyTimelineStore struct{}
 func (emptyTimelineStore) AddPost(_ context.Context, _ uuid.UUID, _ feed.TimelineEntry) error {
 	return nil
 }
-func (emptyTimelineStore) SetPostsBatch(_ context.Context, _ uuid.UUID, _ []feed.TimelineEntry) error {
-	return nil
-}
 func (emptyTimelineStore) ReplacePosts(_ context.Context, _ uuid.UUID, _ []feed.TimelineEntry, _ time.Time) error {
 	return nil
 }
 func (emptyTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *feed.TimelinePosition, _ int) (*feed.TimelinePage, error) {
 	return &feed.TimelinePage{}, nil
 }
-func (emptyTimelineStore) Trim(_ context.Context, _ uuid.UUID) error { return nil }
 func (emptyTimelineStore) RemovePostBestEffort(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
 	return nil
 }
@@ -1421,11 +1416,12 @@ func TestGetFeed_ConcurrentTrendingMissesCollapseToOneRebuild(t *testing.T) {
 func TestGetFeed_ConcurrentTimelineMissesCollapseToOneRefresh(t *testing.T) {
 	userID := uuid.New()
 	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	svc.WithTimelineStore(emptyTimelineStore{})
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
 	refresher := &gatedRefresher{gate: make(chan struct{})}
-	svc.WithTimelineRefresher(refresher)
-	svc.WithSettings(timelineSettings(true, 100, true))
+	deps.Timeline = emptyTimelineStore{}
+	deps.Refresher = refresher
+	deps.Settings = timelineSettings(true, 100, true)
+	svc := newTestServiceFrom(deps)
 
 	const callers = 8
 	var wg sync.WaitGroup
@@ -1449,8 +1445,10 @@ func TestGetFeed_ConcurrentTimelineMissesCollapseToOneRefresh(t *testing.T) {
 func TestGetFeed_InvalidCursorRejectedBeforeSourceReads(t *testing.T) {
 	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{}}
 	store := &mockTimelineStore{pages: []*feed.TimelinePage{{}}}
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	svc.WithTimelineStore(store)
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
+	deps.Timeline = store
+	deps.Settings = timelineSettings(true, 100, false)
+	svc := newTestServiceFrom(deps)
 
 	_, _, err := svc.GetFeed(context.Background(), uuid.New(), &feed.FeedCursor{TimelineUser: uuid.NewString()})
 	if err == nil {
@@ -1467,12 +1465,11 @@ func TestGetFeed_InvalidProviderItemsAreFiltered(t *testing.T) {
 	valid := testPost(now)
 	reader.byID[valid.ID] = valid
 
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	svc.WithRecommender(&mockRecommender{items: []feed.RecommendedItem{
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}}, WithRecommender(&mockRecommender{items: []feed.RecommendedItem{
 		{ObjectID: "not-a-uuid", Score: 1, Rank: 1},
 		{ObjectID: uuid.New().String(), Score: 1, Rank: 2},
 		{ObjectID: valid.ID.String(), Score: 1, Rank: 3},
-	}})
+	}}))
 
 	page, _, err := svc.GetFeed(context.Background(), uuid.New(), nil)
 	if err != nil {
@@ -1494,11 +1491,10 @@ func TestGetFeed_OwnPostsNotServedAsRecommendations(t *testing.T) {
 	other := testPost(now.Add(-time.Minute))
 	reader := &mockPostReader{byID: map[uuid.UUID]*feedentity.Post{own.ID: own, other.ID: other}}
 
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}})
-	svc.WithRecommender(&mockRecommender{items: []feed.RecommendedItem{
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{}}, WithRecommender(&mockRecommender{items: []feed.RecommendedItem{
 		{ObjectID: own.ID.String(), Score: 1, Rank: 1},
 		{ObjectID: other.ID.String(), Score: 1, Rank: 2},
-	}})
+	}}))
 
 	page, _, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -1520,14 +1516,9 @@ func TestGetFeed_CodohueUnavailableFallsBackLocal(t *testing.T) {
 		byID:      map[uuid.UUID]*feedentity.Post{local.ID: local},
 	}
 
-	svc := NewFeedService(
-		reader,
-		&mockFollowReader{ids: []uuid.UUID{followedAuthor}},
-		&mockLikeReader{},
-		&mockRanker{scores: map[uuid.UUID]float64{local.ID: 10}},
-		feedcache.NewNopFeedCache(),
-	)
-	svc.WithRecommender(&mockRecommender{err: errors.New("codohue down")})
+	deps := testDeps(reader, &mockRanker{scores: map[uuid.UUID]float64{local.ID: 10}})
+	deps.Follows = &mockFollowReader{ids: []uuid.UUID{followedAuthor}}
+	svc := newTestServiceFrom(deps, WithRecommender(&mockRecommender{err: errors.New("codohue down")}))
 
 	page, _, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -1940,10 +1931,9 @@ func TestGetFeed_SpentRecommenderStillEndsTheScroll(t *testing.T) {
 		},
 	}
 
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10, recommended.ID: 5}})
-	svc.WithRecommender(&mockRecommender{
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10, recommended.ID: 5}}, WithRecommender(&mockRecommender{
 		items: []feed.RecommendedItem{{ObjectID: recommended.ID.String(), Score: 0.9, Rank: 1}},
-	})
+	}))
 
 	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -2001,10 +1991,9 @@ func TestGetFeed_SpentRecommenderHandsOffToDiscover(t *testing.T) {
 			discovered.ID:  discovered,
 		},
 	}
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10, recommended.ID: 5}})
-	svc.WithRecommender(&mockRecommender{
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10, recommended.ID: 5}}, WithRecommender(&mockRecommender{
 		items: []feed.RecommendedItem{{ObjectID: recommended.ID.String(), Score: 0.9, Rank: 1}},
-	})
+	}))
 
 	served, ended := scrollFeed(t, svc, userID, 6)
 	if !ended {
@@ -2039,10 +2028,9 @@ func TestGetFeed_RecommendationLoadErrorKeepsTheScrollAndTheWindow(t *testing.T)
 		},
 		byIDErr: errors.New("db blip"),
 	}
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10, recommended.ID: 5}})
-	svc.WithRecommender(&mockRecommender{
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10, recommended.ID: 5}}, WithRecommender(&mockRecommender{
 		items: []feed.RecommendedItem{{ObjectID: recommended.ID.String(), Score: 0.9, Rank: 1}},
-	})
+	}))
 
 	page, cursor, err := svc.GetFeed(context.Background(), userID, nil)
 	if err != nil {
@@ -2078,8 +2066,7 @@ func TestGetFeed_RecommenderErrorKeepsTheOffset(t *testing.T) {
 		following: []*feedentity.Post{own},
 		byID:      map[uuid.UUID]*feedentity.Post{own.ID: own},
 	}
-	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10}})
-	svc.WithRecommender(&mockRecommender{err: errors.New("codohue down")})
+	svc := newTestService(reader, &mockRanker{scores: map[uuid.UUID]float64{own.ID: 10}}, WithRecommender(&mockRecommender{err: errors.New("codohue down")}))
 
 	incoming := &feed.FeedCursor{TimelineUser: userID.String(), RecommendationOffset: 7}
 	_, cursor, err := svc.GetFeed(context.Background(), userID, incoming)

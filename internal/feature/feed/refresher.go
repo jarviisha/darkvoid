@@ -14,8 +14,7 @@ type TimelineRefresher interface {
 
 // PreparedTimelineRefresher refreshes a prepared timeline from current follows
 // and recent posts, materializing rank scores so the read path never ranks.
-// This is the background re-rank write path: it overwrites fan-out write-time
-// scores via SetPostsBatch.
+// It overwrites fan-out write-time scores via ReplacePosts.
 //
 // The item count is read from settings per refresh, so it agrees with what the
 // timeline store trims to. Capturing it here instead would let the two drift
@@ -51,19 +50,6 @@ func (r *PreparedTimelineRefresher) RefreshTimeline(ctx context.Context, userID 
 		return nil
 	}
 	return r.refreshOne(ctx, userID)
-}
-
-// WarmTimelines refreshes prepared timelines for a bounded list of users.
-func (r *PreparedTimelineRefresher) WarmTimelines(ctx context.Context, userIDs []uuid.UUID) error {
-	if r == nil || r.timeline == nil {
-		return nil
-	}
-	for _, userID := range userIDs {
-		if err := r.refreshOne(ctx, userID); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (r *PreparedTimelineRefresher) refreshOne(ctx context.Context, userID uuid.UUID) error {

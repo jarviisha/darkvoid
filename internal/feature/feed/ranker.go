@@ -22,7 +22,15 @@ type Ranker interface {
 	RankPosts(ctx context.Context, posts []*feedentity.Post, followingSet map[string]bool, now time.Time) (map[string]float64, error)
 }
 
-// LocalRanker wraps the existing Scorer to implement the Ranker interface.
+// LocalRanker scores posts with the local formula:
+//
+//	score = engagement_score + recency_score + relationship_bonus
+//	engagement_score   = log(1 + like_count) × 10
+//	recency_score      = RecencyScale / (1 + hours)^DecayExponent
+//	relationship_bonus = RelationshipBonus (if the author is followed), else 0
+//
+// All three components share a comparable scale (~0–20 each for typical posts),
+// so no single signal dominates the others.
 //
 // It holds the settings rather than a ScorerConfig so a weight change reaches the
 // read path on the next request. That is the whole reason the weights moved into

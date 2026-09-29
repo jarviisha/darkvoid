@@ -32,32 +32,24 @@ func (h *recordingEventHandler) HandleFeedEvent(_ context.Context, event Event) 
 	return h.err
 }
 
-func TestEventDispatcher_EmitPostCreatedWritesPackedWriteTimeScore(t *testing.T) {
-	handler := &recordingEventHandler{events: make(chan Event, 1)}
+func TestEventDispatcher_PostCreatedGetsPackedWriteTimeScore(t *testing.T) {
 	rs := DefaultRuntimeSettings()
 	cfg := rs.Scorer
-	dispatcher := NewEventDispatcher(NewSettings(rs), 1, 1, handler)
+	dispatcher := NewEventDispatcher(NewSettings(rs), 1, 1, nil)
 	defer dispatcher.Close()
 
-	postID, authorID := uuid.New(), uuid.New()
 	createdAt := time.Date(2026, 7, 24, 9, 30, 0, 0, time.UTC)
-	if err := dispatcher.EmitPostCreated(context.Background(), postID, authorID, "public", createdAt); err != nil {
-		t.Fatalf("EmitPostCreated: %v", err)
+	got := dispatcher.withWriteScore(Event{Type: EventPostCreated, PostID: uuid.New(), CreatedAt: createdAt})
+	// Write-time score is the degenerate local formula for a fresh post
+	// (RecencyScale + RelationshipBonus) packed with the post's createdAt —
+	// NOT time.Now() — so same-bucket fan-out writes stay newest-first.
+	if want := PackTimelineScore(cfg.RecencyScale+cfg.RelationshipBonus, createdAt); got.Score != want {
+		t.Fatalf("event score = %d, want packed write-time constant %d", got.Score, want)
 	}
-	select {
-	case got := <-handler.events:
-		// Write-time score is the degenerate local formula for a fresh post
-		// (RecencyScale + RelationshipBonus) packed with the post's createdAt —
-		// NOT time.Now() — so same-bucket fan-out writes stay newest-first.
-		want := PackTimelineScore(cfg.RecencyScale+cfg.RelationshipBonus, createdAt)
-		if got.Score != want {
-			t.Fatalf("event score = %d, want packed write-time constant %d", got.Score, want)
-		}
-		if got.PostID != postID || got.AuthorID != authorID || !got.CreatedAt.Equal(createdAt) {
-			t.Fatalf("event fields mismatch: %+v", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for event")
+
+	// Follow events are ranked by the refresher, not stamped here.
+	if follow := dispatcher.withWriteScore(Event{Type: EventFollowCreated, CreatedAt: createdAt}); follow.Score != 0 {
+		t.Fatalf("follow event score = %d, want 0", follow.Score)
 	}
 }
 

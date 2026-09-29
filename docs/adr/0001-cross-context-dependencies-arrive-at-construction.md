@@ -8,10 +8,11 @@ Hoisting repository construction out of each `Setup*Context` into one step ahead
 
 ## Consequences
 
-Four `Wire…(x) error` calls survive, and they are not oversights. Each is a real cycle:
+Two `Wire…(x) error` calls survive, and they are not oversights. Each is a real cycle:
 
-- `PostContext.WireFeedEventEmitter` and `UserContext.WireFeedEventEmitter` — the dispatcher's fanout worker reads posts, so the feed context cannot exist before the post and follow services.
 - `UserContext.WireNotificationEmitter` — the notification context is built from the user repository that `SetupUserContext` creates alongside the follow service.
 - `SuppressionGate.WireChecker` — the mailer is built during infrastructure setup, before the user context that owns the suppression table.
 
-All four refuse a nil and refuse a second call. The second refusal is not symmetry: these fields are read by concurrent requests without synchronisation, so writing one once during setup is safe while writing it again after serving starts is a data race.
+Both refuse a nil and refuse a second call. The second refusal is not symmetry: these fields are read by concurrent requests without synchronisation, so writing one once during setup is safe while writing it again after serving starts is a data race.
+
+There were four. `PostContext.WireFeedEventEmitter` and `UserContext.WireFeedEventEmitter` handed the feed dispatcher to the post and follow services, and were a real cycle too — the dispatcher's fanout worker reads posts. They went once the feed outbox became a required dependency of both services: every feed event now travels through the outbox, the in-process emitter was called only when no outbox was set, and so the cycle carried nothing.

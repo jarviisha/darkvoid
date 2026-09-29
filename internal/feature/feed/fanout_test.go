@@ -32,15 +32,21 @@ func (m *mockFollowerReader) GetFollowerIDs(_ context.Context, _ uuid.UUID, limi
 	return m.ids, m.err
 }
 
+// recordingTimelineStore records writes per user. err fails every write;
+// failFor fails AddPost for just those users.
 type recordingTimelineStore struct {
-	added map[uuid.UUID][]TimelineEntry
-	set   map[uuid.UUID][]TimelineEntry
-	err   error
+	added   map[uuid.UUID][]TimelineEntry
+	set     map[uuid.UUID][]TimelineEntry
+	err     error
+	failFor map[uuid.UUID]bool
 }
 
 func (s *recordingTimelineStore) AddPost(_ context.Context, userID uuid.UUID, entry TimelineEntry) error {
 	if s.err != nil {
 		return s.err
+	}
+	if s.failFor[userID] {
+		return errors.New("redis flaky")
 	}
 	if s.added == nil {
 		s.added = make(map[uuid.UUID][]TimelineEntry)
@@ -49,7 +55,7 @@ func (s *recordingTimelineStore) AddPost(_ context.Context, userID uuid.UUID, en
 	return nil
 }
 
-func (s *recordingTimelineStore) SetPostsBatch(_ context.Context, userID uuid.UUID, entries []TimelineEntry) error {
+func (s *recordingTimelineStore) ReplacePosts(_ context.Context, userID uuid.UUID, entries []TimelineEntry, _ time.Time) error {
 	if s.err != nil {
 		return s.err
 	}
@@ -60,15 +66,9 @@ func (s *recordingTimelineStore) SetPostsBatch(_ context.Context, userID uuid.UU
 	return nil
 }
 
-func (s *recordingTimelineStore) ReplacePosts(_ context.Context, userID uuid.UUID, entries []TimelineEntry, _ time.Time) error {
-	return s.SetPostsBatch(context.Background(), userID, entries)
-}
-
 func (s *recordingTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *TimelinePosition, _ int) (*TimelinePage, error) {
 	return &TimelinePage{}, nil
 }
-
-func (s *recordingTimelineStore) Trim(_ context.Context, _ uuid.UUID) error { return nil }
 
 func (s *recordingTimelineStore) RemovePostBestEffort(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
 	return nil
@@ -225,41 +225,9 @@ func TestFanoutWorker_FollowChangeWithoutRefresherIsNoOp(t *testing.T) {
 	}
 }
 
-// flakyTimelineStore fails AddPost for a configurable subset of follower IDs.
-type flakyTimelineStore struct {
-	failFor map[uuid.UUID]bool
-	added   map[uuid.UUID][]TimelineEntry
-}
-
-func (s *flakyTimelineStore) AddPost(_ context.Context, userID uuid.UUID, entry TimelineEntry) error {
-	if s.failFor[userID] {
-		return errors.New("redis flaky")
-	}
-	if s.added == nil {
-		s.added = make(map[uuid.UUID][]TimelineEntry)
-	}
-	s.added[userID] = append(s.added[userID], entry)
-	return nil
-}
-
-func (s *flakyTimelineStore) SetPostsBatch(_ context.Context, _ uuid.UUID, _ []TimelineEntry) error {
-	return nil
-}
-
-func (s *flakyTimelineStore) ReplacePosts(_ context.Context, _ uuid.UUID, _ []TimelineEntry, _ time.Time) error {
-	return nil
-}
-func (s *flakyTimelineStore) ReadPage(_ context.Context, _ uuid.UUID, _ *TimelinePosition, _ int) (*TimelinePage, error) {
-	return &TimelinePage{}, nil
-}
-func (s *flakyTimelineStore) Trim(_ context.Context, _ uuid.UUID) error { return nil }
-func (s *flakyTimelineStore) RemovePostBestEffort(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
-	return nil
-}
-
 func TestFanoutWorker_PartialFailureContinuesAndReturnsErrorForRetry(t *testing.T) {
 	good1, bad, good2 := uuid.New(), uuid.New(), uuid.New()
-	store := &flakyTimelineStore{failFor: map[uuid.UUID]bool{bad: true}}
+	store := &recordingTimelineStore{failFor: map[uuid.UUID]bool{bad: true}}
 	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{good1, bad, good2}}, store, nil, settingsWithFanoutCap(10))
 
 	err := worker.HandleFeedEvent(context.Background(), Event{
@@ -278,7 +246,7 @@ func TestFanoutWorker_PartialFailureContinuesAndReturnsErrorForRetry(t *testing.
 
 func TestFanoutWorker_AllFailuresReturnError(t *testing.T) {
 	a, b, author := uuid.New(), uuid.New(), uuid.New()
-	store := &flakyTimelineStore{failFor: map[uuid.UUID]bool{a: true, b: true, author: true}}
+	store := &recordingTimelineStore{failFor: map[uuid.UUID]bool{a: true, b: true, author: true}}
 	worker := NewFanoutWorker(&mockFollowerReader{ids: []uuid.UUID{a, b}}, store, nil, settingsWithFanoutCap(10))
 
 	err := worker.HandleFeedEvent(context.Background(), Event{

@@ -218,12 +218,3 @@ func SetupPostContext(d PostContextDeps) (*PostContext, error) {
 		hashtagHandler:     handler.NewHashtagHandler(hashtagService, d.Storage),
 	}, nil
 }
-
-// WireFeedEventEmitter attaches the feed event dispatcher to the post service.
-//
-// It is the only dependency this context still receives after construction: the
-// dispatcher's fanout worker reads posts, so the feed context cannot be built
-// until this one exists.
-func (ctx *PostContext) WireFeedEventEmitter(e service.FeedEventEmitter) error {
-	return ctx.postService.WireFeedEventEmitter(e)
-}
