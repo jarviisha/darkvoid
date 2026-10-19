@@ -51,7 +51,7 @@ func TestPersistMentions_Success(t *testing.T) {
 
 	var insertedPairs [][2]uuid.UUID
 	mockRepo := &mockMentionRepo{
-		insert: func(ctx context.Context, pID, uID uuid.UUID) error {
+		insert: func(ctx context.Context, pID, uID uuid.UUID, _ int32) error {
 			insertedPairs = append(insertedPairs, [2]uuid.UUID{pID, uID})
 			return nil
 		},
@@ -86,7 +86,7 @@ func TestPersistMentions_Deduplication(t *testing.T) {
 
 	insertCount := 0
 	mockRepo := &mockMentionRepo{
-		insert: func(ctx context.Context, pID, uID uuid.UUID) error {
+		insert: func(ctx context.Context, pID, uID uuid.UUID, _ int32) error {
 			insertCount++
 			return nil
 		},
@@ -107,6 +107,31 @@ func TestPersistMentions_Deduplication(t *testing.T) {
 	}
 }
 
+// The position is what read paths order by, so it must follow the order the
+// author wrote the mentions in, counted after duplicates are dropped.
+func TestPersistMentions_PositionsFollowWrittenOrder(t *testing.T) {
+	user1, user2, user3 := uuid.New(), uuid.New(), uuid.New()
+	positions := map[uuid.UUID]int32{}
+	mockRepo := &mockMentionRepo{
+		insert: func(_ context.Context, _, uID uuid.UUID, position int32) error {
+			positions[uID] = position
+			return nil
+		},
+	}
+
+	svc := &PostService{}
+	if _, err := svc.persistMentions(context.Background(), mockRepo, uuid.New(), []uuid.UUID{user2, user1, user2, user3}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := map[uuid.UUID]int32{user2: 0, user1: 1, user3: 2}
+	for uid, pos := range want {
+		if positions[uid] != pos {
+			t.Errorf("user %v: want position %d, got %d", uid, pos, positions[uid])
+		}
+	}
+}
+
 func TestPersistMentions_InsertError_RollsBack(t *testing.T) {
 	ctx := context.Background()
 	postID := uuid.New()
@@ -116,7 +141,7 @@ func TestPersistMentions_InsertError_RollsBack(t *testing.T) {
 
 	expectedErr := errors.New("unique constraint violation")
 	mockRepo := &mockMentionRepo{
-		insert: func(ctx context.Context, pID, uID uuid.UUID) error {
+		insert: func(ctx context.Context, pID, uID uuid.UUID, _ int32) error {
 			if uID == user2 {
 				return expectedErr
 			}
@@ -145,7 +170,7 @@ func TestPersistMentions_OrderPreserved(t *testing.T) {
 
 	var insertOrder []uuid.UUID
 	mockRepo := &mockMentionRepo{
-		insert: func(ctx context.Context, pID, uID uuid.UUID) error {
+		insert: func(ctx context.Context, pID, uID uuid.UUID, _ int32) error {
 			insertOrder = append(insertOrder, uID)
 			return nil
 		},

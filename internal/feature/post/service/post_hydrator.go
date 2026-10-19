@@ -183,8 +183,8 @@ func (h *Hydrator) people(ctx context.Context, posts []*entity.Post, ids []uuid.
 }
 
 // Mentioned resolves user ids the caller already holds, keeping their order.
-// A post that was just written knows its mentions in the order the author typed
-// them; reading them back cannot recover that order.
+// A post that was just written already holds its mentions in the order the
+// author typed them, so it need not read them back.
 func (h *Hydrator) Mentioned(ctx context.Context, ids []uuid.UUID) []*entity.MentionedUser {
 	if len(ids) == 0 || h.d.Users == nil {
 		return nil

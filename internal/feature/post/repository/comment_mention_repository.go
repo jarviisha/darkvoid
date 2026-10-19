@@ -19,11 +19,13 @@ func NewCommentMentionRepository(pool *pgxpool.Pool) *CommentMentionRepository {
 	return &CommentMentionRepository{queries: db.New(pool)}
 }
 
-// Insert adds a mention row for a comment, ignoring duplicates.
-func (r *CommentMentionRepository) Insert(ctx context.Context, commentID, userID uuid.UUID) error {
+// Insert adds a mention row for a comment at position, its place in the order
+// the author wrote the mentions, ignoring duplicates.
+func (r *CommentMentionRepository) Insert(ctx context.Context, commentID, userID uuid.UUID, position int32) error {
 	return database.MapDBError(r.queries.InsertCommentMention(ctx, db.InsertCommentMentionParams{
 		CommentID: commentID,
 		UserID:    userID,
+		Position:  position,
 	}))
 }
 
@@ -32,7 +34,7 @@ func (r *CommentMentionRepository) DeleteByComment(ctx context.Context, commentI
 	return database.MapDBError(r.queries.DeleteCommentMentionsByComment(ctx, commentID))
 }
 
-// GetByComment returns the user IDs of all users mentioned in a comment.
+// GetByComment returns the user IDs of all users mentioned in a comment, in written order.
 func (r *CommentMentionRepository) GetByComment(ctx context.Context, commentID uuid.UUID) ([]uuid.UUID, error) {
 	rows, err := r.queries.GetCommentMentionsByComment(ctx, commentID)
 	if err != nil {
@@ -45,7 +47,7 @@ func (r *CommentMentionRepository) GetByComment(ctx context.Context, commentID u
 	return ids, nil
 }
 
-// GetBatch returns mention rows grouped by comment ID for a set of comments.
+// GetBatch returns mentioned user IDs grouped by comment ID, each in written order.
 func (r *CommentMentionRepository) GetBatch(ctx context.Context, commentIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
 	rows, err := r.queries.GetCommentMentionsBatch(ctx, commentIDs)
 	if err != nil {

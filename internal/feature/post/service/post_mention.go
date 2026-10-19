@@ -30,11 +30,13 @@ func (s *PostService) persistMentions(
 		}
 	}
 
-	// Insert mentions within transaction
+	// Insert mentions within transaction, recording the order they were written in
+	var position int32
 	for _, uid := range ids {
-		if err := txMention.Insert(ctx, postID, uid); err != nil {
+		if err := txMention.Insert(ctx, postID, uid, position); err != nil {
 			return nil, err
 		}
+		position++
 	}
 
 	return ids, nil

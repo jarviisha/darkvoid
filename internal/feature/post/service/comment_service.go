@@ -397,11 +397,13 @@ func (s *CommentService) persistCommentMentions(ctx context.Context, commentID, 
 	}
 
 	mentioned := make([]*entity.MentionedUser, 0, len(ids))
+	var position int32
 	for _, uid := range ids {
-		if err := s.commentMentionRepo.Insert(ctx, commentID, uid); err != nil {
+		if err := s.commentMentionRepo.Insert(ctx, commentID, uid, position); err != nil {
 			logger.LogError(ctx, err, "failed to insert comment mention", "comment_id", commentID, "user_id", uid)
 			continue
 		}
+		position++
 		if a, ok := authors[uid]; ok {
 			mentioned = append(mentioned, &entity.MentionedUser{
 				ID:          a.ID,

@@ -25,11 +25,13 @@ func (r *MentionRepository) WithTx(tx pgx.Tx) *MentionRepository {
 	return &MentionRepository{queries: db.New(tx)}
 }
 
-// Insert adds a mention row, ignoring duplicates.
-func (r *MentionRepository) Insert(ctx context.Context, postID, userID uuid.UUID) error {
+// Insert adds a mention row at position, its place in the order the author
+// wrote the mentions, ignoring duplicates.
+func (r *MentionRepository) Insert(ctx context.Context, postID, userID uuid.UUID, position int32) error {
 	return database.MapDBError(r.queries.InsertMention(ctx, db.InsertMentionParams{
-		PostID: postID,
-		UserID: userID,
+		PostID:   postID,
+		UserID:   userID,
+		Position: position,
 	}))
 }
 
@@ -38,7 +40,7 @@ func (r *MentionRepository) DeleteByPost(ctx context.Context, postID uuid.UUID) 
 	return database.MapDBError(r.queries.DeleteMentionsByPost(ctx, postID))
 }
 
-// GetBatch returns mention rows grouped by post ID for a set of posts.
+// GetBatch returns mentioned user IDs grouped by post ID, each in written order.
 func (r *MentionRepository) GetBatch(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
 	rows, err := r.queries.GetMentionsBatch(ctx, postIDs)
 	if err != nil {
@@ -51,7 +53,7 @@ func (r *MentionRepository) GetBatch(ctx context.Context, postIDs []uuid.UUID) (
 	return result, nil
 }
 
-// GetByPost returns the user IDs of all users mentioned in a post.
+// GetByPost returns the user IDs of all users mentioned in a post, in written order.
 func (r *MentionRepository) GetByPost(ctx context.Context, postID uuid.UUID) ([]uuid.UUID, error) {
 	rows, err := r.queries.GetMentionsByPost(ctx, postID)
 	if err != nil {

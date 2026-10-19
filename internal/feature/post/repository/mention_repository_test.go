@@ -21,7 +21,7 @@ func TestMentionInsert_PassesPostAndUserSeparately(t *testing.T) {
 	}}
 	r := &MentionRepository{queries: q}
 
-	if err := r.Insert(context.Background(), postID, userID); err != nil {
+	if err := r.Insert(context.Background(), postID, userID, 3); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
 	if got.PostID != postID {
@@ -30,13 +30,16 @@ func TestMentionInsert_PassesPostAndUserSeparately(t *testing.T) {
 	if got.UserID != userID {
 		t.Errorf("UserID: want %v, got %v", userID, got.UserID)
 	}
+	if got.Position != 3 {
+		t.Errorf("Position: want 3, got %d", got.Position)
+	}
 }
 
 func TestMentionInsert_ErrorIsMapped(t *testing.T) {
 	q := &mockQuerier{insertMention: func(context.Context, db.InsertMentionParams) error { return errBoom }}
 	r := &MentionRepository{queries: q}
 
-	if err := r.Insert(context.Background(), uuid.New(), uuid.New()); err == nil {
+	if err := r.Insert(context.Background(), uuid.New(), uuid.New(), 0); err == nil {
 		t.Fatal("want an error from Insert")
 	}
 }
@@ -91,7 +94,7 @@ func TestCommentMentionInsert_PassesCommentAndUserSeparately(t *testing.T) {
 	}}
 	r := &CommentMentionRepository{queries: q}
 
-	if err := r.Insert(context.Background(), commentID, userID); err != nil {
+	if err := r.Insert(context.Background(), commentID, userID, 3); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
 	if got.CommentID != commentID {
@@ -99,6 +102,9 @@ func TestCommentMentionInsert_PassesCommentAndUserSeparately(t *testing.T) {
 	}
 	if got.UserID != userID {
 		t.Errorf("UserID: want %v, got %v", userID, got.UserID)
+	}
+	if got.Position != 3 {
+		t.Errorf("Position: want 3, got %d", got.Position)
 	}
 }
 

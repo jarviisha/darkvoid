@@ -21,7 +21,8 @@ func (q *Queries) DeleteCommentMentionsByComment(ctx context.Context, commentID 
 }
 
 const getCommentMentionsBatch = `-- name: GetCommentMentionsBatch :many
-SELECT comment_id, user_id, created_at FROM post.comment_mentions WHERE comment_id = ANY($1::uuid[])
+SELECT comment_id, user_id, created_at, position FROM post.comment_mentions WHERE comment_id = ANY($1::uuid[])
+ORDER BY comment_id, position
 `
 
 func (q *Queries) GetCommentMentionsBatch(ctx context.Context, dollar_1 []uuid.UUID) ([]PostCommentMention, error) {
@@ -33,7 +34,12 @@ func (q *Queries) GetCommentMentionsBatch(ctx context.Context, dollar_1 []uuid.U
 	items := []PostCommentMention{}
 	for rows.Next() {
 		var i PostCommentMention
-		if err := rows.Scan(&i.CommentID, &i.UserID, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.CommentID,
+			&i.UserID,
+			&i.CreatedAt,
+			&i.Position,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -45,7 +51,8 @@ func (q *Queries) GetCommentMentionsBatch(ctx context.Context, dollar_1 []uuid.U
 }
 
 const getCommentMentionsByComment = `-- name: GetCommentMentionsByComment :many
-SELECT comment_id, user_id, created_at FROM post.comment_mentions WHERE comment_id = $1
+SELECT comment_id, user_id, created_at, position FROM post.comment_mentions WHERE comment_id = $1
+ORDER BY position
 `
 
 func (q *Queries) GetCommentMentionsByComment(ctx context.Context, commentID uuid.UUID) ([]PostCommentMention, error) {
@@ -57,7 +64,12 @@ func (q *Queries) GetCommentMentionsByComment(ctx context.Context, commentID uui
 	items := []PostCommentMention{}
 	for rows.Next() {
 		var i PostCommentMention
-		if err := rows.Scan(&i.CommentID, &i.UserID, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.CommentID,
+			&i.UserID,
+			&i.CreatedAt,
+			&i.Position,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -69,17 +81,18 @@ func (q *Queries) GetCommentMentionsByComment(ctx context.Context, commentID uui
 }
 
 const insertCommentMention = `-- name: InsertCommentMention :exec
-INSERT INTO post.comment_mentions (comment_id, user_id)
-VALUES ($1, $2)
+INSERT INTO post.comment_mentions (comment_id, user_id, position)
+VALUES ($1, $2, $3)
 ON CONFLICT (comment_id, user_id) DO NOTHING
 `
 
 type InsertCommentMentionParams struct {
 	CommentID uuid.UUID `json:"comment_id"`
 	UserID    uuid.UUID `json:"user_id"`
+	Position  int32     `json:"position"`
 }
 
 func (q *Queries) InsertCommentMention(ctx context.Context, arg InsertCommentMentionParams) error {
-	_, err := q.db.Exec(ctx, insertCommentMention, arg.CommentID, arg.UserID)
+	_, err := q.db.Exec(ctx, insertCommentMention, arg.CommentID, arg.UserID, arg.Position)
 	return err
 }
