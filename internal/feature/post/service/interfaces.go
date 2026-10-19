@@ -105,7 +105,7 @@ type hashtagRepo interface {
 // *repository.MentionRepository satisfies this interface.
 type mentionRepo interface {
 	WithTx(tx pgx.Tx) mentionRepo
-	Insert(ctx context.Context, postID, userID uuid.UUID) error
+	Insert(ctx context.Context, postID, userID uuid.UUID, position int32) error
 	DeleteByPost(ctx context.Context, postID uuid.UUID) error
 	GetByPost(ctx context.Context, postID uuid.UUID) ([]uuid.UUID, error)
 	GetBatch(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
@@ -114,7 +114,7 @@ type mentionRepo interface {
 // commentMentionRepo defines the repository operations needed by CommentService for mentions.
 // *repository.CommentMentionRepository satisfies this interface.
 type commentMentionRepo interface {
-	Insert(ctx context.Context, commentID, userID uuid.UUID) error
+	Insert(ctx context.Context, commentID, userID uuid.UUID, position int32) error
 	GetBatch(ctx context.Context, commentIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
 }
 

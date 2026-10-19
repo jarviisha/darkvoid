@@ -34,6 +34,7 @@ type PostCommentMention struct {
 	CommentID uuid.UUID          `json:"comment_id"`
 	UserID    uuid.UUID          `json:"user_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Position  int32              `json:"position"`
 }
 
 type PostHashtag struct {
@@ -68,4 +69,5 @@ type PostPostMention struct {
 	PostID    uuid.UUID          `json:"post_id"`
 	UserID    uuid.UUID          `json:"user_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Position  int32              `json:"position"`
 }

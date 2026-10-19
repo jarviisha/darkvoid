@@ -97,13 +97,13 @@ func (m *mockCommentMediaRepo) GetByCommentsBatch(_ context.Context, _ []uuid.UU
 // --------------------------------------------------------------------------
 
 type mockCommentMentionRepo struct {
-	insert   func(ctx context.Context, commentID, userID uuid.UUID) error
+	insert   func(ctx context.Context, commentID, userID uuid.UUID, position int32) error
 	getBatch func(ctx context.Context, commentIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
 }
 
-func (m *mockCommentMentionRepo) Insert(ctx context.Context, commentID, userID uuid.UUID) error {
+func (m *mockCommentMentionRepo) Insert(ctx context.Context, commentID, userID uuid.UUID, position int32) error {
 	if m.insert != nil {
-		return m.insert(ctx, commentID, userID)
+		return m.insert(ctx, commentID, userID, position)
 	}
 	return nil
 }
@@ -887,6 +887,29 @@ func TestGetComments_EnrichAuthors_RepoError_NonFatal(t *testing.T) {
 // CommentService — persistCommentMentions tests (via CreateComment)
 // --------------------------------------------------------------------------
 
+func TestCreateComment_WithMentions_PositionsFollowWrittenOrder(t *testing.T) {
+	postID := uuid.New()
+	user1, user2 := uuid.New(), uuid.New()
+
+	positions := map[uuid.UUID]int32{}
+	cmr := &mockCommentMentionRepo{
+		insert: func(_ context.Context, _, uid uuid.UUID, position int32) error {
+			positions[uid] = position
+			return nil
+		},
+	}
+	svc := newCommentService(&mockCommentRepo{}, postExists(postID))
+	svc.commentMentionRepo = cmr
+	svc.userReader = &mockUserReader{}
+
+	if _, err := svc.CreateComment(context.Background(), postID, uuid.New(), nil, "hey", nil, []uuid.UUID{user2, user1, user2}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(positions) != 2 || positions[user2] != 0 || positions[user1] != 1 {
+		t.Errorf("want user2 at 0 and user1 at 1, got %v", positions)
+	}
+}
+
 func TestCreateComment_WithMentions_InsertsAndEnriches(t *testing.T) {
 	postID := uuid.New()
 	authorID := uuid.New()
@@ -894,7 +917,7 @@ func TestCreateComment_WithMentions_InsertsAndEnriches(t *testing.T) {
 
 	var insertedUserID uuid.UUID
 	cmr := &mockCommentMentionRepo{
-		insert: func(_ context.Context, _, uid uuid.UUID) error {
+		insert: func(_ context.Context, _, uid uuid.UUID, _ int32) error {
 			insertedUserID = uid
 			return nil
 		},
@@ -928,7 +951,7 @@ func TestCreateComment_WithMentions_InsertError_NonFatal(t *testing.T) {
 	mentionedID := uuid.New()
 
 	cmr := &mockCommentMentionRepo{
-		insert: func(_ context.Context, _, _ uuid.UUID) error {
+		insert: func(_ context.Context, _, _ uuid.UUID, _ int32) error {
 			return pkgerrors.NewInternalError(pkgerrors.ErrInternal)
 		},
 	}

@@ -283,7 +283,7 @@ func (m *mockHashtagRepo) SearchByPrefix(ctx context.Context, prefix string, lim
 
 type mockMentionRepo struct {
 	withTx       func(tx pgx.Tx) mentionRepo
-	insert       func(ctx context.Context, postID, userID uuid.UUID) error
+	insert       func(ctx context.Context, postID, userID uuid.UUID, position int32) error
 	deleteByPost func(ctx context.Context, postID uuid.UUID) error
 	getByPost    func(ctx context.Context, postID uuid.UUID) ([]uuid.UUID, error)
 	getBatch     func(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
@@ -296,9 +296,9 @@ func (m *mockMentionRepo) WithTx(tx pgx.Tx) mentionRepo {
 	return m
 }
 
-func (m *mockMentionRepo) Insert(ctx context.Context, postID, userID uuid.UUID) error {
+func (m *mockMentionRepo) Insert(ctx context.Context, postID, userID uuid.UUID, position int32) error {
 	if m.insert != nil {
-		return m.insert(ctx, postID, userID)
+		return m.insert(ctx, postID, userID, position)
 	}
 	return nil
 }

@@ -21,7 +21,8 @@ func (q *Queries) DeleteMentionsByPost(ctx context.Context, postID uuid.UUID) er
 }
 
 const getMentionsBatch = `-- name: GetMentionsBatch :many
-SELECT post_id, user_id, created_at FROM post.post_mentions WHERE post_id = ANY($1::uuid[])
+SELECT post_id, user_id, created_at, position FROM post.post_mentions WHERE post_id = ANY($1::uuid[])
+ORDER BY post_id, position
 `
 
 func (q *Queries) GetMentionsBatch(ctx context.Context, dollar_1 []uuid.UUID) ([]PostPostMention, error) {
@@ -33,7 +34,12 @@ func (q *Queries) GetMentionsBatch(ctx context.Context, dollar_1 []uuid.UUID) ([
 	items := []PostPostMention{}
 	for rows.Next() {
 		var i PostPostMention
-		if err := rows.Scan(&i.PostID, &i.UserID, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.PostID,
+			&i.UserID,
+			&i.CreatedAt,
+			&i.Position,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -45,7 +51,8 @@ func (q *Queries) GetMentionsBatch(ctx context.Context, dollar_1 []uuid.UUID) ([
 }
 
 const getMentionsByPost = `-- name: GetMentionsByPost :many
-SELECT post_id, user_id, created_at FROM post.post_mentions WHERE post_id = $1
+SELECT post_id, user_id, created_at, position FROM post.post_mentions WHERE post_id = $1
+ORDER BY position
 `
 
 func (q *Queries) GetMentionsByPost(ctx context.Context, postID uuid.UUID) ([]PostPostMention, error) {
@@ -57,7 +64,12 @@ func (q *Queries) GetMentionsByPost(ctx context.Context, postID uuid.UUID) ([]Po
 	items := []PostPostMention{}
 	for rows.Next() {
 		var i PostPostMention
-		if err := rows.Scan(&i.PostID, &i.UserID, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.PostID,
+			&i.UserID,
+			&i.CreatedAt,
+			&i.Position,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -69,17 +81,18 @@ func (q *Queries) GetMentionsByPost(ctx context.Context, postID uuid.UUID) ([]Po
 }
 
 const insertMention = `-- name: InsertMention :exec
-INSERT INTO post.post_mentions (post_id, user_id)
-VALUES ($1, $2)
+INSERT INTO post.post_mentions (post_id, user_id, position)
+VALUES ($1, $2, $3)
 ON CONFLICT (post_id, user_id) DO NOTHING
 `
 
 type InsertMentionParams struct {
-	PostID uuid.UUID `json:"post_id"`
-	UserID uuid.UUID `json:"user_id"`
+	PostID   uuid.UUID `json:"post_id"`
+	UserID   uuid.UUID `json:"user_id"`
+	Position int32     `json:"position"`
 }
 
 func (q *Queries) InsertMention(ctx context.Context, arg InsertMentionParams) error {
-	_, err := q.db.Exec(ctx, insertMention, arg.PostID, arg.UserID)
+	_, err := q.db.Exec(ctx, insertMention, arg.PostID, arg.UserID, arg.Position)
 	return err
 }
