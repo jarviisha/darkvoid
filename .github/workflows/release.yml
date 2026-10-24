@@ -19,7 +19,7 @@ jobs:
       - name: Notes from CHANGELOG.md
         run: |
           awk -v version="${GITHUB_REF_NAME#v}" '
-            $0 ~ "^## \\[" { if (found) exit; if (index($0, "## [" version "]") == 1) { found = 1; next } }
+            /^## / { if (found) exit; if (index($0, "## [" version "]") == 1) { found = 1; next } }
             found && /^\[[^]]+\]: / { exit }
             found { print }
           ' CHANGELOG.md > notes.md
