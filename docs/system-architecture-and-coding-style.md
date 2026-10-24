@@ -113,7 +113,7 @@ Preferred patterns:
 
 - take required dependencies as a validated `Deps` struct and optional
   integrations as functional options to the same constructor (ADR 0001)
-- do not ship no-op caches or stores for Redis: it is required, see `CLAUDE.md`
+- do not ship no-op caches or stores for Redis: it is required, see `AGENTS.md`
 - gate optional read paths through configuration or rollout checks
 - treat external recommendation, mail, or cache systems as accelerators, not as
   the only source of truth unless the feature contract requires it
