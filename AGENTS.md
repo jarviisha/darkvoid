@@ -95,6 +95,8 @@ Every package should have a `docs.go` stating its purpose. Update it in the same
 
 ## Linting
 
+Use lowercase package names, `CamelCase` for exported identifiers, and feature-local names such as `AuthHandler`, `UserService`, `RefreshTokenRepository`.
+
 Respect `.golangci.yml` — all production and test code must pass `make lint` before committing. If a linter fires, fix the root cause rather than silencing it. Only suppress with a **targeted** `//nolint:<linter> // <reason>` on the specific line, with a real reason. Do **not** add blanket `//nolint` directives, and do **not** relax `.golangci.yml` to clear a failure unless the rule itself is genuinely wrong for this codebase — in which case justify it in the commit message.
 
 ## Commits
@@ -111,7 +113,7 @@ Describe the behavior change, note config or migration impact, and say what the 
 
 ## Configuration
 
-Config splits in two. `pkg/config` loads from `.env` everything a process needs before it can reach anything else — the database, the port, the signing keys, the mail and storage providers. Everything an operator changes while watching a graph lives in the database instead; see **Runtime settings** below. Update `.env.example` whenever a new variable is added. Keys of note:
+Config splits in two. `pkg/config` loads from `.env` everything a process needs before it can reach anything else — the database, the port, the signing keys, the mail and storage providers. Everything an operator changes while watching a graph lives in the database instead; see **Runtime settings** below. Keep secrets out of git. Update `.env.example` whenever a new variable is added. Keys of note:
 
 - `SETTINGS_REFRESH_INTERVAL` (default `30s`) — how often each instance re-reads `settings.feed`. It cannot itself be a stored setting: it is the setting that says how often to read the settings.
 - `FEED_FANOUT_WORKERS` / `FEED_FANOUT_QUEUE_SIZE` — all that is left of the old `FEED_*` group. They allocate a goroutine pool and a channel at construction, so a stored value could not take effect without rebuilding the dispatcher, and a knob that quietly does nothing until the next restart is a worse deal than one that admits it needs one. `FEED_TIMELINE_ENABLED`, `FEED_TIMELINE_ROLLOUT_PERCENT`, `FEED_TIMELINE_MAX_ITEMS`, `FEED_TIMELINE_TTL`, `FEED_TIMELINE_REFRESH_ON_MISS`, `FEED_FANOUT_ENABLED` and `FEED_FANOUT_MAX_FOLLOWERS` are no longer read.
