@@ -61,7 +61,7 @@ if [ -z "$guard_line" ] || [ -z "$drop_line" ] || [ "$guard_line" -ge "$drop_lin
 	fail 'migration SQL guard does not precede DROP SCHEMA'
 fi
 
-if grep -Fq 'destructive-migration' "${repo_root}/.github/workflows/cd.yml"; then
+if grep -Fq 'destructive-migration' "${repo_root}/.github/workflows/deploy.yml"; then
 	fail 'normal CD workflow invokes the destructive migration profile'
 fi
 

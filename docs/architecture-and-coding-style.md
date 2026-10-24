@@ -124,7 +124,7 @@ Current examples:
 - Email sending after registration is attached with `WithEmailSender`.
 - Feed timeline serving is gated by runtime settings and rollout percentage.
 
-Redis is not optional and has no no-op fallback; see `CLAUDE.md`.
+Redis is not optional and has no no-op fallback; see `AGENTS.md`.
 
 Optional dependencies arrive as functional options on the constructor
 (`feedservice.WithRecommender`, `service.WithCatalogIngester`), next to a

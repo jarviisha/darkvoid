@@ -36,8 +36,8 @@ for required in \
 	'create-release.sh' \
 	'deploy-release.sh' \
 	'test-container-runtime'; do
-	grep -Fq "$required" .github/workflows/cd.yml || fail "CD is missing: $required"
+	grep -Fq "$required" .github/workflows/deploy.yml || fail "CD is missing: $required"
 done
-grep -Fq 'workflow_run' .github/workflows/cd.yml \
+grep -Fq 'workflow_run' .github/workflows/deploy.yml \
 	&& fail 'CD still has a workflow_run trigger; deploys must be dispatched by tag or commit'
 echo 'Production image pinning tests passed'
